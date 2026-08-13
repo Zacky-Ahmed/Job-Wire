@@ -58,6 +58,39 @@ npm run dev
 
 Set `POLLER_ENABLED=false` in `.env` to work on the UI without hitting LinkedIn.
 
+## Email deliverability
+
+A new user's first email is the verification code. If that lands in spam
+they cannot sign up at all, so this matters more than any feature.
+
+**What the code already does** — verified by `npm run preview-email`: no
+images, no coloured CTA buttons, no bulk-mail footer phrases, a real
+text/plain alternative, short clean subjects, direct links, a working
+Reply-To. The verification mail is deliberately plainer than the alert
+mail, because it is the one that must never be filtered.
+
+**What the code cannot fix.** Mail from a personal Gmail account to
+strangers has no sending reputation, and will sit near the spam line no
+matter how the HTML is written. The actual fix is a domain plus a
+transactional provider:
+
+1. Buy a cheap domain — a `.xyz` or `.site` costs a few dollars a year
+2. Sign up for Resend or Brevo (free tiers around 3,000/month, well past
+   Gmail's ~500/day)
+3. Add their SPF, DKIM and DMARC records to the domain's DNS
+4. Send as `alerts@yourdomain`
+5. Replace `services/mail/transport.js` — it is the only file that knows
+   which provider is in use, so nothing else changes
+
+That moves you from "someone's Gmail behaving oddly" to an authenticated
+sender, which is what inbox placement actually keys on.
+
+**For alerts specifically, consider Telegram.** Email is throttled,
+categorised and silenced by design — an iPhone will not notify at all for
+mail Gmail filed under Promotions. A Telegram message arrives in under a
+second, always notifies, and has no daily ceiling. Email still earns its
+place as the durable, searchable record.
+
 ## Before you promise users a number
 
 Run the lag experiment first:

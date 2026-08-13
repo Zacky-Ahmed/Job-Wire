@@ -45,6 +45,16 @@ export async function sendMail({ to, subject, html, text }) {
     const info = await t.sendMail({
       from: env.mailFrom,
       to,
+      // A working Reply-To is a small but real trust signal: mail that
+      // cannot be replied to looks automated. It also means a confused
+      // user can just hit reply instead of giving up.
+      replyTo: env.gmailUser,
+      headers: {
+        // Marks this as automatically generated but still a direct reply
+        // to a user action, so mail servers do not treat it as bulk and
+        // do not fire vacation auto-responders back at us.
+        "Auto-Submitted": "auto-generated",
+      },
       // Strip CR/LF: a newline in a subject lets an attacker inject
       // extra headers (Bcc:) into the message.
       subject: String(subject).replace(/[\r\n]+/g, " ").slice(0, 200),
