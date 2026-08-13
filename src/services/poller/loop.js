@@ -8,6 +8,7 @@
 
 import * as Queries from "../../models/queries.js";
 import { sweepQuery } from "./sweep.js";
+import { retryFailedSends } from "./retry.js";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 
@@ -37,6 +38,10 @@ async function tick() {
   if (running || stopped) return;
   running = true;
   try {
+    // Deliver anything that failed last time before looking for more.
+    // A caught job the user never received is worth more than a new one.
+    await retryFailedSends();
+
     const due = await Queries.findDue(10);
     if (!due.length) return;
 

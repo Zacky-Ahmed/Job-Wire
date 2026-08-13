@@ -24,3 +24,38 @@ export function countToday() {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   return collections.emailLog().countDocuments({ sentAt: { $gte: start }, status: "sent" });
 }
+
+/**
+ * Failed sends worth another attempt.
+ *
+ * A send can fail for reasons that have nothing to do with the job — a
+ * dropped SMTP connection, an unreachable route, Gmail rate-limiting.
+ * Without this the alert is lost permanently, because the job is already
+ * in seenJobs and no future sweep will rediscover it.
+ */
+export function findRetryable({ maxAttempts = 3, olderThanMs = 60_000, limit = 5 } = {}) {
+  return collections.emailLog()
+    .find({
+      status: "failed",
+      attempts: { $lt: maxAttempts },
+      sentAt: { $lte: new Date(Date.now() - olderThanMs) },
+    })
+    .sort({ sentAt: 1 })
+    .limit(limit)
+    .toArray();
+}
+
+export function markRetried(id, { ok, providerId, error }) {
+  return collections.emailLog().updateOne(
+    { _id: id },
+    {
+      $set: {
+        status: ok ? "sent" : "failed",
+        providerId: providerId || null,
+        error: error || null,
+        lastTriedAt: new Date(),
+      },
+      $inc: { attempts: 1 },
+    }
+  );
+}
