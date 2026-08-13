@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.git
+.gitignore
+email-preview
+*.log
+render.yaml
+README.md
