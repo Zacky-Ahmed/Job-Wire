@@ -41,7 +41,10 @@ export function findRetryable({ maxAttempts = 3, olderThanMs = 60_000, limit = 5
   return collections.emailLog()
     .find({
       status: "failed",
-      attempts: { $lt: maxAttempts },
+      // Rows written before `attempts` existed have no such field, and
+      // { $lt: n } does NOT match a missing field — those failures would
+      // be permanently invisible to the retry queue. Treat absent as 0.
+      $or: [{ attempts: { $lt: maxAttempts } }, { attempts: { $exists: false } }],
       sentAt: { $lte: new Date(Date.now() - olderThanMs) },
     })
     .sort({ sentAt: 1 })
