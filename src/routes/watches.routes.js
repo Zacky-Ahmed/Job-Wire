@@ -10,7 +10,7 @@ import { str, keywords as cleanKeywords, int, oid } from "../utils/sanitize.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import * as Queries from "../models/queries.js";
 import * as Subs from "../models/subscriptions.js";
-import { COUNTRIES, isKnownGeo, findGeo } from "../services/linkedin/geoIds.js";
+import { selectableCountries, isKnownGeo, findGeo } from "../services/linkedin/geoIds.js";
 import { canonicalKey, tprFor } from "../services/linkedin/buildUrl.js";
 import { rel, countdown } from "../utils/time.js";
 import { env } from "../config/env.js";
@@ -29,7 +29,7 @@ async function render(req, res, extra = {}) {
     watchCount: watches.length,
     activeCount,
     pollerEnabled: env.pollerEnabled,
-    countries: COUNTRIES,
+    countries: selectableCountries(),
     minSweep: env.minSweepMinutes,
     showNew: extra.showNew ?? false,
     error: extra.error || null,

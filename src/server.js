@@ -26,6 +26,7 @@ import { connectDb, closeDb } from "./config/db.js";
 import { ensureIndexes } from "./models/indexes.js";
 import { buildSession } from "./middleware/session.js";
 import { csrf } from "./middleware/csrf.js";
+import { theme } from "./middleware/theme.js";
 import { generalLimiter } from "./middleware/rateLimit.js";
 import { rejectOperators } from "./utils/sanitize.js";
 import { log } from "./utils/logger.js";
@@ -83,6 +84,7 @@ export async function buildApp() {
   app.use(rejectOperators); // NoSQL operator injection, before anything queries
   app.use(generalLimiter);
   app.use(buildSession());
+  app.use(theme); // resolves data-theme before any HTML is written
   app.use(csrf);
 
   app.get("/healthz", (req, res) => res.type("text/plain").send("ok"));

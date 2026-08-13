@@ -16,7 +16,8 @@
     "e2e": "node scripts/e2e.js",
     "test-sweep": "node scripts/test-sweep.js",
     "test-windows": "node scripts/test-windows.js",
-    "preview-email": "node scripts/preview-email.js"
+    "preview-email": "node scripts/preview-email.js",
+    "verify-geoids": "node scripts/verify-geoids.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

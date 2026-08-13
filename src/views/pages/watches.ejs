@@ -13,11 +13,11 @@
       <span class="dot <%= activeCount ? 'live' : 'off' %>"></span>
       <h3>Watches</h3>
       <span class="sp"></span>
-      <span class="lbl">One query · one clock</span>
+      <span class="lbl">One search · its own schedule</span>
     </div>
     <div class="row rhead r-watch">
       <span></span><span>Watch</span><span class="hide">Keywords</span>
-      <span class="hide">Next sweep</span><span style="text-align:right">Controls</span>
+      <span class="hide">Next check</span><span style="text-align:right">Controls</span>
     </div>
     <%- include('../partials/watch-rows', { watches, csrfToken, tprFor, rel }) %>
   </div>
@@ -32,11 +32,13 @@
 <div class="scrim">
   <form class="dlg" method="post" action="/watches" novalidate>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
     <div class="dlg-h">
       <span class="dot sig"></span>
       <h2>New watch</h2>
       <a class="x" href="/watches" aria-label="Close">&times;</a>
     </div>
+
     <div class="dlg-b">
       <% if (error) { %>
         <div class="banner err">
@@ -48,48 +50,51 @@
       <% } %>
 
       <div class="f">
-        <span class="lbl">Call it something</span>
-        <div class="inp"><input name="label" placeholder="Interns in Sri Lanka"
-          value="<%= values.label || '' %>" required></div>
+        <label class="lbl" for="wLabel">Name it</label>
+        <div class="inp"><input id="wLabel" name="label" placeholder="Interns in Sri Lanka"
+          value="<%= values.label || '' %>" autocomplete="off" required></div>
+        <span class="hint">Just so you can tell your watches apart.</span>
       </div>
 
       <div class="f">
-        <span class="lbl">Keywords <span class="r">comma separated</span></span>
+        <label class="lbl" for="kw">Job titles or keywords</label>
         <div class="inp"><input id="kw" name="keywords" placeholder="intern, software engineer"
-          value="<%= values.keywords || '' %>" required></div>
-      </div>
-
-      <div class="two">
-        <div class="f">
-          <span class="lbl">Country</span>
-          <select id="geo" name="geoId">
-            <% countries.forEach(function (c) { %>
-              <option value="<%= c.geoId %>" <%= values.geoId === c.geoId ? 'selected' : '' %>>
-                <%= c.name %><%= c.verified ? '' : ' (unverified geoId)' %></option>
-            <% }) %>
-          </select>
-        </div>
-        <div class="f">
-          <span class="lbl">Sweep every <span class="r tnum" id="everyOut"><%= values.every || 5 %> min</span></span>
-          <input id="every" name="every" type="range" min="<%= minSweep %>" max="60"
-            value="<%= values.every || 5 %>" step="1">
-        </div>
+          value="<%= values.keywords || '' %>" autocomplete="off" required></div>
+        <span class="hint">Separate with commas. Broader keywords catch more.</span>
       </div>
 
       <div class="f">
-        <span class="lbl">Query this builds</span>
-        <div class="q" id="urlOut">—</div>
-        <p class="why" id="whyOut"></p>
+        <label class="lbl" for="geo">Country</label>
+        <select id="geo" name="geoId">
+          <% countries.forEach(function (c) { %>
+            <option value="<%= c.geoId %>" <%= values.geoId === c.geoId ? 'selected' : '' %>>
+              <%= c.name %></option>
+          <% }) %>
+        </select>
       </div>
 
-      <p class="why">The first sweep only memorises what is already there.
-        Alerts begin on the second sweep, so you never get a wall of old posts.</p>
+      <div class="f">
+        <label class="lbl" for="every">Check for new jobs every
+          <span class="hint-strong tnum" id="everyOut"><%= values.every || 5 %> minutes</span></label>
+        <input id="every" name="every" type="range" min="<%= minSweep %>" max="60"
+          value="<%= values.every || 5 %>" step="1">
+        <div class="rangeline"><span>Faster</span><span>Gentler</span></div>
+      </div>
+
+      <div class="note">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" style="flex:none;margin-top:2px">
+          <circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>
+        <span>The first check just learns what's already posted — you won't be
+          emailed about old jobs. Alerts start from the next one.</span>
+      </div>
     </div>
+
     <div class="dlg-f">
       <a class="btn" href="/watches">Cancel</a>
       <button class="btn btn-sig" type="submit">Start watching</button>
     </div>
   </form>
 </div>
-<script src="/js/query-preview.js"></script>
+<script src="/js/range-label.js"></script>
 <% } %>

@@ -28,19 +28,10 @@
   --r:10px; --r-sm:7px; --h:52px;
   --ease:cubic-bezier(.32,.72,.28,1);
 }
-@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
-  --bg:#0e1019; --bg-2:#141726; --card:#191d2e; --sunk:#12151f;
-  --line:#242940; --line-2:#343b58;
-  --ink:#eceefb; --ink-2:#a2aac9; --faint:#6b7396;
-  --sig:#ff6440; --sig-2:#ff8663; --sig-soft:#2e1409; --on-sig:#1a0d06;
-  --vio:#8a83ff; --vio-2:#a09aff; --vio-soft:#1e1c3d;
-  --amber:#f0ae4e; --amber-soft:#2c2110;
-  --go:#3ddc9a; --go-soft:#0f2a20;
-  --bad:#ff6b6b; --bad-soft:#2e1414;
-  --grad-head:linear-gradient(180deg,#1b1f31 0%,#161a29 100%);
-  --sh-1:0 1px 2px rgba(0,0,0,.4);
-  --sh-2:0 4px 12px -2px rgba(0,0,0,.5),0 16px 36px -10px rgba(0,0,0,.6);
-}}
+/* Dark applies ONLY when explicitly chosen. prefers-color-scheme is
+   deliberately not honoured: a user on a dark laptop who picks light
+   must get light, and the server sets data-theme from a cookie before
+   the first paint. */
 :root[data-theme="dark"]{
   --bg:#0e1019; --bg-2:#141726; --card:#191d2e; --sunk:#12151f;
   --line:#242940; --line-2:#343b58;
@@ -359,3 +350,13 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
     transition-duration:.001ms!important;}
 }
+
+/* ── form helpers ──────────────────────────────────────────── */
+.f .hint{font-size:12px;color:var(--faint);line-height:1.45;}
+.f .hint-strong{color:var(--sig);font-weight:600;}
+.rangeline{display:flex;justify-content:space-between;font-family:var(--mono);
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+  margin-top:-6px;}
+.note{display:flex;gap:10px;padding:12px 14px;border-radius:var(--r-sm);
+  background:var(--vio-soft);color:var(--vio);font-size:13px;line-height:1.5;}
+.dlg-b .f label.lbl{display:block;margin-bottom:2px;}
