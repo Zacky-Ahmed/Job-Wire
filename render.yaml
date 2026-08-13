@@ -1,0 +1,39 @@
+# Render blueprint.
+#
+# ONE service. The web app and the poller run in the same process, so
+# the loop keeps its Mongo pool and its schedule between requests.
+#
+# plan: starter is deliberate — free instances sleep after ~15 minutes
+# of no traffic, which kills the poller. Sleeping is fatal for a product
+# whose only value is arriving early.
+
+services:
+  - type: web
+    name: job-wire
+    runtime: node
+    plan: starter
+    region: singapore # closest to Sri Lanka; keep the Atlas cluster in the same region
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: POLLER_ENABLED
+        value: "true"
+      # Set the rest in the Render dashboard, not here:
+      #   MONGODB_URI, SESSION_SECRET, GMAIL_USER,
+      #   GMAIL_APP_PASSWORD, MAIL_FROM, APP_URL
+      - key: MONGODB_URI
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: APP_URL
+        sync: false

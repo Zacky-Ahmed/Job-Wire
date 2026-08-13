@@ -1,0 +1,46 @@
+<% if (!watches.length) { %>
+  <div class="empty">
+    <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/>
+      <path d="m20 20-3.6-3.6"/></svg></span>
+    <b>No watches yet</b>
+    <span>Add one and the wire starts sweeping LinkedIn on its own clock.</span>
+    <a class="btn btn-sig" href="/watches?new=1" style="margin-top:8px">Create your first watch</a>
+  </div>
+<% } else { %>
+  <% watches.forEach(function (s) { var q = s.q; %>
+    <div class="row r-watch<%= s.active ? '' : ' paused' %>">
+      <span class="dot <%= s.active ? 'live' : 'off' %>"></span>
+      <div class="role">
+        <div class="a"><%= s.label %></div>
+        <div class="b"><%= q.location %> · geo <%= q.geoId %> · f_TPR=r<%= tprFor(q.everyMinutes) %></div>
+      </div>
+      <div class="kws hide">
+        <% q.keywords.forEach(function (k) { %><span class="pill vio"><%= k %></span><% }) %>
+        <span class="pill"><%= q.everyMinutes %>m</span>
+      </div>
+      <div class="hide">
+        <% if (!q.primed) { %>
+          <span class="pill amber">Priming</span>
+        <% } else { %>
+          <span class="lbl tnum" data-next="<%= s.active && q.nextFetchAt ? new Date(q.nextFetchAt).getTime() : '' %>">—</span>
+        <% } %>
+        <div class="lbl" style="margin-top:3px">last <%= rel(q.lastFetchedAt) %></div>
+      </div>
+      <div class="acts">
+        <form method="post" action="/watches/<%= s._id %>/toggle">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-xs" type="submit"><%= s.active ? 'Hold' : 'Resume' %></button>
+        </form>
+        <form method="post" action="/watches/<%= s._id %>/delete"
+          onsubmit="return confirm('Delete this watch? Its alert history stays.')">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn-xs btn-bad" type="submit" aria-label="Delete watch">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6"/>
+              <path d="M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+        </form>
+      </div>
+    </div>
+  <% }) %>
+<% } %>

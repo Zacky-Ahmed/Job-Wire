@@ -1,0 +1,23 @@
+<form method="post" action="/signin" novalidate>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="ftitle"><h2>Sign in</h2>
+    <p>Your watches kept sweeping while you were away.</p></div>
+
+  <% if (error) { %><div class="banner err"><%= error %></div><% } %>
+
+  <div class="f">
+    <span class="lbl">Gmail address</span>
+    <div class="inp"><input name="email" type="email" value="<%= values.email || '' %>"
+      placeholder="you@gmail.com" autocomplete="email" spellcheck="false" required></div>
+  </div>
+  <div class="f">
+    <span class="lbl">Password</span>
+    <div class="inp">
+      <input id="pw" name="password" type="password" placeholder="••••••••"
+        autocomplete="current-password" required>
+      <button type="button" class="eye" data-eye="pw" aria-label="Show password" aria-pressed="false"></button>
+    </div>
+  </div>
+  <button class="btn btn-sig btn-lg btn-full" type="submit">Sign in</button>
+  <p class="alt">No account? <a href="/signup">Create one</a></p>
+</form>

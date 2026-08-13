@@ -1,0 +1,33 @@
+<% if (!dispatches.length) { %>
+  <div class="empty">
+    <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round"><path d="M12 21v-9"/>
+      <path d="M5 12a9 9 0 0 1 14 0"/><circle cx="12" cy="8" r="1.6" fill="currentColor"/></svg></span>
+    <b>Nothing caught yet</b>
+    <span>The wire is sweeping. New postings land here the moment they appear
+      in LinkedIn's search index.</span>
+  </div>
+<% } else { %>
+  <% dispatches.forEach(function (d, i) { %>
+    <div class="row r-wire<%= d.isNew ? ' new' : '' %>">
+      <span class="ix"><%= String(dispatches.length - i).padStart(3, '0') %></span>
+      <span>
+        <% if (d.emailed) { %><span class="pill go">Sent</span>
+        <% } else { %><span class="pill off">—</span><% } %>
+      </span>
+      <div class="role">
+        <div class="a"><%= d.title %></div>
+        <div class="b"><%= d.company %><%= d.location ? ' · ' + d.location : '' %></div>
+      </div>
+      <span class="muted hide"><span class="pill vio"><%= d.label %></span></span>
+      <span class="muted hide"><%= d.ageText %></span>
+      <div class="hide">
+        <span class="lbl"><%= d.windowLeft ? '~' + d.windowLeft + 'm left' : 'likely closed' %></span>
+        <div class="gauge"><i class="<%= d.windowClass %>" style="width:<%= d.windowPct %>%"></i></div>
+      </div>
+      <div class="acts">
+        <a class="btn btn-xs btn-sig" href="<%= d.url %>" target="_blank" rel="noopener noreferrer">Apply</a>
+      </div>
+    </div>
+  <% }) %>
+<% } %>

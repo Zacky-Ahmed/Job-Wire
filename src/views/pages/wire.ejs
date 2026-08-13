@@ -1,0 +1,49 @@
+<div class="wrap">
+  <div class="stats stagger">
+    <div class="stat sig">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round"><path d="M13 2 4.5 13H11l-1 9 8.5-11H12l1-9Z"/></svg></div>
+      <div class="k">Caught</div>
+      <div class="v"><%= dispatches.length %></div>
+      <div class="d">last 14 days</div>
+    </div>
+    <div class="stat go">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/></svg></div>
+      <div class="k">Emails sent</div>
+      <div class="v"><%= sentToday %> <span class="u">/500</span></div>
+      <div class="d">today · Gmail budget</div>
+    </div>
+    <div class="stat">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg></div>
+      <div class="k">Watches</div>
+      <div class="v"><%= watchCount %></div>
+      <div class="d"><%= activeCount %> sweeping now</div>
+    </div>
+    <div class="stat amber">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <div class="k">Poller</div>
+      <div class="v" style="font-size:26px"><%= pollerEnabled ? 'Running' : 'Off' %></div>
+      <div class="d">each watch on its own clock</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot live"></span>
+      <h3>The Wire</h3>
+      <span class="sp"></span>
+      <span class="lbl">Est. application window</span>
+    </div>
+    <div class="row rhead r-wire">
+      <span>#</span><span>Mail</span><span>Role</span>
+      <span class="hide">Watch</span><span class="hide">Caught</span>
+      <span class="hide">Window</span><span style="text-align:right">Act</span>
+    </div>
+    <div id="wireRows" hx-get="/wire/rows" hx-trigger="every 15s" hx-swap="innerHTML">
+      <%- include('../partials/wire-rows', { dispatches }) %>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,190 @@
+// auth.routes.js
+//
+// Signup creates an UNVERIFIED user. Nothing else in the app is reachable
+// and no alert is ever sent until the emailed code is confirmed.
+
+import { Router } from "express";
+import { authPage } from "../utils/render.js";
+import { email as cleanEmail, str, oid } from "../utils/sanitize.js";
+import * as Users from "../models/users.js";
+import * as pw from "../services/auth/password.js";
+import * as otp from "../services/auth/otp.js";
+import { sendVerification } from "../services/mail/send.js";
+import { redirectIfAuthed } from "../middleware/requireAuth.js";
+import { signupLimiter, signinLimiter, verifyLimiter, resendLimiter } from "../middleware/rateLimit.js";
+import { log } from "../utils/logger.js";
+
+export const authRoutes = Router();
+
+const show = (res, view, extra = {}) =>
+  authPage(res, `pages/${view}`, {
+    title: extra.title || view,
+    step: extra.step ?? 1,
+    error: extra.error || null,
+    notice: extra.notice || null,
+    values: extra.values || {},
+    email: extra.email || "",
+  });
+
+// ── signup ───────────────────────────────────────────────────────
+authRoutes.get("/signup", redirectIfAuthed, (req, res) =>
+  show(res, "signup", { title: "Create account" })
+);
+
+authRoutes.post("/signup", redirectIfAuthed, signupLimiter, async (req, res, next) => {
+  try {
+    const email = cleanEmail(req.body.email);
+    const password = str(req.body.password, { max: 200 });
+    const confirm = str(req.body.confirm, { max: 200 });
+    const values = { email: str(req.body.email, { max: 254 }) };
+
+    if (!email) return show(res, "signup", { error: "Enter a valid email address.", values });
+    const problem = pw.validate(password);
+    if (problem) return show(res, "signup", { error: problem, values });
+    if (password !== confirm)
+      return show(res, "signup", { error: "The two passwords do not match.", values });
+
+    const existing = await Users.findByEmail(email);
+    if (existing) {
+      // Do not confirm that the address is registered — same message either way.
+      if (existing.verified)
+        return show(res, "signup", {
+          error: "If that address can be registered, we have sent a code. Otherwise, sign in.",
+          values,
+        });
+      // Unverified: reissue rather than blocking them out of their own account.
+      const { code, hash, expiresAt } = await otp.issue();
+      await Users.setOtp(existing._id, { otpHash: hash, otpExpiresAt: expiresAt });
+      await sendVerification({ to: email, code });
+      req.session.pendingUserId = String(existing._id);
+      return show(res, "verify", { title: "Verify", step: 2, email });
+    }
+
+    const { code, hash, expiresAt } = await otp.issue();
+    const user = await Users.create({
+      email,
+      passHash: await pw.hash(password),
+      otpHash: hash,
+      otpExpiresAt: expiresAt,
+    });
+
+    const sent = await sendVerification({ to: email, code });
+    if (!sent.ok)
+      return show(res, "signup", { error: "We could not send the code. Try again shortly.", values });
+
+    req.session.pendingUserId = String(user._id);
+    log.info("signup", { email });
+    return show(res, "verify", { title: "Verify", step: 2, email });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── verify ───────────────────────────────────────────────────────
+authRoutes.get("/verify", async (req, res) => {
+  const id = oid(req.session.pendingUserId);
+  if (!id) return res.redirect("/signup");
+  const user = await Users.findById(id);
+  if (!user) return res.redirect("/signup");
+  if (user.verified) return res.redirect("/signin");
+  show(res, "verify", { title: "Verify", step: 2, email: user.email });
+});
+
+authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
+  try {
+    const id = oid(req.session.pendingUserId);
+    if (!id) return res.redirect("/signup");
+    const user = await Users.findById(id);
+    if (!user) return res.redirect("/signup");
+
+    const code = ["d1", "d2", "d3", "d4", "d5", "d6"]
+      .map((k) => str(req.body[k], { max: 1 })).join("");
+
+    const { result, patch } = await otp.check(user, code);
+    if (patch) await Users.applyPatch(user._id, patch);
+
+    if (result === otp.OTP_RESULT.OK) {
+      req.session.regenerate((err) => {
+        if (err) return next(err);
+        req.session.userId = String(user._id); // fresh session id — prevents fixation
+        log.info("verified", { email: user.email });
+        res.redirect("/wire");
+      });
+      return;
+    }
+
+    const messages = {
+      wrong: "Wrong code. Check the digits and try again.",
+      expired: "That code expired. Request a new one.",
+      locked: "Too many attempts. Request a new code.",
+      none: "No code is pending. Request a new one.",
+    };
+    show(res, "verify", { title: "Verify", step: 2, email: user.email, error: messages[result] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRoutes.post("/resend", resendLimiter, async (req, res, next) => {
+  try {
+    const id = oid(req.session.pendingUserId);
+    if (!id) return res.redirect("/signup");
+    const user = await Users.findById(id);
+    if (!user || user.verified) return res.redirect("/signin");
+
+    const { code, hash, expiresAt } = await otp.issue();
+    await Users.setOtp(user._id, { otpHash: hash, otpExpiresAt: expiresAt });
+    await sendVerification({ to: user.email, code });
+    show(res, "verify", {
+      title: "Verify", step: 2, email: user.email, notice: "A new code is on its way.",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── signin ───────────────────────────────────────────────────────
+authRoutes.get("/signin", redirectIfAuthed, (req, res) =>
+  show(res, "signin", { title: "Sign in" })
+);
+
+authRoutes.post("/signin", redirectIfAuthed, signinLimiter, async (req, res, next) => {
+  try {
+    const email = cleanEmail(req.body.email);
+    const password = str(req.body.password, { max: 200 });
+    const values = { email: str(req.body.email, { max: 254 }) };
+    const user = email ? await Users.findByEmail(email) : null;
+
+    // verify() runs a real bcrypt compare even when user is null, so the
+    // response time does not reveal which addresses are registered.
+    const ok = await pw.verify(password, user?.passHash);
+    if (!user || !ok)
+      return show(res, "signin", { error: "Email or password is incorrect.", values });
+
+    if (!user.verified) {
+      const { code, hash, expiresAt } = await otp.issue();
+      await Users.setOtp(user._id, { otpHash: hash, otpExpiresAt: expiresAt });
+      await sendVerification({ to: user.email, code });
+      req.session.pendingUserId = String(user._id);
+      return show(res, "verify", {
+        title: "Verify", step: 2, email: user.email,
+        notice: "Confirm your address first — we sent a new code.",
+      });
+    }
+
+    req.session.regenerate((err) => {
+      if (err) return next(err);
+      req.session.userId = String(user._id);
+      res.redirect("/wire");
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRoutes.post("/signout", (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie("jw.sid");
+    res.redirect("/signin");
+  });
+});

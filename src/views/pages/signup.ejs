@@ -1,0 +1,40 @@
+<form method="post" action="/signup" novalidate>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="ftitle">
+    <h2>Open an account</h2>
+    <p>A 6-digit code confirms the address. An alert sent to the wrong
+       inbox is worse than no alert at all.</p>
+  </div>
+
+  <% if (error) { %><div class="banner err"><%= error %></div><% } %>
+
+  <div class="f">
+    <span class="lbl">Gmail address</span>
+    <div class="inp"><input name="email" type="email" value="<%= values.email || '' %>"
+      placeholder="you@gmail.com" autocomplete="email" spellcheck="false" required></div>
+  </div>
+
+  <div class="f">
+    <span class="lbl">Password <span class="r">8 characters minimum</span></span>
+    <div class="inp">
+      <input id="pw" name="password" type="password" placeholder="••••••••"
+        autocomplete="new-password" minlength="8" required>
+      <button type="button" class="eye" data-eye="pw" aria-label="Show password" aria-pressed="false"></button>
+    </div>
+    <div class="meter" id="meter" hidden><i></i><i></i><i></i><i></i></div>
+    <span class="msg" id="pwMsg"></span>
+  </div>
+
+  <div class="f">
+    <span class="lbl">Confirm password</span>
+    <div class="inp">
+      <input id="pw2" name="confirm" type="password" placeholder="••••••••"
+        autocomplete="new-password" required>
+      <button type="button" class="eye" data-eye="pw2" aria-label="Show password" aria-pressed="false"></button>
+    </div>
+    <span class="msg" id="pw2Msg"></span>
+  </div>
+
+  <button class="btn btn-sig btn-lg btn-full" type="submit">Send verification code</button>
+  <p class="alt">Already registered? <a href="/signin">Sign in</a></p>
+</form>

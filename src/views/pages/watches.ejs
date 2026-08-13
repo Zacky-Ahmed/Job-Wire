@@ -1,0 +1,95 @@
+<div class="wrap">
+  <% if (notice) { %>
+    <div class="banner go">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2.4" stroke-linecap="round" style="flex:none;margin-top:1px">
+        <path d="m5 13 4 4L19 7"/></svg>
+      <span><%= notice %></span>
+    </div>
+  <% } %>
+
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot <%= activeCount ? 'live' : 'off' %>"></span>
+      <h3>Watches</h3>
+      <span class="sp"></span>
+      <span class="lbl">One query · one clock</span>
+    </div>
+    <div class="row rhead r-watch">
+      <span></span><span>Watch</span><span class="hide">Keywords</span>
+      <span class="hide">Next sweep</span><span style="text-align:right">Controls</span>
+    </div>
+    <%- include('../partials/watch-rows', { watches, csrfToken, tprFor, rel }) %>
+  </div>
+
+  <div><a class="btn btn-sig btn-lg" href="/watches?new=1">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    New watch</a></div>
+</div>
+
+<% if (showNew) { %>
+<div class="scrim">
+  <form class="dlg" method="post" action="/watches" novalidate>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="dlg-h">
+      <span class="dot sig"></span>
+      <h2>New watch</h2>
+      <a class="x" href="/watches" aria-label="Close">&times;</a>
+    </div>
+    <div class="dlg-b">
+      <% if (error) { %>
+        <div class="banner err">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.4" stroke-linecap="round" style="flex:none;margin-top:1px">
+            <circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></svg>
+          <span><%= error %></span>
+        </div>
+      <% } %>
+
+      <div class="f">
+        <span class="lbl">Call it something</span>
+        <div class="inp"><input name="label" placeholder="Interns in Sri Lanka"
+          value="<%= values.label || '' %>" required></div>
+      </div>
+
+      <div class="f">
+        <span class="lbl">Keywords <span class="r">comma separated</span></span>
+        <div class="inp"><input id="kw" name="keywords" placeholder="intern, software engineer"
+          value="<%= values.keywords || '' %>" required></div>
+      </div>
+
+      <div class="two">
+        <div class="f">
+          <span class="lbl">Country</span>
+          <select id="geo" name="geoId">
+            <% countries.forEach(function (c) { %>
+              <option value="<%= c.geoId %>" <%= values.geoId === c.geoId ? 'selected' : '' %>>
+                <%= c.name %><%= c.verified ? '' : ' (unverified geoId)' %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="f">
+          <span class="lbl">Sweep every <span class="r tnum" id="everyOut"><%= values.every || 5 %> min</span></span>
+          <input id="every" name="every" type="range" min="<%= minSweep %>" max="60"
+            value="<%= values.every || 5 %>" step="1">
+        </div>
+      </div>
+
+      <div class="f">
+        <span class="lbl">Query this builds</span>
+        <div class="q" id="urlOut">—</div>
+        <p class="why" id="whyOut"></p>
+      </div>
+
+      <p class="why">The first sweep only memorises what is already there.
+        Alerts begin on the second sweep, so you never get a wall of old posts.</p>
+    </div>
+    <div class="dlg-f">
+      <a class="btn" href="/watches">Cancel</a>
+      <button class="btn btn-sig" type="submit">Start watching</button>
+    </div>
+  </form>
+</div>
+<script src="/js/query-preview.js"></script>
+<% } %>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title><%= title %> · Job Wire</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="auth">
+    <div class="poster">
+      <span class="wordmark">
+        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"
+          stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0" opacity=".55"/>
+          <path d="M8.2 15.5a5 5 0 0 1 7.6 0" opacity=".8"/><circle cx="12" cy="8" r="1.8" fill="#fff"/></svg></span>
+        <b>Job<span>&nbsp;Wire</span></b>
+      </span>
+
+      <div class="hero">
+        <h1>Applications close in an hour.<br><em>You hear in four minutes.</em></h1>
+        <p>A watcher sits on LinkedIn so you don't have to. When a role matching
+           your keywords appears, it's in your inbox before the pile builds.</p>
+      </div>
+
+      <div class="facts">
+        <div class="fact"><div class="v">&lt;5 min</div><div class="k">Catch to inbox</div></div>
+        <div class="fact"><div class="v">24/7</div><div class="k">Never sleeps</div></div>
+        <div class="fact"><div class="v">0</div><div class="k">Feeds to scroll</div></div>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="pane-h">
+        <span class="lbl">Access</span><span style="flex:1"></span>
+        <button class="btn btn-xs" id="themeBtn" type="button" aria-label="Toggle theme">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></svg>
+          <span id="themeLabel">Dark</span>
+        </button>
+      </div>
+      <div class="pane-b">
+        <div class="steps">
+          <span class="s <%= step === 1 ? 'on' : step > 1 ? 'done' : '' %>"><span class="n">1</span>Account</span>
+          <span class="s <%= step === 2 ? 'on' : step > 2 ? 'done' : '' %>"><span class="n">2</span>Verify</span>
+          <span class="s <%= step === 3 ? 'on' : '' %>"><span class="n">3</span>Wire</span>
+        </div>
+        <%- body %>
+      </div>
+    </div>
+  </div>
+  <script src="/js/theme.js"></script>
+  <script src="/js/eye.js"></script>
+  <script src="/js/otp.js"></script>
+</body>
+</html>

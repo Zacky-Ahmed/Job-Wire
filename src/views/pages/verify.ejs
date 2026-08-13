@@ -1,0 +1,28 @@
+<form method="post" action="/verify" novalidate>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="ftitle"><h2>Confirm the address</h2>
+    <p>Six digits sent to <b><%= email %></b>. The code expires in 10 minutes.</p></div>
+
+  <% if (error) { %><div class="banner err"><%= error %></div><% } %>
+  <% if (notice) { %><div class="banner go"><%= notice %></div><% } %>
+
+  <div class="f">
+    <span class="lbl">Verification code</span>
+    <div class="otp<%= error ? ' bad' : '' %>" id="otpBox">
+      <input name="d1" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1">
+      <input name="d2" inputmode="numeric" maxlength="1" aria-label="Digit 2">
+      <input name="d3" inputmode="numeric" maxlength="1" aria-label="Digit 3">
+      <input name="d4" inputmode="numeric" maxlength="1" aria-label="Digit 4">
+      <input name="d5" inputmode="numeric" maxlength="1" aria-label="Digit 5">
+      <input name="d6" inputmode="numeric" maxlength="1" aria-label="Digit 6">
+    </div>
+  </div>
+
+  <button class="btn btn-sig btn-lg btn-full" type="submit">Verify and open the wire</button>
+</form>
+
+<form method="post" action="/resend" style="margin-top:-8px">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <p class="alt">No code? <button type="submit">Resend</button></p>
+</form>
+<p class="alt"><a href="/signup" style="color:var(--faint)">← Different address</a></p>
