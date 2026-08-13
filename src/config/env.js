@@ -41,6 +41,10 @@ export const env = {
 
   sessionSecret: required("SESSION_SECRET"),
 
+  // Optional. When present, mail goes over Brevo's HTTPS API instead of
+  // Gmail SMTP — required on hosts that block outbound SMTP ports.
+  brevoApiKey: (process.env.BREVO_API_KEY || "").trim(),
+
   gmailUser: required("GMAIL_USER"),
   // Google displays the app password as 4 groups of 4; the secret is the 16 chars.
   gmailAppPassword: required("GMAIL_APP_PASSWORD").replace(/\s+/g, ""),
