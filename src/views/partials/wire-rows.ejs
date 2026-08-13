@@ -13,6 +13,7 @@
       <span class="ix"><%= String(dispatches.length - i).padStart(3, '0') %></span>
       <span>
         <% if (d.emailed) { %><span class="pill go">Sent</span>
+        <% } else if (d.failed) { %><span class="pill sig" title="Delivery failed — the next sweep retries">Failed</span>
         <% } else { %><span class="pill off">—</span><% } %>
       </span>
       <div class="role">

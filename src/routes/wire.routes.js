@@ -25,9 +25,16 @@ async function gather(user) {
   const caught = queryIds.length ? await SeenJobs.recentForQueries(queryIds, 50) : [];
   const emails = await EmailLog.recentForUser(user._id, 30);
 
-  // A job is only a "dispatch" if it arrived after its query was primed,
-  // i.e. it was actually emailed. Everything else was memorised silently.
-  const emailedIds = new Set(emails.flatMap((e) => e.jobIds || []));
+  // Only SUCCESSFUL sends count as delivered. Including failed ones here
+  // showed "Sent" next to jobs whose email never arrived — the single most
+  // misleading thing this screen could say, because the whole product is
+  // "did I get told in time".
+  const emailedIds = new Set(
+    emails.filter((e) => e.status === "sent").flatMap((e) => e.jobIds || [])
+  );
+  const failedIds = new Set(
+    emails.filter((e) => e.status === "failed").flatMap((e) => e.jobIds || [])
+  );
 
   const dispatches = caught.map((j) => {
     const age = minutesSince(j.firstSeenAt);
@@ -37,6 +44,7 @@ async function gather(user) {
       label: labelByQuery.get(String(j.queryId)) || "deleted watch",
       ageText: rel(j.firstSeenAt),
       emailed: emailedIds.has(j.jobId),
+      failed: !emailedIds.has(j.jobId) && failedIds.has(j.jobId),
       windowPct: pct,
       windowLeft: Math.max(0, WINDOW_MIN - age),
       windowClass: pct > 75 ? "h" : pct > 45 ? "w" : "",
