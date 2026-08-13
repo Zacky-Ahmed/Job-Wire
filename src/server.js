@@ -94,6 +94,26 @@ async function main() {
   await connectDb();
   await ensureIndexes();
 
+  // Prove the mail credentials at boot rather than discovering they are
+  // wrong when a stranger tries to sign up and gets "we could not send
+  // the code". The classic failure is GMAIL_USER not matching the
+  // account the app password was generated on — it authenticates fine
+  // locally and fails in production, silently, until someone complains.
+  //
+  // Deliberately not fatal: the app is still useful for reading the wire
+  // if mail is down, and a transient SMTP blip should not stop a deploy.
+  try {
+    const { verifyTransport } = await import("./services/mail/transport.js");
+    await verifyTransport();
+    log.info("smtp verified", { user: env.gmailUser });
+  } catch (err) {
+    log.error("SMTP AUTH FAILED — no verification codes or alerts will send", {
+      user: env.gmailUser,
+      message: err.message.split("\n")[0],
+      hint: "GMAIL_USER must be the account the app password was created on",
+    });
+  }
+
   const app = await buildApp();
   const server = app.listen(env.port, () => {
     log.info("listening", { port: env.port, env: env.nodeEnv });

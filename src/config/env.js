@@ -65,6 +65,20 @@ if (env.gmailAppPassword.length !== 16) {
     `got ${env.gmailAppPassword.length}. Is it a real app password?`
   );
 }
+// Gmail silently rewrites a From that does not match the authenticated
+// account, so a mismatch does not fail loudly — it just breaks DMARC
+// alignment, which is exactly what pushes mail into spam. Warn rather
+// than throw: a legitimately configured "Send mail as" alias is valid.
+const fromAddress = (env.mailFrom.match(/<([^>]+)>/)?.[1] || env.mailFrom).trim().toLowerCase();
+if (fromAddress !== env.gmailUser.toLowerCase()) {
+  console.warn(
+    `WARNING  MAIL_FROM address (${fromAddress}) does not match GMAIL_USER ` +
+    `(${env.gmailUser}). Gmail will rewrite the From header, and the ` +
+    `mismatch weakens DMARC alignment — expect more spam filtering. ` +
+    `Make them the same unless ${fromAddress} is a verified "Send mail as" alias.`
+  );
+}
+
 if (env.minSweepMinutes < 1) {
   throw new Error("MIN_SWEEP_MINUTES must be at least 1 — sub-minute polling will get you blocked.");
 }
