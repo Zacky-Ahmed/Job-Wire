@@ -22,6 +22,12 @@ COPY . .
 
 ENV NODE_ENV=production
 
+# Railway containers have an IPv6 address with no route out, and Node 18+
+# resolves "verbatim" — so Gmail's AAAA record wins and SMTP dies with
+# ENETUNREACH. server.js sets this too; here it also covers `npm run
+# test-mail` and friends inside the container.
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+
 # Railway injects PORT; this is only the local default.
 EXPOSE 3000
 

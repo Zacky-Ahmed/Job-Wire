@@ -4,9 +4,22 @@
 // Splitting them onto two hosts loses the shared Mongo pool and the
 // in-memory schedule, which is the whole reason this is not serverless.
 
+import dns from "dns";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+
+// Resolve IPv4 before IPv6, process-wide, before anything opens a socket.
+//
+// Railway's containers get an IPv6 address with no working route out. Node
+// 18+ defaults to "verbatim" DNS ordering, so smtp.gmail.com's AAAA record
+// wins and every send dies with ENETUNREACH 2607:f8b0:... — Google's IPv6.
+//
+// nodemailer's own `family: 4` option did NOT prevent this in production
+// (43 consecutive failures on a deploy that already had it), so the
+// ordering has to be forced here, where it applies to every lookup the
+// process makes rather than one library's socket options.
+dns.setDefaultResultOrder("ipv4first");
 
 import { env } from "./config/env.js";
 import { connectDb, closeDb } from "./config/db.js";
