@@ -10,6 +10,10 @@ export function record({ userId, queryId, jobIds, status, providerId, error }) {
     userId, queryId, jobIds, status,
     providerId: providerId || null,
     error: error || null,
+    // Must be set explicitly: findRetryable matches { attempts: { $lt: n } },
+    // and Mongo does NOT match documents where the field is absent. Without
+    // this every failure is invisible to the retry queue.
+    attempts: 0,
     sentAt: new Date(),
   });
 }

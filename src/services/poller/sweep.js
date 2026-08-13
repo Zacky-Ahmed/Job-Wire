@@ -13,7 +13,6 @@ import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
-import * as SeenJobs from "../../models/seenJobs.js";
 import { collections } from "../../config/db.js";
 import { sendAlert } from "../mail/send.js";
 import { env } from "../../config/env.js";
@@ -115,16 +114,19 @@ async function fanOut(query, jobs) {
     if (res.ok) sent++;
   }
 
-  // If nobody got the mail, forget these jobs so the next sweep finds
-  // them again. Otherwise a transient network blip — a dropped SMTP
-  // connection, an IPv6 route that does not exist — silently costs the
-  // user the alert forever, because the job is already marked as seen.
+  // NOTE: we deliberately do NOT un-remember the jobs when a send fails.
   //
-  // Only roll back on a TOTAL failure: if even one subscriber received
-  // it, re-alerting would double-mail them.
+  // An earlier version did, so the next sweep would rediscover them. With
+  // a persistent fault — an IPv6 route that does not exist, say — that
+  // became an infinite loop: forget, re-catch, fail, forget, every five
+  // minutes, writing a fresh emailLog row each time. 43 of them in one
+  // evening for the same handful of jobs.
+  //
+  // The retry queue is the right mechanism: the emailLog row already
+  // holds the jobIds, so retry.js resends from there with a bounded
+  // attempt count. The job stays remembered exactly once.
   if (eligible > 0 && sent === 0) {
-    await SeenJobs.forget(query._id, jobs.map((j) => j.jobId));
-    log.warn("all sends failed — jobs forgotten so the next sweep retries", {
+    log.warn("all sends failed — queued for retry", {
       queryId: String(query._id), jobs: jobs.length,
     });
   }
