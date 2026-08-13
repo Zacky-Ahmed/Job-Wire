@@ -1,0 +1,16 @@
+# Normalise line endings so the repo stays LF regardless of who clones it.
+# Without this, Windows checkouts commit CRLF and every diff on Linux CI
+# looks like the whole file changed.
+* text=auto eol=lf
+
+# Binary-ish: never touch these
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Vendored, minified — exclude from diffs and language stats so the repo
+# is not reported as mostly someone else's JavaScript.
+public/js/htmx.min.js linguist-vendored
+package-lock.json linguist-generated
