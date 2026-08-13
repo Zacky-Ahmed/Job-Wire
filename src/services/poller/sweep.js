@@ -13,6 +13,7 @@ import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
+import * as SeenJobs from "../../models/seenJobs.js";
 import { collections } from "../../config/db.js";
 import { sendAlert } from "../mail/send.js";
 import { env } from "../../config/env.js";
@@ -92,6 +93,7 @@ async function fanOut(query, jobs) {
   }
 
   let sent = 0;
+  let eligible = 0;
   for (const sub of subs) {
     const user = await collections.users().findOne(
       { _id: sub.userId },
@@ -99,6 +101,7 @@ async function fanOut(query, jobs) {
     );
     // Never mail an address that was not confirmed.
     if (!user?.verified) continue;
+    eligible++;
 
     const res = await sendAlert({ to: user.email, label: sub.label, jobs });
     await EmailLog.record({
@@ -111,5 +114,20 @@ async function fanOut(query, jobs) {
     });
     if (res.ok) sent++;
   }
+
+  // If nobody got the mail, forget these jobs so the next sweep finds
+  // them again. Otherwise a transient network blip — a dropped SMTP
+  // connection, an IPv6 route that does not exist — silently costs the
+  // user the alert forever, because the job is already marked as seen.
+  //
+  // Only roll back on a TOTAL failure: if even one subscriber received
+  // it, re-alerting would double-mail them.
+  if (eligible > 0 && sent === 0) {
+    await SeenJobs.forget(query._id, jobs.map((j) => j.jobId));
+    log.warn("all sends failed — jobs forgotten so the next sweep retries", {
+      queryId: String(query._id), jobs: jobs.length,
+    });
+  }
+
   return sent;
 }

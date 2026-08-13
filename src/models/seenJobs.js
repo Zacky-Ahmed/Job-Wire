@@ -55,3 +55,14 @@ export function recentForQueries(queryIds, limit = 50) {
     .limit(limit)
     .toArray();
 }
+
+/**
+ * Un-remember jobs. Used when every alert for them failed to send: if we
+ * kept them, the next sweep would treat them as already seen and the
+ * user would never hear about those jobs at all. Forgetting lets the
+ * next sweep rediscover and retry them.
+ */
+export function forget(queryId, jobIds) {
+  if (!jobIds.length) return Promise.resolve();
+  return collections.seenJobs().deleteMany({ queryId, jobId: { $in: jobIds } });
+}

@@ -20,6 +20,16 @@ export function getTransport() {
     pool: true,        // reuse the connection across sends
     maxConnections: 2, // Gmail is unhappy with more
     maxMessages: 100,
+
+    // Force IPv4. smtp.gmail.com resolves to both A and AAAA records, and
+    // on a network without IPv6 routing Node happily picks the AAAA and
+    // dies with ENETUNREACH — which looked like "Gmail is down" rather
+    // than "we chose an address this machine cannot reach".
+    family: 4,
+
+    connectionTimeout: 20000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
   });
   return transport;
 }
