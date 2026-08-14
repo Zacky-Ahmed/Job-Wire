@@ -13,11 +13,13 @@
       <span class="dot <%= s.active ? 'live' : 'off' %>"></span>
       <div class="role">
         <div class="a"><%= s.label %></div>
-        <div class="b"><%= q.location %> · geo <%= q.geoId %> · f_TPR=r<%= tprFor(q.everyMinutes) %></div>
+        <div class="b"><%= q.location %> · checked every <%= q.everyMinutes %> min</div>
       </div>
       <div class="kws hide">
         <% q.keywords.forEach(function (k) { %><span class="pill vio"><%= k %></span><% }) %>
-        <span class="pill"><%= q.everyMinutes %>m</span>
+        <% (q.sources || ['linkedin']).forEach(function (sid) { %>
+          <span class="pill"><%= sourceLabel(sid) %></span>
+        <% }) %>
       </div>
       <div class="hide">
         <% if (!q.primed) { %>

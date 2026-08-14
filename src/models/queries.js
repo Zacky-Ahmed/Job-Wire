@@ -6,13 +6,14 @@
 import { collections } from "../config/db.js";
 
 /** Find the shared query row or create it. Never creates a duplicate. */
-export async function upsert({ keywordsKey, keywords, geoId, location, everyMinutes }) {
+export async function upsert({ keywordsKey, keywords, geoId, location, everyMinutes, sources }) {
   const now = new Date();
   const res = await collections.queries().findOneAndUpdate(
     { keywordsKey, geoId },
     {
       $setOnInsert: {
         keywordsKey, keywords, geoId, location,
+        sources: sources?.length ? sources : ["linkedin"],
         primed: false,          // first sweep memorises, does not alert
         lastFetchedAt: null,
         nextFetchAt: now,       // sweep it immediately to prime

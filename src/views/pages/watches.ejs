@@ -64,6 +64,24 @@
       </div>
 
       <div class="f">
+        <span class="lbl">Where to look</span>
+        <div class="srcs">
+          <% sources.forEach(function (src) { %>
+            <label class="src">
+              <input type="checkbox" name="sources" value="<%= src.id %>"
+                <%= (values.sources || ['linkedin']).includes(src.id) ? 'checked' : '' %>>
+              <span class="src-b">
+                <span class="src-n"><%= src.label %></span>
+                <% if (src.note) { %><span class="src-h"><%= src.note %></span><% } %>
+              </span>
+            </label>
+          <% }) %>
+        </div>
+        <span class="hint">Company sites publish instantly. LinkedIn covers everyone
+          but runs about half an hour behind.</span>
+      </div>
+
+      <div class="f">
         <label class="lbl" for="geo">Country</label>
         <select id="geo" name="geoId">
           <% countries.forEach(function (c) { %>

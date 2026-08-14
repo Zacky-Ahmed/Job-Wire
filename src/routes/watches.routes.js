@@ -14,6 +14,7 @@ import { selectableCountries, isKnownGeo, findGeo } from "../services/linkedin/g
 
 const DEFAULT_GEO = "100446352"; // Sri Lanka
 import { canonicalKey, tprFor } from "../services/linkedin/buildUrl.js";
+import { listSources, getSource, DEFAULT_SOURCE } from "../services/sources/index.js";
 import { rel, countdown } from "../utils/time.js";
 import { env } from "../config/env.js";
 
@@ -33,6 +34,7 @@ async function render(req, res, extra = {}) {
     activeCount,
     pollerEnabled: env.pollerEnabled,
     countries: selectableCountries(),
+    sources: listSources(),
     // Without this the <select> defaults to whatever sorts first
     // (Argentina), which is nobody's intent. DEFAULT_GEO is the home
     // market; a real product would infer it from the request's locale.
@@ -43,6 +45,7 @@ async function render(req, res, extra = {}) {
     notice: extra.notice || null,
     values: extra.values || {},
     tprFor, rel,
+    sourceLabel: (id) => getSource(id)?.label || id,
   });
 }
 
@@ -55,8 +58,15 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     const label = str(req.body.label, { max: 80 });
     const kw = cleanKeywords(req.body.keywords);
     const geoId = str(req.body.geoId, { max: 20 });
+
+    // Checkboxes arrive as a string when one is ticked, an array when
+    // several are. Normalise, then keep only sources we actually have —
+    // a hand-crafted POST must not be able to name an arbitrary adapter.
+    const rawSources = [].concat(req.body.sources ?? []).map((v) => str(v, { max: 24 }));
+    const chosen = [...new Set(rawSources)].filter((id) => getSource(id));
+    const sources = chosen.length ? chosen : [DEFAULT_SOURCE];
     const every = int(req.body.every, { min: env.minSweepMinutes, max: 60, fallback: 5 });
-    const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every };
+    const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every, sources };
 
     if (!label)
       return render(req, res, { showNew: true, values, error: "Give it a name so you can tell watches apart." });
@@ -67,11 +77,12 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
 
     const geo = findGeo(geoId);
     const query = await Queries.upsert({
-      keywordsKey: canonicalKey(kw),
+      keywordsKey: canonicalKey(kw, sources),
       keywords: kw,
       geoId,
       location: geo.name,
       everyMinutes: every,
+      sources,
     });
 
     const sub = await Subs.create({ userId: req.user._id, queryId: query._id, label });

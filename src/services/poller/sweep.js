@@ -6,9 +6,8 @@
 // One fetch serves every subscriber of the query — that is what keeps
 // request volume to LinkedIn flat as users grow.
 
-import { buildGuestUrl } from "../linkedin/buildUrl.js";
-import { fetchLinkedIn, BlockedByLinkedIn } from "../linkedin/fetch.js";
-import { parseJobs, classifyResponse } from "../linkedin/parse.js";
+import { getSource, DEFAULT_SOURCE } from "../sources/index.js";
+import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
 import * as Subs from "../../models/subscriptions.js";
@@ -23,63 +22,59 @@ import { log } from "../../utils/logger.js";
 export async function sweepQuery(query) {
   const started = Date.now();
 
-  // The guest endpoint pages 10 at a time. With a 24h window a busy
-  // market returns ~30, so page 1 alone would silently ignore the rest.
-  // Sorted newest-first, so we stop as soon as a page adds nothing new.
-  const PAGE_SIZE = 10;
-  const MAX_PAGES = 4;
+  // A watch can span several sources. Each is fetched independently so
+  // one site being down or blocked does not cost you the others — a
+  // failure is recorded per source, and the sweep still delivers whatever
+  // the working ones found.
+  const sourceIds = query.sources?.length ? query.sources : [DEFAULT_SOURCE];
   const fetchedMap = new Map();
+  const failures = [];
 
-  for (let p = 0; p < MAX_PAGES; p++) {
-    const url = buildGuestUrl({
-      keywords: query.keywords,
-      geoId: query.geoId,
-      sweepMinutes: query.everyMinutes,
-      start: p * PAGE_SIZE,
-    });
+  for (const sourceId of sourceIds) {
+    const source = getSource(sourceId);
+    if (!source) {
+      log.warn("watch names a source that no longer exists", { sourceId });
+      continue;
+    }
 
-    let html;
+    // Sources page 10-ish at a time, so keep asking until a page adds
+    // nothing new. Capped, because a broken "next page" that repeats
+    // itself would otherwise loop until the request budget is gone.
+    const MAX_PAGES = 4;
     try {
-      html = await fetchLinkedIn(url, { jitter: p === 0 });
+      for (let p = 0; p < MAX_PAGES; p++) {
+        const jobs = await source.fetchJobs({
+          keywords: query.keywords,
+          geoId: query.geoId,
+          page: p,
+        });
+        if (!jobs.length) break;
+
+        const before = fetchedMap.size;
+        jobs.forEach((j) => fetchedMap.set(j.jobId, j));
+        if (fetchedMap.size === before) break;
+      }
     } catch (err) {
-      // Blocked: back off hard and exponentially. Everything else: short retry.
-      const backoff =
-        err instanceof BlockedByLinkedIn
-          ? Math.min(120, query.everyMinutes * Math.pow(2, (query.failCount || 0) + 1))
-          : query.everyMinutes * 2;
-      await Queries.recordFailure(query._id, backoff);
-      log.warn("sweep failed", {
-        queryId: String(query._id), page: p, reason: err.name,
-        message: err.message, backoffMin: backoff,
+      failures.push({ sourceId, err });
+      log.warn("source failed", {
+        queryId: String(query._id), source: sourceId,
+        reason: err.name, message: err.message,
       });
-      return { ok: false, error: err.message };
     }
+  }
 
-    // "empty" is a healthy answer (nothing more to list) and must NOT be
-    // treated as a failure, or every quiet query gets parked overnight.
-    // "unrecognised" means a login wall or a markup change.
-    const shape = classifyResponse(html);
-    if (shape === "unrecognised") {
-      await Queries.recordFailure(query._id, query.everyMinutes * 3);
-      log.error("substantial response with no job markup — LinkedIn may have changed", {
-        queryId: String(query._id), page: p, bytes: html.length,
-      });
-      return { ok: false, error: "unrecognised markup" };
-    }
-    if (shape === "empty") break;
-
-    const jobs = parseJobs(html);
-    if (!jobs.length) break;
-
-    const before = fetchedMap.size;
-    jobs.forEach((j) => fetchedMap.set(j.jobId, j));
-    // A page that adds nothing means we have reached the end, or LinkedIn
-    // is repeating itself. Either way, stop asking.
-    if (fetchedMap.size === before) break;
+  // Only treat the sweep as failed if EVERY source failed. One site
+  // rate-limiting us should not park a watch that has other sources.
+  if (failures.length === sourceIds.length) {
+    const blocked = failures.some((f) => f.err instanceof BlockedBySource);
+    const backoff = blocked
+      ? Math.min(120, query.everyMinutes * Math.pow(2, (query.failCount || 0) + 1))
+      : query.everyMinutes * 2;
+    await Queries.recordFailure(query._id, backoff);
+    return { ok: false, error: failures.map((f) => f.err.message).join("; ") };
   }
 
   const fetched = [...fetchedMap.values()];
-
   const { alertable, primed } = await diff(query, fetched);
 
   await Queries.reschedule(query._id, {
@@ -91,9 +86,11 @@ export async function sweepQuery(query) {
   log.info("sweep", {
     queryId: String(query._id),
     keywords: query.keywords.join("+"),
+    sources: sourceIds.join(","),
     fetched: fetched.length,
     new: alertable.length,
     priming: primed,
+    partial: failures.length ? failures.map((f) => f.sourceId).join(",") : undefined,
     ms: Date.now() - started,
   });
 

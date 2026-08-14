@@ -78,8 +78,12 @@ r = await post("/watches", { _csrf: token, label: "Interns SL", keywords: "Inter
 html = await r.text();
 ok(html.includes("Interns SL"), "watch created and listed");
 ok(html.includes("first sweep only memorises") || html.includes("memorises"), "priming explained");
-ok(/f_TPR=r86400/.test(html) && !/f_TPR=r(3600|7200|14400)/.test(html),
-   "uses the 24h window — narrow ones silently drop recent jobs");
+// f_TPR and geoId used to be printed on the row. They are internal details
+// a user has no reason to see, and one of them was wrong for weeks without
+// anyone noticing. Assert what the row should actually say instead.
+ok(/checked every \d+ min/.test(html), "row states the check interval in plain words");
+ok(!/f_TPR|geoId/.test(html), "no scraping internals leak into the UI");
+ok(/LinkedIn/.test(html), "row shows which source it watches");
 
 console.log("\n── shared query + duplicates ──");
 r = await post("/watches", { _csrf: token, label: "Same thing", keywords: " intern ", geoId: "100446352", every: "9" });

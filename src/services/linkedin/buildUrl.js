@@ -51,13 +51,20 @@ export function buildSearchUrl({ keywords, geoId, sweepMinutes = 5, page = 0 }) 
   return "https://www.linkedin.com/jobs/search?" + p.toString();
 }
 
-/** Canonical key so identical searches from different users share one row. */
-export function canonicalKey(keywords) {
-  return (Array.isArray(keywords) ? keywords : [keywords])
+/**
+ * Canonical key so identical searches from different users share one row.
+ * The SOURCES are part of the identity: "intern on LinkedIn" and "intern
+ * on LinkedIn + Keells" are different searches and must not collapse into
+ * one query, or whoever saved second would silently get the other's set.
+ */
+export function canonicalKey(keywords, sources = []) {
+  const kw = (Array.isArray(keywords) ? keywords : [keywords])
     .map((k) => String(k).trim().toLowerCase())
     .filter(Boolean)
     .sort()
     .join("|");
+  const src = [...sources].map(String).sort().join("+");
+  return src ? `${kw}@@${src}` : kw;
 }
 
 /**
