@@ -35,6 +35,17 @@ export async function connectDb() {
   return db;
 }
 
+/**
+ * The live MongoClient, for anything that would otherwise open its own
+ * connection — connect-mongo in particular. A second client means a
+ * second full Atlas handshake at boot and twice the connections against
+ * the free tier's limit, for no benefit.
+ */
+export function getClient() {
+  if (!client) throw new Error("getClient() called before connectDb()");
+  return client;
+}
+
 export function getDb() {
   if (!db) throw new Error("getDb() called before connectDb() — check server boot order.");
   return db;

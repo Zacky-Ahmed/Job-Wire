@@ -11,6 +11,7 @@ import * as SeenJobs from "../models/seenJobs.js";
 import * as EmailLog from "../models/emailLog.js";
 import { rel, minutesSince } from "../utils/time.js";
 import { env } from "../config/env.js";
+import { dailyCap, providerLabel } from "../services/mail/transport.js";
 
 export const wireRoutes = Router();
 wireRoutes.use(requireAuth);
@@ -58,6 +59,8 @@ async function gather(user) {
     dispatches,
     emailCount: emails.filter((e) => e.status === "sent").length,
     sentToday: await EmailLog.countToday(),
+    mailCap: dailyCap(),
+    mailProvider: providerLabel(),
     pollerEnabled: env.pollerEnabled,
   };
 }

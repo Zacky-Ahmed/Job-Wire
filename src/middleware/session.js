@@ -11,6 +11,7 @@
 import session from "express-session";
 import MongoStore from "connect-mongo";
 import { env } from "../config/env.js";
+import { getClient } from "../config/db.js";
 
 export function buildSession() {
   return session({
@@ -20,7 +21,10 @@ export function buildSession() {
     saveUninitialized: false, // no cookie until there is something to store
     rolling: true, // sliding expiry: active users are not logged out mid-session
     store: MongoStore.create({
-      mongoUrl: env.mongoUri,
+      // Reuse the app's client instead of mongoUrl, which would open a
+      // second MongoClient: that cost ~9s of extra Atlas handshake at
+      // boot and doubled the connection count against the free tier.
+      client: getClient(),
       dbName: env.mongoDb,
       collectionName: "sessions",
       ttl: 60 * 60 * 24 * 14, // 14 days

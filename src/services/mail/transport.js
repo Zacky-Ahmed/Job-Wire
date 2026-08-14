@@ -28,6 +28,21 @@ export function providerName() {
   return env.brevoApiKey ? "brevo(http)" : "gmail(smtp)";
 }
 
+/**
+ * Daily send limit of whichever provider is active, with headroom.
+ * Brevo's free tier is 300/day; a personal Gmail is about 500. Hardcoding
+ * one of them means the UI lies as soon as the provider changes, and the
+ * poller either suppresses alerts too early or blows through the cap.
+ */
+export function dailyCap() {
+  return env.brevoApiKey ? 280 : 450;
+}
+
+/** Short label for the UI: no version numbers, no transport jargon. */
+export function providerLabel() {
+  return env.brevoApiKey ? "Brevo" : "Gmail";
+}
+
 /** Splits "Job Wire <a@b.com>" into { name, email }. */
 function parseFrom(value) {
   const m = String(value).match(/^\s*(.*?)\s*<([^>]+)>\s*$/);

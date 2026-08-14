@@ -132,13 +132,12 @@ async function main() {
   // Not fatal — the wire is still readable without mail, and a transient
   // SMTP blip should not stop a deploy.
   import("./services/mail/transport.js")
-    .then((m) => m.verifyTransport())
-    .then(() => log.info("smtp verified", { user: env.gmailUser }))
+    .then(async (m) => { await m.verifyTransport(); return m; })
+    .then((m) => log.info("mail provider verified", { via: m.providerName() }))
     .catch((err) =>
-      log.error("SMTP AUTH FAILED — no verification codes or alerts will send", {
-        user: env.gmailUser,
+      log.error("MAIL PROVIDER FAILED — no verification codes or alerts will send", {
         message: err.message.split("\n")[0],
-        hint: "GMAIL_USER must be the account the app password was created on",
+        hint: "with BREVO_API_KEY set, MAIL_FROM must be a verified sender in Brevo",
       })
     );
 

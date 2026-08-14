@@ -15,10 +15,10 @@ import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
 import { sendAlert } from "../mail/send.js";
+import { dailyCap } from "../mail/transport.js";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 
-const GMAIL_DAILY_CEILING = 450; // leave headroom under Gmail's ~500
 
 export async function sweepQuery(query) {
   const started = Date.now();
@@ -86,7 +86,7 @@ async function fanOut(query, jobs) {
   if (!subs.length) return 0;
 
   const sentToday = await EmailLog.countToday();
-  if (sentToday >= GMAIL_DAILY_CEILING) {
+  if (sentToday >= dailyCap()) {
     log.warn("daily mail ceiling reached — alerts suppressed", { sentToday });
     return 0;
   }
