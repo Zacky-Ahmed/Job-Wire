@@ -47,9 +47,11 @@ export function reschedule(id, { everyMinutes, primed, tracked }) {
   const next = new Date(Date.now() + everyMinutes * 60000);
   const set = { lastFetchedAt: new Date(), nextFetchAt: next, failCount: 0 };
   if (primed !== undefined) set.primed = primed;
-  const update = { $set: set };
-  if (tracked) update.$inc = { trackedCount: tracked };
-  return collections.queries().updateOne({ _id: id }, update);
+  // How many the LAST sweep saw, not a running total. $inc made this
+  // climb forever — 574 for a search that returns about 25 — which made
+  // it useless for spotting a source that suddenly returns nothing.
+  if (tracked !== undefined) set.trackedCount = tracked;
+  return collections.queries().updateOne({ _id: id }, { $set: set });
 }
 
 export function recordFailure(id, backoffMinutes) {
