@@ -27,6 +27,7 @@ import { ensureIndexes } from "./models/indexes.js";
 import { buildSession } from "./middleware/session.js";
 import { csrf } from "./middleware/csrf.js";
 import { theme } from "./middleware/theme.js";
+import { assets } from "./utils/assets.js";
 import { generalLimiter } from "./middleware/rateLimit.js";
 import { rejectOperators } from "./utils/sanitize.js";
 import { log } from "./utils/logger.js";
@@ -74,7 +75,11 @@ export async function buildApp() {
   app.set("view engine", "ejs");
   app.set("views", path.join(__dirname, "views"));
 
-  app.use(express.static(path.join(__dirname, "..", "public"), { maxAge: "1h" }));
+  const publicDir = path.join(__dirname, "..", "public");
+  // Long cache is safe because every URL carries a content hash; see
+  // utils/assets.js. immutable tells the browser not to revalidate at all.
+  app.use(express.static(publicDir, { maxAge: env.isProd ? "365d" : 0, immutable: env.isProd }));
+  app.use(assets(publicDir, { cache: env.isProd }));
 
   // Body limits: nothing this app accepts is large, and an unbounded
   // parser is a trivial memory-exhaustion vector.
@@ -109,30 +114,33 @@ async function main() {
   await connectDb();
   await ensureIndexes();
 
-  // Prove the mail credentials at boot rather than discovering they are
-  // wrong when a stranger tries to sign up and gets "we could not send
-  // the code". The classic failure is GMAIL_USER not matching the
-  // account the app password was generated on — it authenticates fine
-  // locally and fails in production, silently, until someone complains.
-  //
-  // Deliberately not fatal: the app is still useful for reading the wire
-  // if mail is down, and a transient SMTP blip should not stop a deploy.
-  try {
-    const { verifyTransport } = await import("./services/mail/transport.js");
-    await verifyTransport();
-    log.info("smtp verified", { user: env.gmailUser });
-  } catch (err) {
-    log.error("SMTP AUTH FAILED — no verification codes or alerts will send", {
-      user: env.gmailUser,
-      message: err.message.split("\n")[0],
-      hint: "GMAIL_USER must be the account the app password was created on",
-    });
-  }
-
   const app = await buildApp();
+
+  // Bind the port FIRST. Everything below is useful but not required to
+  // serve a request, and blocking the listen on an SMTP handshake meant
+  // ~12s before /healthz answered — a platform with a tighter healthcheck
+  // than Railway's would call that a failed deploy.
   const server = app.listen(env.port, () => {
     log.info("listening", { port: env.port, env: env.nodeEnv });
   });
+
+  // Prove the mail credentials, but in the background. The classic failure
+  // is GMAIL_USER not matching the account the app password was created
+  // on: it authenticates locally and fails in production, silently, until
+  // a stranger tries to sign up and sees "we could not send the code".
+  //
+  // Not fatal — the wire is still readable without mail, and a transient
+  // SMTP blip should not stop a deploy.
+  import("./services/mail/transport.js")
+    .then((m) => m.verifyTransport())
+    .then(() => log.info("smtp verified", { user: env.gmailUser }))
+    .catch((err) =>
+      log.error("SMTP AUTH FAILED — no verification codes or alerts will send", {
+        user: env.gmailUser,
+        message: err.message.split("\n")[0],
+        hint: "GMAIL_USER must be the account the app password was created on",
+      })
+    );
 
   if (env.pollerEnabled) {
     const { startPoller } = await import("./services/poller/loop.js");

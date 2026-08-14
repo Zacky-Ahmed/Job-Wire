@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><%= title %> · Job Wire</title>
-  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
 </head>
 <body>
   <div class="auth">
@@ -48,8 +48,8 @@
       </div>
     </div>
   </div>
-  <script src="/js/theme.js"></script>
-  <script src="/js/eye.js"></script>
-  <script src="/js/otp.js"></script>
+  <script src="<%= asset('/js/theme.js') %>"></script>
+  <script src="<%= asset('/js/eye.js') %>"></script>
+  <script src="<%= asset('/js/otp.js') %>"></script>
 </body>
 </html>

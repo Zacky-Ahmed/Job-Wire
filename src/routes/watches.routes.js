@@ -11,6 +11,8 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import * as Queries from "../models/queries.js";
 import * as Subs from "../models/subscriptions.js";
 import { selectableCountries, isKnownGeo, findGeo } from "../services/linkedin/geoIds.js";
+
+const DEFAULT_GEO = "100446352"; // Sri Lanka
 import { canonicalKey, tprFor } from "../services/linkedin/buildUrl.js";
 import { rel, countdown } from "../utils/time.js";
 import { env } from "../config/env.js";
@@ -30,6 +32,10 @@ async function render(req, res, extra = {}) {
     activeCount,
     pollerEnabled: env.pollerEnabled,
     countries: selectableCountries(),
+    // Without this the <select> defaults to whatever sorts first
+    // (Argentina), which is nobody's intent. DEFAULT_GEO is the home
+    // market; a real product would infer it from the request's locale.
+    defaultGeo: DEFAULT_GEO,
     minSweep: env.minSweepMinutes,
     showNew: extra.showNew ?? false,
     error: extra.error || null,

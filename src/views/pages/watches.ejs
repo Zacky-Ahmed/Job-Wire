@@ -67,7 +67,7 @@
         <label class="lbl" for="geo">Country</label>
         <select id="geo" name="geoId">
           <% countries.forEach(function (c) { %>
-            <option value="<%= c.geoId %>" <%= values.geoId === c.geoId ? 'selected' : '' %>>
+            <option value="<%= c.geoId %>" <%= (values.geoId || defaultGeo) === c.geoId ? 'selected' : '' %>>
               <%= c.name %></option>
           <% }) %>
         </select>
@@ -96,5 +96,5 @@
     </div>
   </form>
 </div>
-<script src="/js/range-label.js"></script>
+<script src="<%= asset('/js/range-label.js') %>"></script>
 <% } %>

@@ -104,11 +104,18 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
     if (patch) await Users.applyPatch(user._id, patch);
 
     if (result === otp.OTP_RESULT.OK) {
+      // regenerate gives a fresh session id (prevents fixation), and save()
+      // must complete BEFORE the redirect: res.redirect ends the response
+      // while the store write is still in flight, so a fast client can
+      // request /wire before the session exists and get bounced to /signin.
       req.session.regenerate((err) => {
         if (err) return next(err);
-        req.session.userId = String(user._id); // fresh session id — prevents fixation
-        log.info("verified", { email: user.email });
-        res.redirect("/wire");
+        req.session.userId = String(user._id);
+        req.session.save((err2) => {
+          if (err2) return next(err2);
+          log.info("verified", { email: user.email });
+          res.redirect("/wire");
+        });
       });
       return;
     }
@@ -175,7 +182,11 @@ authRoutes.post("/signin", redirectIfAuthed, signinLimiter, async (req, res, nex
     req.session.regenerate((err) => {
       if (err) return next(err);
       req.session.userId = String(user._id);
-      res.redirect("/wire");
+      // save() before redirecting — see the note in /verify.
+      req.session.save((err2) => {
+        if (err2) return next(err2);
+        res.redirect("/wire");
+      });
     });
   } catch (err) {
     next(err);

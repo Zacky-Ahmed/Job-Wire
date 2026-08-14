@@ -104,9 +104,13 @@ r = await get("/wire");
 ok(r.status === 302, "signed out user is bounced from /wire");
 
 // cleanup
-// Scoped cleanup ONLY. A bare deleteMany({}) here previously wiped the
-// real user's watches — a test must never be able to destroy live data.
-const testUsers = await collections.users().find({ email: { $regex: "^e2e-" } })
+//
+// Scoped to THIS run's account only. Two earlier versions were wrong:
+// a bare deleteMany({}) wiped the real user's watches, and matching
+// /^e2e-/ deleted the accounts of any run happening concurrently — which
+// showed up as a second run failing every authenticated assertion with
+// a 302, because its user vanished mid-test.
+const testUsers = await collections.users().find({ email: EMAIL })
   .project({ _id: 1 }).toArray();
 const testIds = testUsers.map((u) => u._id);
 const testSubs = await collections.subscriptions()
