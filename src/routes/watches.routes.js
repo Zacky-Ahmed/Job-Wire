@@ -18,7 +18,8 @@ import { rel, countdown } from "../utils/time.js";
 import { env } from "../config/env.js";
 
 export const watchesRoutes = Router();
-watchesRoutes.use(requireAuth);
+
+// Per route, not router-wide — see the note in wire.routes.js.
 
 async function render(req, res, extra = {}) {
   const watches = await Subs.listForUser(req.user._id);
@@ -45,11 +46,11 @@ async function render(req, res, extra = {}) {
   });
 }
 
-watchesRoutes.get("/watches", (req, res, next) =>
+watchesRoutes.get("/watches", requireAuth, (req, res, next) =>
   render(req, res, { showNew: req.query.new === "1" }).catch(next)
 );
 
-watchesRoutes.post("/watches", async (req, res, next) => {
+watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
   try {
     const label = str(req.body.label, { max: 80 });
     const kw = cleanKeywords(req.body.keywords);
@@ -85,7 +86,7 @@ watchesRoutes.post("/watches", async (req, res, next) => {
   }
 });
 
-watchesRoutes.post("/watches/:id/toggle", async (req, res, next) => {
+watchesRoutes.post("/watches/:id/toggle", requireAuth, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
     if (!id) return res.redirect("/watches");
@@ -98,7 +99,7 @@ watchesRoutes.post("/watches/:id/toggle", async (req, res, next) => {
   }
 });
 
-watchesRoutes.post("/watches/:id/delete", async (req, res, next) => {
+watchesRoutes.post("/watches/:id/delete", requireAuth, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
     if (id) await Subs.remove(req.user._id, id);

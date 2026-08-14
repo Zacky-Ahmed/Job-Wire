@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="<%= theme %>">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title><%= title %></title>
+  <meta name="description" content="Job Wire watches LinkedIn for the roles you want and emails you within minutes of one being posted — while the recruiter is still reading.">
+  <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
+  <link rel="stylesheet" href="<%= asset('/css/landing.css') %>">
+</head>
+<body class="lp">
+  <header class="lp-nav">
+    <a class="wordmark" href="/">
+      <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"
+        stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0" opacity=".55"/>
+        <path d="M8.2 15.5a5 5 0 0 1 7.6 0" opacity=".8"/><circle cx="12" cy="8" r="1.8" fill="#fff"/></svg></span>
+      <b>Job<span>&nbsp;Wire</span></b>
+    </a>
+    <span class="sp"></span>
+    <button class="btn btn-xs" id="themeBtn" type="button" aria-label="Toggle theme">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></svg>
+      <span id="themeLabel">Dark</span>
+    </button>
+    <a class="btn btn-xs" href="/signin">Sign in</a>
+    <a class="btn btn-xs btn-sig" href="/signup">Start watching</a>
+  </header>
+
+  <%- body %>
+
+  <footer class="lp-foot">
+    <div class="lp-wrap lp-foot-in">
+      <span class="wordmark">
+        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"
+          stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0" opacity=".55"/>
+          <path d="M8.2 15.5a5 5 0 0 1 7.6 0" opacity=".8"/><circle cx="12" cy="8" r="1.8" fill="#fff"/></svg></span>
+        <b>Job<span>&nbsp;Wire</span></b>
+      </span>
+      <p>Built because good applications lose to early ones.</p>
+      <nav>
+        <a href="/signup">Create an account</a>
+        <a href="/signin">Sign in</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="<%= asset('/js/theme.js') %>"></script>
+  <script src="<%= asset('/js/landing.js') %>"></script>
+</body>
+</html>

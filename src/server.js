@@ -31,6 +31,8 @@ import { assets } from "./utils/assets.js";
 import { generalLimiter } from "./middleware/rateLimit.js";
 import { rejectOperators } from "./utils/sanitize.js";
 import { log } from "./utils/logger.js";
+import { page } from "./utils/render.js";
+import { landingRoutes } from "./routes/landing.routes.js";
 import { authRoutes } from "./routes/auth.routes.js";
 import { wireRoutes } from "./routes/wire.routes.js";
 import { watchesRoutes } from "./routes/watches.routes.js";
@@ -94,11 +96,22 @@ export async function buildApp() {
 
   app.get("/healthz", (req, res) => res.type("text/plain").send("ok"));
 
+  app.use(landingRoutes); // public "/" — must come before wireRoutes
   app.use(authRoutes);
   app.use(wireRoutes);
   app.use(watchesRoutes);
 
-  app.use((req, res) => res.status(404).type("text/html").send("Not found."));
+  // A real 404 page, not a bare string. Anything that is not a page —
+  // a missing asset, an htmx fragment — still gets plain text, because
+  // rendering a full layout into an <img> or a swap target is worse than
+  // useless.
+  app.use((req, res) => {
+    res.status(404);
+    if (req.get("HX-Request") || !req.accepts("html")) {
+      return res.type("text/plain").send("Not found");
+    }
+    page(res, "pages/404", { title: "Not found — Job Wire" }, "layouts/public");
+  });
 
   // Error handler. Never leak a stack trace or a driver message to the
   // browser — those contain connection strings and collection names.

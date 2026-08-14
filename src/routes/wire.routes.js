@@ -14,7 +14,10 @@ import { env } from "../config/env.js";
 import { dailyCap, providerLabel } from "../services/mail/transport.js";
 
 export const wireRoutes = Router();
-wireRoutes.use(requireAuth);
+
+// requireAuth is applied PER ROUTE, not with wireRoutes.use(): a
+// router-level guard also intercepts unknown paths, so every 404 in the
+// app was answered with a redirect to /signin.
 
 const WINDOW_MIN = 60; // assumed application window — an estimate, labelled as one
 
@@ -65,9 +68,7 @@ async function gather(user) {
   };
 }
 
-wireRoutes.get("/", (req, res) => res.redirect("/wire"));
-
-wireRoutes.get("/wire", async (req, res, next) => {
+wireRoutes.get("/wire", requireAuth, async (req, res, next) => {
   try {
     const data = await gather(req.user);
     page(res, "pages/wire", { title: "The Wire", nav: "wire", user: req.user, ...data });
@@ -77,7 +78,7 @@ wireRoutes.get("/wire", async (req, res, next) => {
 });
 
 // HTMX polls this every 15s — fragment only, no layout.
-wireRoutes.get("/wire/rows", async (req, res, next) => {
+wireRoutes.get("/wire/rows", requireAuth, async (req, res, next) => {
   try {
     const { dispatches } = await gather(req.user);
     res.render("partials/wire-rows", { dispatches }, (err, html) => {
