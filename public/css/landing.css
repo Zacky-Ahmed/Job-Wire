@@ -56,7 +56,7 @@
 .hp-t{font-family:var(--mono);font-size:10px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--faint);}
 .hp-rows{padding:4px 0;min-height:186px;}
-.hp-row{display:grid;grid-template-columns:52px 1fr auto;gap:12px;align-items:center;
+.hp-row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;
   padding:13px 14px;border-bottom:1px solid var(--line);
   animation:hp-land .55s var(--ease) both;}
 .hp-row:last-child{border-bottom:none;}
@@ -64,7 +64,7 @@
   to{opacity:1;transform:none;}}
 .hp-lead{font-family:var(--display);font-stretch:75%;font-weight:700;font-size:16px;
   font-variant-numeric:tabular-nums;color:var(--sig);}
-.hp-role{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hp-role{font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .hp-co{font-family:var(--mono);font-size:10.5px;color:var(--faint);}
 .hp-foot{padding:10px 14px;border-top:1px solid var(--line);background:var(--go-soft);}
 .hp-foot .hp-t{color:var(--go);}

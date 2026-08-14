@@ -158,7 +158,10 @@ h1,h2,h3{font-family:var(--display);font-stretch:87.5%;font-weight:700;
 .pane{background:var(--card);display:flex;flex-direction:column;overflow-y:auto;}
 .pane-h{display:flex;align-items:center;gap:12px;height:var(--h);flex:none;
   padding:0 30px;border-bottom:1px solid var(--line);}
-.pane-b{padding:34px 30px;margin:auto 0;width:100%;}
+/* flex + gap, not bare blocks: the sign-in button and the "Resend"
+   links below it had no spacing and the button's shadow overlapped them. */
+.pane-b{padding:34px 30px;margin:auto 0;width:100%;
+  display:flex;flex-direction:column;gap:22px;min-width:0;}
 .steps{display:flex;align-items:center;gap:8px;margin-bottom:26px;}
 .steps .s{flex:1;display:flex;align-items:center;gap:8px;font-family:var(--mono);
   font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);}
@@ -198,8 +201,11 @@ form{display:flex;flex-direction:column;gap:18px;}
 .meter i{flex:1;background:var(--line);border-radius:2px;transition:background .3s var(--ease);}
 .meter i.s1{background:var(--bad);} .meter i.s2{background:var(--amber);} .meter i.s3{background:var(--go);}
 
-.otp{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;}
-.otp input{height:60px;text-align:center;font-family:var(--mono);font-size:24px;
+/* minmax(0,1fr), NOT 1fr. Plain 1fr is minmax(auto,1fr), and `auto`
+   honours an <input>'s intrinsic minimum width — about 150px in every
+   browser — so six of them demanded ~900px and overflowed every phone. */
+.otp{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;}
+.otp input{width:100%;min-width:0;height:58px;text-align:center;font-family:var(--mono);font-size:clamp(18px,5.5vw,24px);
   font-weight:600;border-radius:var(--r-sm);border:1.5px solid var(--line-2);
   background:var(--sunk);padding:0;transition:all .18s var(--ease);}
 .otp input:focus{outline:none;border-color:var(--vio);background:var(--card);
@@ -322,7 +328,7 @@ form{display:flex;flex-direction:column;gap:18px;}
 .dlg-b{padding:22px 20px;display:flex;flex-direction:column;gap:18px;}
 .dlg-f{padding:15px 20px;border-top:1px solid var(--line);display:flex;gap:10px;background:var(--sunk);}
 .dlg-f .btn{flex:1;}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;}
 .q{font-family:var(--mono);font-size:11.5px;line-height:1.8;background:var(--sunk);
   border:1px solid var(--line);border-radius:var(--r-sm);padding:13px;
   word-break:break-all;color:var(--ink-2);}
@@ -366,3 +372,13 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .dlg-b .f{gap:4px;}
 .dlg-b .inp input,.dlg-b select{height:40px;font-size:15px;}
 .dlg-b input[type=range]{height:30px;}
+
+/* Auth pane on a phone: the fixed 480px column and 30px padding left the
+   OTP row cramped once the poster was hidden. */
+@media (max-width:560px){
+  .pane-b{padding:24px 16px;gap:18px;}
+  .pane-h{padding:0 16px;}
+  .otp{gap:6px;}
+  .otp input{height:52px;}
+  .ftitle h2{font-size:25px;}
+}
