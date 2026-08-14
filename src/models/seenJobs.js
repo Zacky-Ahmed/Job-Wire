@@ -5,6 +5,7 @@
 // insert loses the race instead of producing a duplicate email.
 
 import { collections } from "../config/db.js";
+import { log } from "../utils/logger.js";
 
 /** "14 minutes ago" + when we read it -> an absolute Date. */
 function relativeToDate(text, at) {
@@ -30,6 +31,22 @@ export async function knownIds(queryId, jobIds) {
 export async function insertNew(queryId, jobs) {
   if (!jobs.length) return [];
   const now = new Date();
+
+  // Every id must be source-qualified ("linkedin:123"). The unique index
+  // is on (queryId, jobId), so "123" and "linkedin:123" look like two
+  // different jobs and BOTH get stored — which is exactly what happened
+  // when the database was migrated to the prefixed format while the old
+  // build was still running and still writing bare ids: 24 duplicates,
+  // and a second alert for every one of them.
+  //
+  // Adapters qualify their ids, so a bare one here is a bug in a new
+  // source. Say so loudly rather than quietly duplicating.
+  const bare = jobs.filter((j) => !String(j.jobId).includes(":"));
+  if (bare.length) {
+    log.error("source returned unqualified job ids — they will duplicate", {
+      count: bare.length, sample: bare[0].jobId,
+    });
+  }
   const docs = jobs.map((j) => ({
     queryId,
     jobId: j.jobId,
