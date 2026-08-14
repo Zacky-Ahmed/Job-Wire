@@ -83,6 +83,28 @@ if (fromAddress !== env.gmailUser.toLowerCase()) {
   );
 }
 
+// Brevo hands out two credentials on the same screen and they are not
+// interchangeable. The HTTP API (/v3/smtp/email) needs the REST key:
+//
+//   xkeysib-...    API key      <- what this app uses
+//   xsmtpsib-...   SMTP key     <- username/password for the SMTP relay
+//
+// Pasting the SMTP key gives "401: Key not found" at send time, hours
+// after the deploy looked fine, so name the mistake at boot instead.
+if (env.brevoApiKey && env.brevoApiKey.startsWith("xsmtpsib-")) {
+  throw new Error(
+    "BREVO_API_KEY is an SMTP key (xsmtpsib-...), which the HTTP API rejects " +
+    'with "401: Key not found". Generate a REST API key instead: Brevo > SMTP & API > ' +
+    'the "API Keys" tab (not "SMTP"). It starts with xkeysib-.'
+  );
+}
+if (env.brevoApiKey && !env.brevoApiKey.startsWith("xkeysib-")) {
+  console.warn(
+    `WARNING  BREVO_API_KEY does not start with "xkeysib-". If sends fail ` +
+    `with 401, check you copied the API key rather than the SMTP key.`
+  );
+}
+
 // Sending as a freemail address through a third party breaks DMARC
 // alignment: gmail.com's own policy says only Google may send as
 // gmail.com, so mail relayed by Brevo claims a domain it cannot prove.
