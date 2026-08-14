@@ -6,6 +6,14 @@
 
 import { collections } from "../config/db.js";
 
+/** "14 minutes ago" + when we read it -> an absolute Date. */
+function relativeToDate(text, at) {
+  const m = /(\d+)\s*(minute|hour|day|week)/i.exec(text || "");
+  if (!m) return null;
+  const unit = { minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5 }[m[2].toLowerCase()];
+  return new Date(at.getTime() - Number(m[1]) * unit);
+}
+
 export async function knownIds(queryId, jobIds) {
   const rows = await collections.seenJobs()
     .find({ queryId, jobId: { $in: jobIds } }, { projection: { jobId: 1 } })
@@ -30,7 +38,10 @@ export async function insertNew(queryId, jobs) {
     location: j.location,
     url: j.url,
     postedText: j.postedText,
-    postedAt: j.postedAt,
+    // Absolute posting time. LinkedIn gives a relative string ("14 minutes
+    // ago") which is only meaningful at the moment we read it, so resolve
+    // it now — later it silently becomes wrong.
+    postedAt: j.postedAt || relativeToDate(j.postedText, now),
     firstSeenAt: now, // the TTL index expires on this field
   }));
 

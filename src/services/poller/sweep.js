@@ -22,41 +22,64 @@ import { log } from "../../utils/logger.js";
 
 export async function sweepQuery(query) {
   const started = Date.now();
-  const url = buildGuestUrl({
-    keywords: query.keywords,
-    geoId: query.geoId,
-    sweepMinutes: query.everyMinutes,
-  });
 
-  let html;
-  try {
-    html = await fetchLinkedIn(url);
-  } catch (err) {
-    // Blocked: back off hard and exponentially. Everything else: short retry.
-    const backoff =
-      err instanceof BlockedByLinkedIn
-        ? Math.min(120, query.everyMinutes * Math.pow(2, (query.failCount || 0) + 1))
-        : query.everyMinutes * 2;
-    await Queries.recordFailure(query._id, backoff);
-    log.warn("sweep failed", {
-      queryId: String(query._id), reason: err.name, message: err.message, backoffMin: backoff,
+  // The guest endpoint pages 10 at a time. With a 24h window a busy
+  // market returns ~30, so page 1 alone would silently ignore the rest.
+  // Sorted newest-first, so we stop as soon as a page adds nothing new.
+  const PAGE_SIZE = 10;
+  const MAX_PAGES = 4;
+  const fetchedMap = new Map();
+
+  for (let p = 0; p < MAX_PAGES; p++) {
+    const url = buildGuestUrl({
+      keywords: query.keywords,
+      geoId: query.geoId,
+      sweepMinutes: query.everyMinutes,
+      start: p * PAGE_SIZE,
     });
-    return { ok: false, error: err.message };
+
+    let html;
+    try {
+      html = await fetchLinkedIn(url, { jitter: p === 0 });
+    } catch (err) {
+      // Blocked: back off hard and exponentially. Everything else: short retry.
+      const backoff =
+        err instanceof BlockedByLinkedIn
+          ? Math.min(120, query.everyMinutes * Math.pow(2, (query.failCount || 0) + 1))
+          : query.everyMinutes * 2;
+      await Queries.recordFailure(query._id, backoff);
+      log.warn("sweep failed", {
+        queryId: String(query._id), page: p, reason: err.name,
+        message: err.message, backoffMin: backoff,
+      });
+      return { ok: false, error: err.message };
+    }
+
+    // "empty" is a healthy answer (nothing more to list) and must NOT be
+    // treated as a failure, or every quiet query gets parked overnight.
+    // "unrecognised" means a login wall or a markup change.
+    const shape = classifyResponse(html);
+    if (shape === "unrecognised") {
+      await Queries.recordFailure(query._id, query.everyMinutes * 3);
+      log.error("substantial response with no job markup — LinkedIn may have changed", {
+        queryId: String(query._id), page: p, bytes: html.length,
+      });
+      return { ok: false, error: "unrecognised markup" };
+    }
+    if (shape === "empty") break;
+
+    const jobs = parseJobs(html);
+    if (!jobs.length) break;
+
+    const before = fetchedMap.size;
+    jobs.forEach((j) => fetchedMap.set(j.jobId, j));
+    // A page that adds nothing means we have reached the end, or LinkedIn
+    // is repeating itself. Either way, stop asking.
+    if (fetchedMap.size === before) break;
   }
 
-  // "empty" is a healthy answer (no jobs posted in the window) and must
-  // NOT be treated as a failure, or every quiet query gets parked
-  // overnight. "unrecognised" means a login wall or a markup change.
-  const shape = classifyResponse(html);
-  if (shape === "unrecognised") {
-    await Queries.recordFailure(query._id, query.everyMinutes * 3);
-    log.error("substantial response with no job markup — LinkedIn may have changed", {
-      queryId: String(query._id), bytes: html.length,
-    });
-    return { ok: false, error: "unrecognised markup" };
-  }
+  const fetched = [...fetchedMap.values()];
 
-  const fetched = shape === "empty" ? [] : parseJobs(html);
   const { alertable, primed } = await diff(query, fetched);
 
   await Queries.reschedule(query._id, {

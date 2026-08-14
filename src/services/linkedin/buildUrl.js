@@ -9,28 +9,29 @@
 
 import { findGeo } from "./geoIds.js";
 
-// MEASURED, not assumed. r3600 is UNRELIABLE on the guest endpoint —
-// it intermittently returns a 26-byte empty document even when matching
-// jobs exist. Two probes minutes apart, live, 2026-08-13:
+// MEASURED, twice, against live LinkedIn — and the answer both times was
+// that NARROW WINDOWS LIE.
 //
-//   probe A   r3600    26B   0 jobs   <- empty, while...
-//             r7200  3113B   1 job       ...the same job showed here
-//   probe B   r3600  3117B   1 job    <- worked this time
+//   2026-08-13  r3600 returned an empty document while r7200 showed a job
+//               posted 23 minutes earlier.
+//   2026-08-14  r7200 returned 2 jobs and omitted one posted 30 minutes
+//               earlier; r14400 returned it; r86400 returned 27.
 //
-// It is not consistently broken, it is flaky, which is worse: the poller
-// swept 12 times in an hour and got nothing every time. 7200 (2h) is the
-// floor because a window that silently returns empty makes the whole
-// product silently do nothing. Re-check with `npm run test-windows` if
-// catches ever stop arriving.
-const WINDOWS = [7200, 14400, 86400]; // 2h, 4h, 24h
-const MIN_WINDOW = 7200;
+// The filter is not a reliable "posted within" — it silently drops recent
+// postings, which is the worst possible failure here because it looks
+// exactly like a quiet day.
+//
+// So we stop relying on it. The window was only ever an optimisation to
+// keep responses small; correctness comes from deduplicating on jobId,
+// which is unaffected by how much history we ask for. Asking for 24h
+// costs ~30KB per sweep instead of ~3KB and cannot miss anything.
+const WINDOW = 86400;
 
-export function tprFor(sweepMinutes) {
-  const needed = sweepMinutes * 60 * 4;
-  return WINDOWS.find((w) => needed <= w) ?? 86400;
+export function tprFor() {
+  return WINDOW;
 }
 
-export { MIN_WINDOW };
+export { WINDOW as MIN_WINDOW };
 
 export function buildSearchUrl({ keywords, geoId, sweepMinutes = 5, page = 0 }) {
   const geo = findGeo(geoId);

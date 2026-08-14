@@ -3,7 +3,7 @@
 // Drives the SIGNED-IN pages against a running server.
 // Start the server first, then:  npm run e2e
 //
-// Seeds a pre-verified user directly in Mongo Seeds a pre-verified user directly in Mongo
+// Seeds a pre-verified user directly in Mongo
 // so the run does not depend on reading a real inbox.
 const { connectDb, collections, closeDb } = await import("../src/config/db.js");
 const pw = await import("../src/services/auth/password.js");
@@ -78,7 +78,8 @@ r = await post("/watches", { _csrf: token, label: "Interns SL", keywords: "Inter
 html = await r.text();
 ok(html.includes("Interns SL"), "watch created and listed");
 ok(html.includes("first sweep only memorises") || html.includes("memorises"), "priming explained");
-ok(/f_TPR=r(7200|14400)/.test(html), "computed f_TPR shown on the row (r3600 is never used)");
+ok(/f_TPR=r86400/.test(html) && !/f_TPR=r(3600|7200|14400)/.test(html),
+   "uses the 24h window — narrow ones silently drop recent jobs");
 
 console.log("\n── shared query + duplicates ──");
 r = await post("/watches", { _csrf: token, label: "Same thing", keywords: " intern ", geoId: "100446352", every: "9" });

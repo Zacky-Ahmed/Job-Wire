@@ -41,7 +41,11 @@ async function gather(user) {
   );
 
   const dispatches = caught.map((j) => {
-    const age = minutesSince(j.firstSeenAt);
+    // The application window is about how long the JOB has been open, not
+    // how long we have known about it. Using firstSeenAt made a job we
+    // discovered late look freshly posted — a fifteen-hour-old listing
+    // reading "~60m left" is the most misleading thing this screen can say.
+    const age = minutesSince(j.postedAt || j.firstSeenAt);
     const pct = Math.min(100, Math.round((age / WINDOW_MIN) * 100));
     return {
       ...j,
