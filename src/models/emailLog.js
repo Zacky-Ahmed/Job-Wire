@@ -52,17 +52,31 @@ export function findRetryable({ maxAttempts = 3, olderThanMs = 60_000, limit = 5
     .toArray();
 }
 
+/**
+ * A failure that a human must fix — a rejected API key, an unverified
+ * sender, a bad password. Retrying these is pointless: the outcome is
+ * identical every time.
+ *
+ * They must NOT consume an attempt, or the queue exhausts itself in the
+ * ninety seconds before anyone notices, and the alerts are lost even
+ * after the config is corrected. Observed twice: a wrong Brevo key
+ * burned all three attempts before the right one could be deployed.
+ */
+export function isConfigError(error = "") {
+  return /401|403|key not found|sender not verified|invalid login|not accepted|unauthor/i
+    .test(String(error));
+}
+
 export function markRetried(id, { ok, providerId, error }) {
-  return collections.emailLog().updateOne(
-    { _id: id },
-    {
-      $set: {
-        status: ok ? "sent" : "failed",
-        providerId: providerId || null,
-        error: error || null,
-        lastTriedAt: new Date(),
-      },
-      $inc: { attempts: 1 },
-    }
-  );
+  const update = {
+    $set: {
+      status: ok ? "sent" : "failed",
+      providerId: providerId || null,
+      error: error || null,
+      lastTriedAt: new Date(),
+    },
+  };
+  // Only real, transient failures count against the attempt budget.
+  if (!ok && !isConfigError(error)) update.$inc = { attempts: 1 };
+  return collections.emailLog().updateOne({ _id: id }, update);
 }

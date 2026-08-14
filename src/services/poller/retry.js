@@ -62,6 +62,12 @@ export async function retryFailedSends() {
       log.info("retry delivered a previously failed alert", {
         to: user.email, jobs: jobs.length, attempt: (entry.attempts || 0) + 1,
       });
+    } else if (EmailLog.isConfigError(res.error)) {
+      // Held, not counted — it will keep waiting until someone fixes the
+      // credentials, then deliver on the next tick.
+      log.error("alert blocked by a configuration problem — fix and it will send itself", {
+        to: user.email, message: res.error,
+      });
     } else {
       log.warn("retry failed again", {
         to: user.email, attempt: (entry.attempts || 0) + 1, message: res.error,
