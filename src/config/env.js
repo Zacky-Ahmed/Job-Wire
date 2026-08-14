@@ -83,6 +83,22 @@ if (fromAddress !== env.gmailUser.toLowerCase()) {
   );
 }
 
+// Sending as a freemail address through a third party breaks DMARC
+// alignment: gmail.com's own policy says only Google may send as
+// gmail.com, so mail relayed by Brevo claims a domain it cannot prove.
+// Gmail recipients — which is nearly everyone here — filter it hardest.
+// Brevo flags this too, but a dashboard warning is easy to never revisit.
+const FREEMAIL = /@(gmail|googlemail|yahoo|outlook|hotmail|live|aol|icloud|proton(mail)?)\./i;
+if (env.brevoApiKey && FREEMAIL.test(fromAddress)) {
+  console.warn(
+    `WARNING  MAIL_FROM (${fromAddress}) is a freemail address being relayed ` +
+    `through Brevo. DMARC cannot align, so Gmail and Outlook will filter ` +
+    `these aggressively — including the verification codes new users need ` +
+    `to sign up at all. Fix: register a domain, authenticate it in Brevo ` +
+    `(SPF + DKIM), and send as alerts@yourdomain.`
+  );
+}
+
 if (env.minSweepMinutes < 1) {
   throw new Error("MIN_SWEEP_MINUTES must be at least 1 — sub-minute polling will get you blocked.");
 }
