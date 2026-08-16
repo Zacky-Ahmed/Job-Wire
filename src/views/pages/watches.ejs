@@ -59,8 +59,20 @@
       <div class="f">
         <label class="lbl" for="kw">Job titles or keywords</label>
         <div class="inp"><input id="kw" name="keywords" placeholder="intern, software engineer"
-          value="<%= values.keywords || '' %>" autocomplete="off" required></div>
-        <span class="hint">Separate with commas. Broader keywords catch more.</span>
+          value="<%= values.keywords || '' %>" autocomplete="off"></div>
+        <span class="hint">Separate with commas. Matched against the job title.</span>
+      </div>
+
+      <div class="f">
+        <label class="src src-wide">
+          <input type="checkbox" name="matchAll" <%= values.matchAll ? 'checked' : '' %>>
+          <span class="src-b">
+            <span class="src-n">Send me every job in the country</span>
+            <span class="src-h">Ignores the keywords above. Employers often tag a job
+              “Internship” while titling it something else entirely — those reach you
+              only this way. Expect around 70 a day for Sri Lanka.</span>
+          </span>
+        </label>
       </div>
 
       <div class="f">

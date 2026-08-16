@@ -46,6 +46,7 @@ export async function sweepQuery(query) {
         const jobs = await source.fetchJobs({
           keywords: query.keywords,
           geoId: query.geoId,
+          matchAll: !!query.matchAll,
           page: p,
         });
         if (!jobs.length) break;
@@ -76,6 +77,30 @@ export async function sweepQuery(query) {
 
   const fetched = [...fetchedMap.values()];
   const { alertable, primed } = await diff(query, fetched);
+
+  // COVERAGE CHECK.
+  //
+  // Every failure this project has had with LinkedIn was silent: a narrow
+  // f_TPR, an unhonoured sort, a keyword filter that returns 24 results
+  // one minute and 3 the next. In each case the sweep "succeeded" and
+  // simply saw less, which is indistinguishable from a quiet morning —
+  // so the only thing that ever caught it was the user spotting a job on
+  // LinkedIn that never reached their inbox. That is the system working
+  // backwards.
+  //
+  // A query that normally yields ~60 jobs and suddenly yields 10 has not
+  // gone quiet, it has gone blind. Compare against the best this query
+  // has ever done and say so out loud.
+  const peak = query.trackedPeak || 0;
+  if (peak >= 10 && fetched.length < peak * 0.5) {
+    log.error("COVERAGE DROP — this sweep saw far less than this watch normally does", {
+      queryId: String(query._id),
+      keywords: query.keywords.join("+"),
+      sawNow: fetched.length,
+      normallySees: peak,
+      note: "jobs are probably being missed; suspect a source filter, not a quiet day",
+    });
+  }
 
   await Queries.reschedule(query._id, {
     everyMinutes: query.everyMinutes,

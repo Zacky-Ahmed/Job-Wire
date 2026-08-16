@@ -31,7 +31,7 @@ const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
 /**
  * @returns {{jobId,title,company,location,url,postedText}[]}
  */
-export function parseJobs(html) {
+export function parseJobs(html, now = new Date()) {
   const $ = cheerio.load(html);
   const jobs = [];
   const seen = new Set();
@@ -68,12 +68,52 @@ export function parseJobs(html) {
       company: company || "Unknown",
       location,
       postedText,
-      postedAt: datetime ? new Date(datetime) : null,
+      postedAt: resolvePostedAt(postedText, datetime, now),
       url: `https://www.linkedin.com/jobs/view/${jobId}/`,
     });
   });
 
   return jobs;
+}
+
+const RELATIVE = /(\d+)\s*(minute|hour|day|week|month)/i;
+const MS = { minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5, month: 2592e6 };
+
+/**
+ * Turn a card's two conflicting age signals into one instant.
+ *
+ * LinkedIn gives us both, and each is precise where the other is not:
+ *
+ *   postedText  "1 hour ago"   minute-accurate, but relative to NOW
+ *   datetime    "2026-08-16"   absolute, but DATE ONLY
+ *
+ * We used to take the datetime attribute whenever it existed. Because it
+ * carries no time of day, `new Date("2026-08-16")` is midnight UTC — so a
+ * job posted at 02:36 was recorded as having been posted at 00:00, and
+ * every job caught during a morning looked hours older than it was. That
+ * is what made the whole wire read "likely closed".
+ *
+ * So: for anything measured in minutes or hours, the relative text wins,
+ * because at that scale it is the only signal with any resolution. Past a
+ * day the relative text goes coarse ("2 weeks ago") and the exact date is
+ * the better of the two.
+ *
+ * `now` must be the moment the page was FETCHED. Re-resolving stored text
+ * against a later clock silently ages every job — a repair script once did
+ * exactly that and made a week-old backlog look brand new.
+ */
+export function resolvePostedAt(postedText, datetime, now = new Date()) {
+  const m = RELATIVE.exec(postedText || "");
+  const exact = datetime ? new Date(datetime) : null;
+  const exactOk = exact && !Number.isNaN(exact.getTime());
+
+  if (m) {
+    const unit = m[2].toLowerCase();
+    const relative = new Date(now.getTime() - Number(m[1]) * MS[unit]);
+    if (unit === "minute" || unit === "hour") return relative;
+    return exactOk ? exact : relative;
+  }
+  return exactOk ? exact : null;
 }
 
 /**

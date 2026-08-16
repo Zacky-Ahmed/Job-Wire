@@ -103,6 +103,23 @@ await post(`/watches/${id}/delete`, { _csrf: token });
 html = await (await get("/watches")).text();
 ok(html.includes("No watches"), "delete removes it");
 
+console.log("\n── catch-everything watch ──");
+// Keywords can only ever match a job TITLE. Employers routinely tag a job
+// "Internship" while titling it "Real Estate Sales Agent" — it shows in a
+// logged-in search for "intern" and no title filter can reach it. So this
+// mode must be creatable with no keywords at all; that is its whole point.
+//
+// Runs last, on the empty list the delete above leaves behind, so it does
+// not perturb the single-watch assumptions the earlier assertions make.
+token = csrf(html);
+r = await post("/watches", { _csrf: token, label: "Everything SL", matchAll: "on", geoId: "100446352", every: "5" });
+html = await r.text();
+ok(html.includes("Everything SL"), "keywordless watch accepted when matchAll is on");
+const allQ = await collections.queries().findOne({ matchAll: true });
+ok(!!allQ, "matchAll persisted on the query row");
+ok(!!allQ && /@@all$/.test(allQ.keywordsKey),
+  "matchAll owns a distinct key — it must never share a row with the keyword watch");
+
 console.log("\n── sign out ──");
 await post("/signout", { _csrf: csrf(html) });
 r = await get("/wire");
