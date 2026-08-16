@@ -76,6 +76,34 @@ export function parseJobs(html, now = new Date()) {
   return jobs;
 }
 
+/**
+ * Read the criteria block off a single job posting page.
+ *
+ * This is the field the logged-in search actually filters on. A card in
+ * the results list does not carry it, which is the whole reason Job Wire
+ * kept disagreeing with what the user saw:
+ *
+ *   "Real Estate Sales Agent"  employment type Internship  -> belongs
+ *   "Assistant Engineer HVAC"  employment type Full-time   -> does not
+ *
+ * Neither of those can be decided from the title, and the guest keyword
+ * endpoint gets both of them wrong — it ranks by loose relevance, so it
+ * drops the first and returns the second.
+ */
+export function parseCriteria(html) {
+  const $ = cheerio.load(html);
+  const out = {};
+  $(".description__job-criteria-item, li.job-criteria__item").each((_, el) => {
+    const key = clean($(el).find(".description__job-criteria-subheader, .job-criteria__subheader").text()).toLowerCase();
+    const val = clean($(el).find(".description__job-criteria-text, .job-criteria__text").text());
+    if (!key || !val) return;
+    if (key.includes("employment")) out.employmentType = val;
+    else if (key.includes("seniority")) out.seniority = val;
+    else if (key.includes("function")) out.jobFunction = val;
+  });
+  return out;
+}
+
 const RELATIVE = /(\d+)\s*(minute|hour|day|week|month)/i;
 const MS = { minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5, month: 2592e6 };
 
