@@ -6,7 +6,7 @@
 import { collections } from "../config/db.js";
 
 /** Find the shared query row or create it. Never creates a duplicate. */
-export async function upsert({ keywordsKey, keywords, geoId, location, everyMinutes, sources }) {
+export async function upsert({ keywordsKey, keywords, geoId, location, everyMinutes, sources, matchAll }) {
   const now = new Date();
   const res = await collections.queries().findOneAndUpdate(
     { keywordsKey, geoId },
@@ -14,6 +14,7 @@ export async function upsert({ keywordsKey, keywords, geoId, location, everyMinu
       $setOnInsert: {
         keywordsKey, keywords, geoId, location,
         sources: sources?.length ? sources : ["linkedin"],
+        matchAll: !!matchAll,
         primed: false,          // first sweep memorises, does not alert
         lastFetchedAt: null,
         nextFetchAt: now,       // sweep it immediately to prime
@@ -51,7 +52,11 @@ export function reschedule(id, { everyMinutes, primed, tracked }) {
   // climb forever — 574 for a search that returns about 25 — which made
   // it useless for spotting a source that suddenly returns nothing.
   if (tracked !== undefined) set.trackedCount = tracked;
-  return collections.queries().updateOne({ _id: id }, { $set: set });
+  const update = { $set: set };
+  // High-water mark, so a sweep can tell "quiet morning" from "we went
+  // blind". $max both compares and initialises on first write.
+  if (tracked !== undefined) update.$max = { trackedPeak: tracked };
+  return collections.queries().updateOne({ _id: id }, update);
 }
 
 export function recordFailure(id, backoffMinutes) {

@@ -394,3 +394,7 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .src-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .src-n{font-size:14.5px;font-weight:600;}
 .src-h{font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:1.4;}
+/* Not a source — a coverage decision, so it carries the signal colour
+   rather than the structural violet of the source list above it. */
+.src-wide input{accent-color:var(--sig);}
+.src-wide:has(input:checked){border-color:var(--sig);background:var(--sig-soft);}

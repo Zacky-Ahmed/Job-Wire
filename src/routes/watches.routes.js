@@ -66,23 +66,32 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     const chosen = [...new Set(rawSources)].filter((id) => getSource(id));
     const sources = chosen.length ? chosen : [DEFAULT_SOURCE];
     const every = int(req.body.every, { min: env.minSweepMinutes, max: 60, fallback: 5 });
-    const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every, sources };
+    // Deliberately opt-in. A keyword can only ever be matched against a
+    // job TITLE, and employers routinely tag a job "Internship" while
+    // calling it "Real Estate Sales Agent" — that one shows in a
+    // logged-in search for "intern" and no title filter on earth finds
+    // it. This is the only setting that catches those.
+    const matchAll = req.body.matchAll === "on" || req.body.matchAll === "1";
+    const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every, sources, matchAll };
 
     if (!label)
       return render(req, res, { showNew: true, values, error: "Give it a name so you can tell watches apart." });
-    if (!kw.length)
-      return render(req, res, { showNew: true, values, error: "At least one keyword — otherwise this matches every job in the country." });
+    if (!kw.length && !matchAll)
+      return render(req, res, { showNew: true, values, error: "At least one keyword — or tick “every job in the country” below." });
     if (!isKnownGeo(geoId))
       return render(req, res, { showNew: true, values, error: "Pick a country from the list." });
 
     const geo = findGeo(geoId);
     const query = await Queries.upsert({
-      keywordsKey: canonicalKey(kw, sources),
+      // matchAll changes WHICH jobs a query yields, so two watches that
+      // differ only by it must not share a row.
+      keywordsKey: canonicalKey(kw, sources) + (matchAll ? "@@all" : ""),
       keywords: kw,
       geoId,
       location: geo.name,
       everyMinutes: every,
       sources,
+      matchAll,
     });
 
     const sub = await Subs.create({ userId: req.user._id, queryId: query._id, label });
