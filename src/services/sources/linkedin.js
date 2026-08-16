@@ -31,6 +31,7 @@ import { guardedFetch } from "../http/guardedFetch.js";
 import { parseJobs, parseCriteria, classifyResponse } from "../linkedin/parse.js";
 import { findGeo } from "../linkedin/geoIds.js";
 import { qualify } from "./index.js";
+import { matchesAny } from "../../utils/match.js";
 import { log } from "../../utils/logger.js";
 
 export const id = "linkedin";
@@ -151,11 +152,10 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
   if (matchAll || !words.length) return jobs.map(strip);
 
-  const needles = words.map((w) => w.toLowerCase());
   const kept = [];
 
   for (const job of jobs) {
-    if (needles.some((n) => job.title.toLowerCase().includes(n))) {
+    if (matchesAny(job.title, words)) {
       kept.push(strip({ ...job, matchedBy: "title" }));
       continue;
     }
@@ -173,9 +173,22 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
       continue;
     }
 
-    const tags = [criteria.employmentType, criteria.seniority].filter(Boolean).join(" ").toLowerCase();
-    if (needles.some((n) => tags.includes(n))) {
-      kept.push(strip({ ...job, matchedBy: criteria.employmentType || "tag" }));
+    // Test the same places LinkedIn's own search does, and remember WHICH
+    // one hit — labelling every tag match with the employment type said
+    // "Full-time" for a job whose SENIORITY was Internship, which reads
+    // as a bug in the wire even though the job belonged there.
+    const fields = [
+      ["employment type", criteria.employmentType],
+      ["seniority", criteria.seniority],
+      ["description", criteria.description],
+    ];
+    const hit = fields.find(([, v]) => matchesAny(v, words));
+
+    if (hit) {
+      // For the tag fields the value itself is the useful label
+      // ("Internship"); for the body it is not, so name the field.
+      const [field, value] = hit;
+      kept.push(strip({ ...job, matchedBy: field === "description" ? "description" : value }));
     } else {
       log.info("dropped a job LinkedIn's fuzzy search returned but the watch did not ask for", {
         jobId: job.jobId, title: job.title,

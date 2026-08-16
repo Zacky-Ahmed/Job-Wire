@@ -14,6 +14,7 @@ import * as SeenJobs from "../../models/seenJobs.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
+import { matchesAny } from "../../utils/match.js";
 import { sendAlert } from "../mail/send.js";
 import { dailyCap } from "../mail/transport.js";
 import { env } from "../../config/env.js";
@@ -126,9 +127,9 @@ export async function sweepQuery(query) {
     // half of the test, no request per job. A first sweep is the worst
     // possible moment to fire seventy detail requests at LinkedIn, and
     // these jobs are not being alerted on anyway.
-    const words = (query.matchAll ? [] : query.keywords).map((w) => w.toLowerCase());
+    const words = query.matchAll ? [] : query.keywords;
     const obvious = (storedJobs || []).filter(
-      (j) => !words.length || words.some((n) => j.title.toLowerCase().includes(n))
+      (j) => !words.length || matchesAny(j.title, words)
     );
     await SeenJobs.markMatched(query._id, obvious.map((j) => ({ ...j, matchedBy: "title" })));
     return { ok: true, fetched: fetched.length, alerted: 0 };
