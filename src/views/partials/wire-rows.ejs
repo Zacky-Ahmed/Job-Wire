@@ -17,7 +17,11 @@
         <% } else { %><span class="pill off">—</span><% } %>
       </span>
       <div class="role">
-        <div class="a"><%= d.title %></div>
+        <div class="a"><%= d.title %>
+          <% if (d.matchedBy && d.matchedBy !== 'title') { %>
+            <span class="why" title="Its title does not mention your keyword. It is here because the employer tagged it this way — which is exactly what your LinkedIn filter goes on, spam included."><%= d.matchedBy %> tag</span>
+          <% } %>
+        </div>
         <div class="b"><%= d.company %><%= d.location ? ' · ' + d.location : '' %></div>
       </div>
       <span class="muted hide"><span class="pill vio"><%= d.label %></span></span>
