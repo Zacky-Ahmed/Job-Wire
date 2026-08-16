@@ -101,6 +101,13 @@ export function parseCriteria(html) {
     else if (key.includes("seniority")) out.seniority = val;
     else if (key.includes("function")) out.jobFunction = val;
   });
+  // LinkedIn's own keyword search reads the body, not just the tags — a
+  // job titled "Digital Content Presenter" appears in a search for
+  // "intern" because the description says so. Matching tags alone dropped
+  // those, which is a gap against the page the user is looking at.
+  out.description = clean(
+    $(".description__text, .show-more-less-html__markup").first().text()
+  ).slice(0, 20000);
   return out;
 }
 

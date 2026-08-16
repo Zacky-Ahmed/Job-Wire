@@ -17,7 +17,8 @@
     "test-sweep": "node scripts/test-sweep.js",
     "test-windows": "node scripts/test-windows.js",
     "preview-email": "node scripts/preview-email.js",
-    "verify-geoids": "node scripts/verify-geoids.js"
+    "verify-geoids": "node scripts/verify-geoids.js",
+    "parity": "node scripts/parity.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
