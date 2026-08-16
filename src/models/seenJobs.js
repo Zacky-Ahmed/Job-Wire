@@ -60,6 +60,14 @@ export async function insertNew(queryId, jobs) {
     // it now — later it silently becomes wrong.
     postedAt: j.postedAt || relativeToDate(j.postedText, now),
     firstSeenAt: now, // the TTL index expires on this field
+    // This collection is the dedupe ledger, and it now records the WHOLE
+    // country feed — because deciding whether a job matches needs its
+    // employment type, which is only readable one job at a time and so
+    // has to happen after deduping. Most rows here were merely considered.
+    // `matched` is what separates "we looked at this" from "this is the
+    // user's job", and it is what the wire renders.
+    matched: false,
+    matchedBy: null,
   }));
 
   try {
@@ -76,9 +84,30 @@ export function countFor(queryId) {
   return collections.seenJobs().countDocuments({ queryId });
 }
 
+/** Record which of the jobs we stored the watch actually wanted, and why. */
+export async function markMatched(queryId, jobs) {
+  if (!jobs.length) return;
+  const ops = jobs.map((j) => ({
+    updateOne: {
+      filter: { queryId, jobId: j.jobId },
+      update: { $set: { matched: true, matchedBy: j.matchedBy || "keyword" } },
+    },
+  }));
+  await collections.seenJobs().bulkWrite(ops, { ordered: false });
+}
+
+/**
+ * The wire shows matched jobs only. Rows left unmatched are the rest of
+ * the country's feed — kept so we never reconsider them, never shown,
+ * because a list of jobs the user did not ask for is not a wire.
+ *
+ * Rows written before `matched` existed have no such field; treat those
+ * as matched, since under the old code every stored job had already
+ * passed a keyword filter.
+ */
 export function recentForQueries(queryIds, limit = 50) {
   return collections.seenJobs()
-    .find({ queryId: { $in: queryIds } })
+    .find({ queryId: { $in: queryIds }, matched: { $ne: false } })
     .sort({ firstSeenAt: -1 })
     .limit(limit)
     .toArray();

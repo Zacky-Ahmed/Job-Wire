@@ -17,7 +17,7 @@ export async function diff(query, fetched) {
   // Priming: remember everything, alert on nothing.
   if (!query.primed) {
     await SeenJobs.insertNew(query._id, unseen);
-    return { alertable: [], stored: unseen.length, primed: true };
+    return { alertable: [], stored: unseen.length, primed: true, storedJobs: unseen };
   }
 
   // insertNew returns only what THIS call inserted, so a concurrent

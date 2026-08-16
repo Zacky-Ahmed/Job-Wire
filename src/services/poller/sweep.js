@@ -10,6 +10,7 @@ import { getSource, DEFAULT_SOURCE } from "../sources/index.js";
 import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
+import * as SeenJobs from "../../models/seenJobs.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
@@ -76,7 +77,7 @@ export async function sweepQuery(query) {
   }
 
   const fetched = [...fetchedMap.values()];
-  const { alertable, primed } = await diff(query, fetched);
+  const { alertable, primed, storedJobs } = await diff(query, fetched);
 
   // COVERAGE CHECK.
   //
@@ -119,9 +120,59 @@ export async function sweepQuery(query) {
     ms: Date.now() - started,
   });
 
-  if (primed || !alertable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+  if (primed) {
+    // The priming sweep alerts on nothing, but it should not leave the
+    // wire blank either. Mark what matches on title alone — the cheap
+    // half of the test, no request per job. A first sweep is the worst
+    // possible moment to fire seventy detail requests at LinkedIn, and
+    // these jobs are not being alerted on anyway.
+    const words = (query.matchAll ? [] : query.keywords).map((w) => w.toLowerCase());
+    const obvious = (storedJobs || []).filter(
+      (j) => !words.length || words.some((n) => j.title.toLowerCase().includes(n))
+    );
+    await SeenJobs.markMatched(query._id, obvious.map((j) => ({ ...j, matchedBy: "title" })));
+    return { ok: true, fetched: fetched.length, alerted: 0 };
+  }
+  if (!alertable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
 
-  const alerted = await fanOut(query, alertable);
+  // Decide what the watch actually wants, now that the list is down to
+  // jobs we have never seen. This is where a source may spend a request
+  // per job to read details a results page does not carry — affordable
+  // here, ruinous if it ran over the whole feed every sweep.
+  //
+  // Everything fetched is already recorded as seen, so a job rejected
+  // here is rejected once and never reconsidered.
+  let wanted = alertable;
+  for (const sourceId of sourceIds) {
+    const source = getSource(sourceId);
+    if (!source?.refine) continue;
+    const mine = wanted.filter((j) => j.jobId.startsWith(sourceId + ":"));
+    if (!mine.length) continue;
+    try {
+      const keep = new Set((await source.refine(mine, {
+        keywords: query.keywords,
+        matchAll: !!query.matchAll,
+      })).map((j) => j.jobId));
+      wanted = wanted.filter((j) => !j.jobId.startsWith(sourceId + ":") || keep.has(j.jobId));
+    } catch (err) {
+      // Refinement is a narrowing step. If it breaks, send the wider set
+      // rather than silently sending nothing.
+      log.warn("refine failed — alerting on the unrefined set", {
+        source: sourceId, message: err.message,
+      });
+    }
+  }
+
+  await SeenJobs.markMatched(query._id, wanted);
+
+  if (!wanted.length) {
+    log.info("sweep found new jobs but none matched the watch", {
+      queryId: String(query._id), considered: alertable.length,
+    });
+    return { ok: true, fetched: fetched.length, alerted: 0 };
+  }
+
+  const alerted = await fanOut(query, wanted);
   return { ok: true, fetched: fetched.length, alerted };
 }
 

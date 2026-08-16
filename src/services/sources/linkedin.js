@@ -28,9 +28,10 @@
 // for people who would rather scan everything than miss anything.
 
 import { guardedFetch } from "../http/guardedFetch.js";
-import { parseJobs, classifyResponse } from "../linkedin/parse.js";
+import { parseJobs, parseCriteria, classifyResponse } from "../linkedin/parse.js";
 import { findGeo } from "../linkedin/geoIds.js";
 import { qualify } from "./index.js";
+import { log } from "../../utils/logger.js";
 
 export const id = "linkedin";
 export const label = "LinkedIn";
@@ -86,9 +87,14 @@ async function collect(makeUrl) {
 }
 
 /**
- * Returns EVERY matching job for the watch in one call. Unlike a paged
- * source, the two queries have to be reconciled before filtering, so
- * paging is handled internally and `page > 0` returns nothing.
+ * Returns the widest honest view of the country's last 24h. Deliberately
+ * does NOT filter: deciding whether a job matches needs its employment
+ * type, which only the job's own page carries, and fetching that for all
+ * ~70 jobs on every five-minute sweep would be absurd. `refine` below
+ * makes that call for the handful that turn out to be new.
+ *
+ * Paging is internal — the two queries must be reconciled before anything
+ * downstream sees them — so `page > 0` returns nothing.
  */
 export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false }) {
   if (page > 0) return [];
@@ -120,12 +126,65 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
     _matchedByLinkedIn: relevant.has(j.jobId),
   }));
 
-  if (matchAll || !words.length) return shaped.map(strip);
+  return shaped;
+}
+
+const DETAIL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/";
+
+/**
+ * Decide which of these jobs the watch actually wants.
+ *
+ * Called with NEW jobs only, so the one-request-per-job cost lands on a
+ * handful per sweep rather than the whole feed.
+ *
+ * A keyword is checked against the job's employment type and seniority as
+ * well as its title, because that is what the reader means. Someone
+ * watching "intern" wants the role tagged Internship whatever it calls
+ * itself, and does not want a Full-time HVAC engineer that merely ranked
+ * nearby in LinkedIn's relevance model. Title-only matching gets both of
+ * those backwards.
+ *
+ * If the detail fetch fails we keep the job. A missed alert is the one
+ * failure this system exists to prevent; an extra email is a nuisance.
+ */
+export async function refine(jobs, { keywords, matchAll = false } = {}) {
+  const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
+  if (matchAll || !words.length) return jobs.map(strip);
 
   const needles = words.map((w) => w.toLowerCase());
-  return shaped
-    .filter((j) => j._matchedByLinkedIn || needles.some((n) => j.title.toLowerCase().includes(n)))
-    .map(strip);
+  const kept = [];
+
+  for (const job of jobs) {
+    if (needles.some((n) => job.title.toLowerCase().includes(n))) {
+      kept.push(strip({ ...job, matchedBy: "title" }));
+      continue;
+    }
+
+    let criteria = null;
+    try {
+      const raw = job.jobId.replace(/^linkedin:/, "");
+      const html = await guardedFetch(DETAIL + encodeURIComponent(raw), hosts, { jitter: true });
+      criteria = parseCriteria(html);
+    } catch (err) {
+      log.warn("could not read job criteria — keeping the job rather than risk dropping it", {
+        jobId: job.jobId, message: err.message,
+      });
+      kept.push(strip({ ...job, matchedBy: "unverified" }));
+      continue;
+    }
+
+    const tags = [criteria.employmentType, criteria.seniority].filter(Boolean).join(" ").toLowerCase();
+    if (needles.some((n) => tags.includes(n))) {
+      kept.push(strip({ ...job, matchedBy: criteria.employmentType || "tag" }));
+    } else {
+      log.info("dropped a job LinkedIn's fuzzy search returned but the watch did not ask for", {
+        jobId: job.jobId, title: job.title,
+        employmentType: criteria.employmentType, seniority: criteria.seniority,
+      });
+    }
+  }
+
+  return kept;
 }
 
 function strip({ _matchedByLinkedIn, ...job }) {
