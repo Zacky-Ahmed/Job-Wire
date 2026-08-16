@@ -149,11 +149,20 @@ export async function sweepQuery(query) {
     const mine = wanted.filter((j) => j.jobId.startsWith(sourceId + ":"));
     if (!mine.length) continue;
     try {
-      const keep = new Set((await source.refine(mine, {
+      // Keep refine's RETURNED objects, not just their ids. Filtering the
+      // originals by id threw away the `matchedBy` verdict, so every job
+      // was recorded as a plain keyword hit — and a listing kept only
+      // because an employer tagged it "Internship" looked identical to
+      // one whose title actually said so. That distinction is the whole
+      // point of asking.
+      const refined = await source.refine(mine, {
         keywords: query.keywords,
         matchAll: !!query.matchAll,
-      })).map((j) => j.jobId));
-      wanted = wanted.filter((j) => !j.jobId.startsWith(sourceId + ":") || keep.has(j.jobId));
+      });
+      wanted = [
+        ...wanted.filter((j) => !j.jobId.startsWith(sourceId + ":")),
+        ...refined,
+      ];
     } catch (err) {
       // Refinement is a narrowing step. If it breaks, send the wider set
       // rather than silently sending nothing.
