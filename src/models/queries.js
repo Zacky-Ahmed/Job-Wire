@@ -29,7 +29,21 @@ export async function upsert({ keywordsKey, keywords, geoId, location, everyMinu
     },
     { upsert: true, returnDocument: "after" }
   );
-  return res.value ?? res;
+  const query = res.value ?? res;
+
+  // Revive a retired row. Everything above that could wake it lives in
+  // $setOnInsert, which does not fire for a row that already exists — so
+  // re-creating a search someone had deleted would hand back a query with
+  // a null nextFetchAt that never swept again. It stays primed, so the
+  // user is not re-alerted about the backlog it already remembers.
+  if (query && !query.nextFetchAt) {
+    await collections.queries().updateOne(
+      { _id: query._id },
+      { $set: { nextFetchAt: now }, $unset: { retiredAt: "" } }
+    );
+    query.nextFetchAt = now;
+  }
+  return query;
 }
 
 export function findById(id) {
@@ -38,7 +52,11 @@ export function findById(id) {
 
 export function findDue(limit = 20) {
   return collections.queries()
-    .find({ nextFetchAt: { $lte: new Date() } })
+    // $type:"date" is load-bearing. Mongo orders null BEFORE dates, so a
+    // bare $lte:<now> matches a null nextFetchAt — meaning a query parked
+    // by setting that field to null would have looked permanently due and
+    // swept on every single tick, the exact opposite of retiring it.
+    .find({ nextFetchAt: { $lte: new Date(), $type: "date" } })
     .sort({ nextFetchAt: 1 })
     .limit(limit)
     .toArray();

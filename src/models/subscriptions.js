@@ -34,8 +34,34 @@ export function setActive(userId, id, active) {
   return collections.subscriptions().updateOne({ _id: id, userId }, { $set: { active } });
 }
 
-export function remove(userId, id) {
-  return collections.subscriptions().deleteOne({ _id: id, userId });
+/**
+ * Delete a watch, and retire the shared query if it was the last one
+ * pointing at it.
+ *
+ * Query rows are shared, so deleting a subscription cannot delete the
+ * query — someone else may be watching the same search. But nothing was
+ * checking the other direction either, so an abandoned query stayed in
+ * the due-scan and kept sweeping forever for nobody. A real one was found
+ * doing this: a Saudi Arabia search with zero subscribers, swept up to
+ * 110 tracked jobs, spending LinkedIn requests on an audience of none.
+ *
+ * The query is kept, not dropped — its seenJobs rows expire on their own
+ * TTL, and if someone re-creates the same search later it comes back
+ * already primed instead of swallowing a day of postings in silence.
+ * Clearing nextFetchAt is what takes it out of findDue.
+ */
+export async function remove(userId, id) {
+  const sub = await collections.subscriptions().findOne({ _id: id, userId });
+  if (!sub) return;
+  await collections.subscriptions().deleteOne({ _id: id, userId });
+
+  const remaining = await collections.subscriptions().countDocuments({ queryId: sub.queryId });
+  if (!remaining) {
+    await collections.queries().updateOne(
+      { _id: sub.queryId },
+      { $set: { nextFetchAt: null, retiredAt: new Date() } }
+    );
+  }
 }
 
 /** Everyone who should receive an alert for this query. */
