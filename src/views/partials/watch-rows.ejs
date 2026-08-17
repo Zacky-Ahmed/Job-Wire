@@ -15,13 +15,13 @@
         <div class="a"><%= s.label %></div>
         <div class="b"><%= q.location %> · checked every <%= q.everyMinutes %> min</div>
       </div>
-      <div class="kws hide">
+      <div class="kws hide w-kws">
         <% q.keywords.forEach(function (k) { %><span class="pill vio"><%= k %></span><% }) %>
         <% (q.sources || ['linkedin']).forEach(function (sid) { %>
           <span class="pill"><%= sourceLabel(sid) %></span>
         <% }) %>
       </div>
-      <div class="hide">
+      <div class="hide w-clock">
         <% if (!q.primed) { %>
           <span class="pill amber">Priming</span>
         <% } else { %>
@@ -29,7 +29,7 @@
         <% } %>
         <div class="lbl" style="margin-top:3px">last <%= rel(q.lastFetchedAt) %></div>
       </div>
-      <div class="acts">
+      <div class="acts w-acts">
         <form method="post" action="/watches/<%= s._id %>/toggle">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn-xs" type="submit"><%= s.active ? 'Hold' : 'Resume' %></button>

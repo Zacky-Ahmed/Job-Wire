@@ -10,27 +10,30 @@
 <% } else { %>
   <% dispatches.forEach(function (d, i) { %>
     <div class="row r-wire<%= d.isNew ? ' new' : '' %>">
-      <span class="ix"><%= String(dispatches.length - i).padStart(3, '0') %></span>
-      <span>
+      <span class="ix c-ix"><%= String(dispatches.length - i).padStart(3, '0') %></span>
+      <span class="c-mail">
         <% if (d.emailed) { %><span class="pill go">Sent</span>
         <% } else if (d.failed) { %><span class="pill sig" title="Delivery failed — the next sweep retries">Failed</span>
         <% } else { %><span class="pill off">—</span><% } %>
       </span>
       <div class="role">
         <div class="a"><%= d.title %>
-          <% if (d.matchedBy && d.matchedBy !== 'title') { %>
+          <%# "keyword" is the placeholder rows got while sweep was
+              discarding refine's verdict — it explains nothing, so it
+              earns no badge. %>
+          <% if (d.matchedBy && d.matchedBy !== 'title' && d.matchedBy !== 'keyword') { %>
             <span class="why" title="Its title does not mention your keyword. It is here because the employer tagged it this way — which is exactly what your LinkedIn filter goes on, spam included."><%= d.matchedBy %> tag</span>
           <% } %>
         </div>
         <div class="b"><%= d.company %><%= d.location ? ' · ' + d.location : '' %></div>
       </div>
-      <span class="muted hide"><span class="pill vio"><%= d.label %></span></span>
-      <span class="muted hide"><%= d.ageText %></span>
-      <div class="hide">
+      <span class="muted hide c-watch"><span class="pill vio"><%= d.label %></span></span>
+      <span class="muted hide c-age"><%= d.ageText %></span>
+      <div class="hide c-win">
         <span class="lbl"><%= d.windowLeft ? '~' + d.windowLeft + 'm left' : 'likely closed' %></span>
         <div class="gauge"><i class="<%= d.windowClass %>" style="width:<%= d.windowPct %>%"></i></div>
       </div>
-      <div class="acts">
+      <div class="acts c-act">
         <a class="btn btn-xs btn-sig" href="<%= d.url %>" target="_blank" rel="noopener noreferrer">Apply</a>
       </div>
     </div>

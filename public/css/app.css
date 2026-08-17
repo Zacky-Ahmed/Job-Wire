@@ -185,7 +185,10 @@ form{display:flex;flex-direction:column;gap:18px;}
   transition:border-color .18s,box-shadow .18s,background .18s;}
 .inp:focus-within{border-color:var(--vio);background:var(--card);
   box-shadow:0 0 0 4px var(--vio-soft);}
-.inp input{flex:1;height:44px;padding:0 14px;font-size:15.5px;min-width:0;background:none;}
+/* 16px is a floor, not a taste. Below it, iOS Safari zooms the page the
+   moment the field is focused — so signing in on a phone threw the layout
+   sideways and left you pinching back out. */
+.inp input{flex:1;height:44px;padding:0 14px;font-size:16px;min-width:0;background:none;}
 .inp input::placeholder{color:var(--faint);}
 .inp input:focus{outline:none;}
 .f.bad .inp{border-color:var(--bad);box-shadow:0 0 0 4px var(--bad-soft);animation:shake .35s;}
@@ -334,7 +337,7 @@ form{display:flex;flex-direction:column;gap:18px;}
   word-break:break-all;color:var(--ink-2);}
 .q b{color:var(--sig);font-weight:600;}
 .why{font-size:12px;color:var(--faint);line-height:1.6;}
-select{height:44px;padding:0 12px;border-radius:var(--r-sm);width:100%;font-size:15px;
+select{height:44px;padding:0 12px;border-radius:var(--r-sm);width:100%;font-size:16px;
   border:1.5px solid var(--line-2);background:var(--sunk);}
 select:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 4px var(--vio-soft);}
 input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
@@ -343,6 +346,9 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .htmx-request .live-dot{animation:spin 1s linear infinite;}
 #wireRows.htmx-swapping{opacity:.55;transition:opacity .15s;}
 
+/* ── TABLET ────────────────────────────────────────────────────
+   Still a table, just fewer columns. There is room for the role to
+   breathe, so drop the secondary columns and keep the shape. */
 @media (max-width:980px){
   .auth{grid-template-columns:1fr;}
   .poster{display:none;}
@@ -351,6 +357,109 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
   .hide{display:none;}
   .wrap{padding:14px;}
   .tabs .me{display:none;}
+}
+
+/* ── PHONE, PORTRAIT ──────────────────────────────────────────
+   A table stops being a table here. Measured on a 375px screen, the
+   tablet grid above gave the ROLE column 84px — the one thing the
+   reader came for, made the narrowest thing on screen, while a
+   decorative row number kept its full 34px.
+
+   So each row becomes a card and the columns become lines:
+
+       Sent   Intern            3m ago      <- provenance, at a glance
+       Software Development Intern          <- full width, wraps
+       Egotechworld · Mawanella
+       ~40m left  ▓▓▓▓▓▓░░░░        [Apply]
+
+   Nothing is hidden. The fields the tablet layout dropped come back,
+   because on a phone there is vertical room — it is horizontal room
+   that ran out. */
+@media (max-width:640px){
+  .wrap{padding:11px;}
+  .row{padding:13px 14px;gap:9px 8px;align-items:center;}
+
+  /* The header has to give up whatever the tabs row already says. The
+     watch count is duplicated there, and the theme button's word is
+     redundant next to its own icon. */
+  .topbar{padding:0 12px;gap:9px;}
+  .wordmark b span{display:none;}
+  .chips .chip:nth-child(2){display:none;}
+  #themeLabel{display:none;}
+  .tabs{padding:0 12px;}
+
+  /* Column headings label columns. There are none left down here, and
+     the header row shares .r-wire, so the grid areas below would try to
+     place its seven bare spans into a card and produce nonsense. */
+  .rhead{display:none;}
+
+  /* Apply, Hold and Delete are 30px on a desktop, where a cursor can hit
+     a 30px target precisely. A thumb cannot, and Delete is icon-only —
+     the last control you want someone catching by accident, or missing
+     and jabbing at twice. */
+  .row .btn-xs{height:40px;padding:0 14px;font-size:13px;}
+  .acts{gap:8px;}
+  .w-acts .btn-bad{min-width:44px;}
+
+  .r-wire{
+    grid-template-columns:auto auto minmax(0,1fr);
+    grid-template-areas:
+      "mail  watch age"
+      "role  role  role"
+      "win   win   act";
+  }
+  .c-ix{display:none;}       /* a running number is desktop chrome */
+  .c-mail{grid-area:mail;}
+  .c-watch{grid-area:watch;display:block;}
+  .c-age{grid-area:age;display:block;text-align:right;font-size:12px;}
+  .r-wire .role{grid-area:role;}
+  .c-win{grid-area:win;display:flex;align-items:center;gap:9px;min-width:0;}
+  .c-win .lbl{flex:none;}
+  .c-win .gauge{flex:1;min-width:0;}
+  .c-act{grid-area:act;justify-self:end;}
+
+  /* The title is the point of the row: let it wrap instead of clipping. */
+  .r-wire .role .a{white-space:normal;overflow:visible;text-overflow:clip;
+    line-height:1.3;font-size:15px;}
+
+  .r-watch{
+    grid-template-columns:12px minmax(0,1fr) auto;
+    grid-template-areas:
+      "dot  role  role"
+      "kws  kws   kws"
+      "clock clock acts";
+  }
+  .r-watch>.dot{grid-area:dot;}
+  .r-watch .role{grid-area:role;}
+  .w-kws{grid-area:kws;display:flex;flex-wrap:wrap;gap:6px;}
+  .w-clock{grid-area:clock;display:block;}
+  .w-acts{grid-area:acts;justify-self:end;}
+
+  /* Two stat cards across reads better than four stacked screens deep. */
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  .stat{padding:14px;}
+  .stat .v{font-size:27px;margin-top:6px;}
+  .stat .d{font-size:11.5px;}
+
+  /* Full-bleed sheet from the bottom — a centred 560px dialog on a
+     375px screen is just a cramped box with wasted margins, and the
+     submit button ends up below the fold. */
+  .scrim{align-items:flex-end;padding:0;}
+  .dlg{max-width:none;border-radius:16px 16px 0 0;max-height:92vh;}
+  .dlg-f{position:sticky;bottom:0;}
+
+  /* Thumbs, not cursors. The desktop rule above tightens these to 38-40px
+     so the form fits a laptop without scrolling; that is under the 44px
+     minimum a finger needs.
+     The font size is not cosmetic: iOS Safari zooms the whole page when
+     you focus an input smaller than 16px, which throws the layout
+     sideways and leaves the user pinching back out. */
+  .dlg-b .inp input,.dlg-b select{height:46px;font-size:16px;}
+  .dlg-b input[type=range]{height:42px;}
+  .dlg-f .btn{height:46px;}
+  .dlg-h .x{width:44px;height:44px;font-size:26px;}
+  .src{padding:13px;}
+  .src input{width:20px;height:20px;}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
@@ -367,11 +476,16 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
   background:var(--vio-soft);color:var(--vio);font-size:13px;line-height:1.5;}
 .dlg-b .f label.lbl{display:block;margin-bottom:2px;}
 
-/* Dialog: tighter so the whole form fits without scrolling on a laptop */
-.dlg-b{gap:14px;padding:18px 20px;}
-.dlg-b .f{gap:4px;}
-.dlg-b .inp input,.dlg-b select{height:40px;font-size:15px;}
-.dlg-b input[type=range]{height:30px;}
+/* Dialog: tighter so the whole form fits without scrolling on a laptop.
+   Scoped to non-phones on purpose. Media queries add no specificity, so
+   while this sat unconditioned it silently beat the larger phone sizes in
+   the block above — which appears EARLIER in the file — and undid them. */
+@media (min-width:641px){
+  .dlg-b{gap:14px;padding:18px 20px;}
+  .dlg-b .f{gap:4px;}
+  .dlg-b .inp input,.dlg-b select{height:40px;font-size:15px;}
+  .dlg-b input[type=range]{height:30px;}
+}
 
 /* Auth pane on a phone: the fixed 480px column and 30px padding left the
    OTP row cramped once the poster was hidden. */
@@ -381,6 +495,9 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
   .otp{gap:6px;}
   .otp input{height:52px;}
   .ftitle h2{font-size:25px;}
+  /* The show/hide toggle sits on the password field itself — the one
+     control on this page a thumb is most likely to reach for. */
+  .eye{width:44px;height:44px;}
 }
 
 /* ── source picker ─────────────────────────────────────────── */

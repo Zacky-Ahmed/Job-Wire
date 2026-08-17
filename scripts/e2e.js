@@ -7,6 +7,7 @@
 // so the run does not depend on reading a real inbox.
 const { connectDb, collections, closeDb } = await import("../src/config/db.js");
 const pw = await import("../src/services/auth/password.js");
+const { canonicalKey } = await import("../src/services/linkedin/buildUrl.js");
 
 const BASE = "http://localhost:3000";
 const EMAIL = `e2e-${Date.now()}@example.invalid`;
@@ -88,7 +89,13 @@ ok(/LinkedIn/.test(html), "row shows which source it watches");
 console.log("\n── shared query + duplicates ──");
 r = await post("/watches", { _csrf: token, label: "Same thing", keywords: " intern ", geoId: "100446352", every: "9" });
 ok((await r.text()).includes("already watch this exact query"), "duplicate rejected (canonical key)");
-const qCount = await collections.queries().countDocuments();
+// Scoped to THIS test's search. Counting every query in the database
+// asserted that nobody else exists — it passed only while this developer
+// was the sole user, and broke the moment a real second account created a
+// watch for another country. Same family of mistake as the cleanup that
+// once ran deleteMany({}).
+const qCount = await collections.queries()
+  .countDocuments({ keywordsKey: canonicalKey(["intern"], ["linkedin"]), geoId: "100446352" });
 ok(qCount === 1, `identical searches share ONE query row (found ${qCount})`);
 
 console.log("\n── toggle + delete ──");
@@ -99,9 +106,24 @@ ok(!!id, "watch id present in the row");
 await post(`/watches/${id}/toggle`, { _csrf: token });
 html = await (await get("/watches")).text();
 ok(html.includes("Resume"), "hold flips the control to Resume");
+const deletedQueryId = (await collections.subscriptions().findOne({ _id: new (await import("mongodb")).ObjectId(id) }))?.queryId;
 await post(`/watches/${id}/delete`, { _csrf: token });
 html = await (await get("/watches")).text();
 ok(html.includes("No watches"), "delete removes it");
+
+// A shared query with no subscribers left must stop sweeping. One was
+// found in production doing the opposite: zero subscribers, swept to 110
+// tracked jobs, spending requests for an audience of nobody.
+if (deletedQueryId) {
+  const q = await collections.queries().findOne({ _id: deletedQueryId });
+  const stillSubscribed = await collections.subscriptions().countDocuments({ queryId: deletedQueryId });
+  ok(stillSubscribed > 0 || q?.nextFetchAt == null,
+    "abandoned query stops sweeping once nobody watches it");
+  const due = await collections.queries()
+    .countDocuments({ _id: deletedQueryId, nextFetchAt: { $lte: new Date(), $type: "date" } });
+  ok(stillSubscribed > 0 || due === 0,
+    "a parked query is not matched by the due scan (null is not < now)");
+}
 
 console.log("\n── catch-everything watch ──");
 // Keywords can only ever match a job TITLE. Employers routinely tag a job
