@@ -3,9 +3,19 @@
     <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2" stroke-linecap="round"><path d="M12 21v-9"/>
       <path d="M5 12a9 9 0 0 1 14 0"/><circle cx="12" cy="8" r="1.6" fill="currentColor"/></svg></span>
-    <b>Nothing caught yet</b>
-    <span>The wire is sweeping. New postings land here the moment they appear
-      in LinkedIn's search index.</span>
+    <%# "The wire is sweeping" was printed even with no watches at all,
+        which told a brand-new user to wait for something that was never
+        going to happen. %>
+    <% if (typeof watchCount !== 'undefined' && !watchCount) { %>
+      <b>No watches yet</b>
+      <span>Nothing is being swept. Create a watch and postings land here
+        as they appear.</span>
+      <a class="btn btn-sig" href="/watches?new=1" style="margin-top:8px">Create your first watch</a>
+    <% } else { %>
+      <b>Nothing caught yet</b>
+      <span>The wire is sweeping. New postings land here the moment they appear
+        in LinkedIn's search index.</span>
+    <% } %>
   </div>
 <% } else { %>
   <% dispatches.forEach(function (d, i) { %>

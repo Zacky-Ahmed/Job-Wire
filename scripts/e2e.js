@@ -51,7 +51,10 @@ console.log("\n── the wire ──");
 r = await get("/wire");
 html = await r.text();
 ok(r.status === 200, "GET /wire renders");
-ok(html.includes("Nothing caught yet"), "empty state shown honestly");
+// A user with no watches is not waiting for the wire to catch something —
+// nothing is being swept at all, and the old copy told them to wait for an
+// event that could never arrive.
+ok(html.includes("No watches yet"), "empty wire tells a watchless user the truth");
 ok(html.includes(EMAIL), "layout shows the signed-in address");
 
 console.log("\n── watches ──");
@@ -141,6 +144,17 @@ const allQ = await collections.queries().findOne({ matchAll: true });
 ok(!!allQ, "matchAll persisted on the query row");
 ok(!!allQ && /@@all$/.test(allQ.keywordsKey),
   "matchAll owns a distinct key — it must never share a row with the keyword watch");
+
+console.log("\n── admin stays hidden from ordinary accounts ──");
+// This account is not in ADMIN_EMAILS. 404 rather than 403 is deliberate:
+// "forbidden" confirms to a stranger that an admin area lives at this URL.
+r = await get("/admin");
+ok(r.status === 404, `a normal signed-in user gets 404 from /admin (got ${r.status})`);
+html = await r.text();
+ok(!html.includes("@example.invalid") && !html.includes("Queries"),
+  "the admin 404 leaks no account or query data");
+html = await (await get("/wire")).text();
+ok(html.indexOf('href="/admin"') === -1, "no Admin tab is drawn for a non-admin");
 
 console.log("\n── sign out ──");
 await post("/signout", { _csrf: csrf(html) });

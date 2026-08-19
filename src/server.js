@@ -36,6 +36,7 @@ import { landingRoutes } from "./routes/landing.routes.js";
 import { authRoutes } from "./routes/auth.routes.js";
 import { wireRoutes } from "./routes/wire.routes.js";
 import { watchesRoutes } from "./routes/watches.routes.js";
+import { adminRoutes } from "./routes/admin.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -100,6 +101,7 @@ export async function buildApp() {
   app.use(authRoutes);
   app.use(wireRoutes);
   app.use(watchesRoutes);
+  app.use(adminRoutes);
 
   // A real 404 page, not a bare string. Anything that is not a page —
   // a missing asset, an htmx fragment — still gets plain text, because

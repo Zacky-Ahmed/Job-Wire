@@ -6,6 +6,7 @@
 
 import { collections } from "../config/db.js";
 import { oid } from "../utils/sanitize.js";
+import { isAdmin } from "./requireAdmin.js";
 
 export async function requireAuth(req, res, next) {
   const id = oid(req.session?.userId);
@@ -26,6 +27,10 @@ export async function requireAuth(req, res, next) {
 
   req.user = user;
   res.locals.user = user;
+  // Every authenticated page needs this, not just /admin — it decides
+  // whether the Admin tab renders. The route still guards itself; this
+  // only controls whether the link is drawn.
+  res.locals.isAdmin = isAdmin(user);
   next();
 }
 

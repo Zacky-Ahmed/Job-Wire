@@ -4,8 +4,8 @@
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round"><path d="M13 2 4.5 13H11l-1 9 8.5-11H12l1-9Z"/></svg></div>
       <div class="k">Caught</div>
-      <div class="v"><%= dispatches.length %></div>
-      <div class="d">last 14 days</div>
+      <div class="v"><%= caughtCount %></div>
+      <div class="d">last 14 days<%= caughtCount > dispatches.length ? ' · showing ' + dispatches.length : '' %></div>
     </div>
     <div class="stat go">
       <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

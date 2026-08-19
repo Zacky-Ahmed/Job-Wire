@@ -19,11 +19,16 @@
       if (soonest === null || at < soonest) soonest = at;
     });
 
+    // The header countdown is the SERVER's answer, falling back to the
+    // rows only if it did not supply one. Deriving it purely from
+    // [data-next] meant it worked on /watches and nowhere else, so the
+    // wire — the page people actually leave open — read "—" forever.
     var head = document.getElementById("nextSweep");
     if (head) {
+      var at = Number(head.dataset.nextSweep) || soonest;
       head.textContent =
-        soonest === null ? "—" :
-        soonest - Date.now() <= 0 ? "due" : mmss((soonest - Date.now()) / 1000);
+        !at ? "—" :
+        at - Date.now() <= 0 ? "due" : mmss((at - Date.now()) / 1000);
     }
   }
 

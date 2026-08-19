@@ -36,6 +36,15 @@ export const env = {
   port: num("PORT", 3000),
   appUrl: process.env.APP_URL || "http://localhost:3000",
 
+  // Who may open /admin. Deliberately an env var, not a database flag:
+  // admin then cannot be granted by anything that can write to Mongo, and
+  // there is no bootstrap problem of "who makes the first admin".
+  // Comma-separated, compared case-insensitively.
+  adminEmails: (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+
   mongoUri: required("MONGODB_URI"),
   mongoDb: process.env.MONGODB_DB || "jobwire",
 
