@@ -84,6 +84,40 @@ export function countFor(queryId) {
   return collections.seenJobs().countDocuments({ queryId });
 }
 
+/**
+ * Park jobs a sweep did not have the request budget to judge.
+ *
+ * Necessary because insertNew has ALREADY recorded them as seen, so they
+ * will never show up as new again — without this flag a deferred job is
+ * not deferred at all, it is discarded, which is the precise failure this
+ * whole project keeps having to fix.
+ */
+export async function markPending(queryId, jobs) {
+  if (!jobs.length) return;
+  await collections.seenJobs().updateMany(
+    { queryId, jobId: { $in: jobs.map((j) => j.jobId) } },
+    { $set: { refinePending: true } }
+  );
+}
+
+/** Jobs still waiting to be judged, newest first. */
+export function pending(queryId, limit = 200) {
+  return collections.seenJobs()
+    .find({ queryId, refinePending: true })
+    .sort({ postedAt: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+/** Judged at last — matched or not, it no longer needs revisiting. */
+export async function clearPending(queryId, jobIds) {
+  if (!jobIds.length) return;
+  await collections.seenJobs().updateMany(
+    { queryId, jobId: { $in: jobIds } },
+    { $unset: { refinePending: "" } }
+  );
+}
+
 /** Record which of the jobs we stored the watch actually wanted, and why. */
 export async function markMatched(queryId, jobs) {
   if (!jobs.length) return;

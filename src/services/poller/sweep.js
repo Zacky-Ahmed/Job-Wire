@@ -21,6 +21,15 @@ import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 
 
+// One request per new job, so this bounds how hard a single sweep can
+// lean on LinkedIn. Anything over the budget is simply refined next time.
+const REFINE_BUDGET = 45;
+
+// Older than this and a match goes on the wire but not into an email.
+// LinkedIn indexes about an hour late, so four hours leaves plenty of
+// room while still ruling out yesterday's postings.
+const ALERT_MAX_AGE_MIN = 240;
+
 export async function sweepQuery(query) {
   const started = Date.now();
 
@@ -134,7 +143,45 @@ export async function sweepQuery(query) {
     await SeenJobs.markMatched(query._id, obvious.map((j) => ({ ...j, matchedBy: "title" })));
     return { ok: true, fetched: fetched.length, alerted: 0 };
   }
-  if (!alertable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+  // NOTE: no early return on an empty `alertable`. A sweep that turns up
+  // nothing new can still owe verdicts on jobs a previous sweep deferred,
+  // and returning here would strand them forever.
+
+  // Freshest first, and only a budget of them per sweep.
+  //
+  // Refinement costs one request per job. That was fine while the feed
+  // was capped at 100 and a sweep turned up a handful of new jobs; with
+  // the cap lifted to the feed's real depth, the FIRST sweep after that
+  // change meets a hundred-odd jobs it has never seen and would fire a
+  // hundred-odd requests in one go — the surest way to get blocked and
+  // end up seeing nothing at all.
+  //
+  // So sort by posting time and spend the budget on the newest, because
+  // a job posted eight minutes ago is the entire point and one posted
+  // yesterday can wait a sweep. Whatever does not fit is left unmarked
+  // and picked up next time.
+  // Anything a previous sweep ran out of budget for is still owed a
+  // verdict, and it will never arrive as "new" again — insertNew recorded
+  // it the first time we saw it. The pending flag is the only thing that
+  // brings it back.
+  const carried = await SeenJobs.pending(query._id);
+  const known = new Set(alertable.map((j) => j.jobId));
+  const candidates = [...alertable, ...carried.filter((j) => !known.has(j.jobId))];
+
+  const byNewest = candidates.sort(
+    (a, b) => new Date(b.postedAt || 0) - new Date(a.postedAt || 0)
+  );
+  if (!byNewest.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+
+  const batch = byNewest.slice(0, REFINE_BUDGET);
+  const deferred = byNewest.slice(REFINE_BUDGET);
+  await SeenJobs.markPending(query._id, deferred);
+  if (deferred.length || carried.length) {
+    log.info("refining the newest first; the rest carry to the next sweep", {
+      queryId: String(query._id), refining: batch.length,
+      carriedIn: carried.length, deferred: deferred.length,
+    });
+  }
 
   // Decide what the watch actually wants, now that the list is down to
   // jobs we have never seen. This is where a source may spend a request
@@ -143,7 +190,7 @@ export async function sweepQuery(query) {
   //
   // Everything fetched is already recorded as seen, so a job rejected
   // here is rejected once and never reconsidered.
-  let wanted = alertable;
+  let wanted = batch;
   for (const sourceId of sourceIds) {
     const source = getSource(sourceId);
     if (!source?.refine) continue;
@@ -174,15 +221,38 @@ export async function sweepQuery(query) {
   }
 
   await SeenJobs.markMatched(query._id, wanted);
+  // Judged either way — matched or rejected — so it stops carrying.
+  await SeenJobs.clearPending(query._id, batch.map((j) => j.jobId));
 
   if (!wanted.length) {
     log.info("sweep found new jobs but none matched the watch", {
-      queryId: String(query._id), considered: alertable.length,
+      queryId: String(query._id), considered: batch.length,
     });
     return { ok: true, fetched: fetched.length, alerted: 0 };
   }
 
-  const alerted = await fanOut(query, wanted);
+  // Store every match so the wire is complete, but only EMAIL the ones
+  // that are still worth acting on.
+  //
+  // Widening the feed makes the system discover jobs that have existed
+  // for hours — real matches, but not news. Mailing them is how a catch-
+  // up turns into twenty alerts for postings that closed overnight, and
+  // an alert that is not actionable trains you to ignore the ones that
+  // are. LinkedIn's own indexing runs about an hour behind, so the
+  // threshold sits well clear of that.
+  const fresh = wanted.filter((j) => {
+    const at = j.postedAt ? new Date(j.postedAt) : null;
+    return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
+  });
+  const stale = wanted.length - fresh.length;
+  if (stale) {
+    log.info("matched older postings — recorded on the wire, not emailed", {
+      queryId: String(query._id), stale, olderThanMinutes: ALERT_MAX_AGE_MIN,
+    });
+  }
+  if (!fresh.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+
+  const alerted = await fanOut(query, fresh);
   return { ok: true, fetched: fetched.length, alerted };
 }
 
