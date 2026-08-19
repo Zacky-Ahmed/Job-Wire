@@ -1,0 +1,94 @@
+<div class="wrap">
+  <div class="stats stagger">
+    <div class="stat vio">
+      <div class="k">People</div>
+      <div class="v"><%= totals.users %></div>
+      <div class="d"><%= totals.verified %> verified · <%= totals.unverified %> pending</div>
+    </div>
+    <div class="stat sig">
+      <div class="k">Watches</div>
+      <div class="v"><%= totals.watches %></div>
+      <div class="d"><%= totals.queries %> shared queries behind them</div>
+    </div>
+    <div class="stat <%= totals.failed24 ? 'amber' : 'go' %>">
+      <div class="k">Mail · 24h</div>
+      <div class="v"><%= totals.mail24 %> <span class="u">/<%= totals.mailCap %></span></div>
+      <div class="d"><%= totals.failed24 %> failed · <%= totals.mailProvider %></div>
+    </div>
+    <div class="stat <%= totals.pollerEnabled ? 'go' : 'amber' %>">
+      <div class="k">Poller</div>
+      <div class="v" style="font-size:26px"><%= totals.pollerEnabled ? 'Running' : 'Off' %></div>
+      <div class="d">shared across every watch</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot live"></span>
+      <h3>People</h3>
+      <span class="sp"></span>
+      <span class="lbl">newest first · 200 max</span>
+    </div>
+    <div class="row rhead r-admin">
+      <span>Email</span><span>State</span><span class="hide">Watches</span><span class="hide">Joined</span>
+    </div>
+    <% if (!people.length) { %>
+      <div class="empty"><b>No accounts yet</b><span>Nobody has signed up.</span></div>
+    <% } %>
+    <% people.forEach(function (p) { %>
+      <div class="row r-admin">
+        <div class="role">
+          <div class="a"><%= p.email %><% if (p.isAdmin) { %><span class="why">admin</span><% } %></div>
+          <div class="b c-only">joined <%= p.joined %> · <%= p.watches %> watch<%= p.watches === 1 ? '' : 'es' %></div>
+        </div>
+        <span>
+          <% if (p.verified) { %><span class="pill go">Verified</span>
+          <% } else { %><span class="pill amber" title="Signed up but never entered the emailed code — they cannot sign in">Unverified</span><% } %>
+        </span>
+        <span class="muted hide"><%= p.active %>/<%= p.watches %></span>
+        <span class="muted hide"><%= p.joined %></span>
+      </div>
+    <% }) %>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot <%= queryRows.some(q => q.orphaned || q.stalled) ? 'off' : 'live' %>"></span>
+      <h3>Queries</h3>
+      <span class="sp"></span>
+      <span class="lbl">what the poller is actually doing</span>
+    </div>
+    <div class="row rhead r-admin">
+      <span>Search</span><span>State</span><span class="hide">Seen</span><span class="hide">Last swept</span>
+    </div>
+    <% if (!queryRows.length) { %>
+      <div class="empty"><b>No queries</b><span>Nothing is being swept.</span></div>
+    <% } %>
+    <% queryRows.forEach(function (q) { %>
+      <div class="row r-admin">
+        <div class="role">
+          <div class="a"><%= q.label %><% if (q.matchAll) { %><span class="why">everything</span><% } %></div>
+          <div class="b"><%= q.location %> · <%= q.sources %> · every <%= q.every %> min ·
+            <%= q.subscribers %> subscriber<%= q.subscribers === 1 ? '' : 's' %></div>
+        </div>
+        <span>
+          <% if (q.retired) { %><span class="pill off" title="Nobody watches this any more, so it has stopped sweeping">Parked</span>
+          <% } else if (q.orphaned) { %><span class="pill sig" title="No subscribers, but still sweeping — this is wasted budget">Orphaned</span>
+          <% } else if (q.stalled) { %><span class="pill sig" title="Overdue by <%= q.overdueMin %> min">Stalled</span>
+          <% } else if (q.failCount) { %><span class="pill amber"><%= q.failCount %> fails</span>
+          <% } else { %><span class="pill go">Healthy</span><% } %>
+        </span>
+        <span class="muted hide tnum" title="last sweep / best ever">
+          <%= q.tracked %><span class="lbl">/<%= q.peak %></span>
+        </span>
+        <span class="muted hide"><%= q.lastFetched %></span>
+      </div>
+    <% }) %>
+  </div>
+
+  <div class="note" style="margin-top:2px">
+    <span>This page is read-only. Admin comes from <b>ADMIN_EMAILS</b> in the
+      environment, not from anything stored in the database — so it cannot be
+      granted by writing to Mongo, and there is no first-admin bootstrap.</span>
+  </div>
+</div>

@@ -157,8 +157,11 @@ const DETAIL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/";
  * nearby in LinkedIn's relevance model. Title-only matching gets both of
  * those backwards.
  *
- * If the detail fetch fails we keep the job. A missed alert is the one
- * failure this system exists to prevent; an extra email is a nuisance.
+ * A job whose detail page could not be read comes back marked
+ * "unverified". That is a question, not an answer: the caller decides
+ * whether to retry it or give up and take it on trust. Treating it as a
+ * match outright — which this used to do — emailed three jobs that were
+ * plainly not internships, because a failed request is not evidence.
  */
 export async function refine(jobs, { keywords, matchAll = false } = {}) {
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
@@ -178,7 +181,7 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
       const html = await guardedFetch(DETAIL + encodeURIComponent(raw), hosts, { jitter: true });
       criteria = parseCriteria(html);
     } catch (err) {
-      log.warn("could not read job criteria — keeping the job rather than risk dropping it", {
+      log.warn("could not read job criteria — returning it undecided", {
         jobId: job.jobId, message: err.message,
       });
       kept.push(strip({ ...job, matchedBy: "unverified" }));

@@ -30,6 +30,11 @@ const REFINE_BUDGET = 45;
 // room while still ruling out yesterday's postings.
 const ALERT_MAX_AGE_MIN = 240;
 
+// How many times to re-try reading a job's detail page before giving up
+// and taking the job on trust. Bounded so a permanently broken page
+// cannot keep a job in limbo for ever.
+const MAX_REFINE_ATTEMPTS = 3;
+
 export async function sweepQuery(query) {
   const started = Date.now();
 
@@ -220,9 +225,28 @@ export async function sweepQuery(query) {
     }
   }
 
+  // Split off the ones refine could not actually judge. A failed request
+  // is not evidence that a job matches: taking "unverified" as a yes put
+  // three plainly-wrong jobs into this user's inbox. Retry them on later
+  // sweeps instead, and only after several failures fall back to trusting
+  // them — because never deciding would lose the job entirely, which is
+  // the worse of the two errors.
+  const undecided = wanted.filter(
+    (j) => j.matchedBy === "unverified" && (j.refineAttempts || 0) < MAX_REFINE_ATTEMPTS
+  );
+  const undecidedIds = new Set(undecided.map((j) => j.jobId));
+  wanted = wanted.filter((j) => !undecidedIds.has(j.jobId));
+  if (undecided.length) {
+    await SeenJobs.markPending(query._id, undecided, { failedAttempt: true });
+    log.info("could not verify some jobs — retrying them next sweep", {
+      queryId: String(query._id), undecided: undecided.length,
+    });
+  }
+
   await SeenJobs.markMatched(query._id, wanted);
   // Judged either way — matched or rejected — so it stops carrying.
-  await SeenJobs.clearPending(query._id, batch.map((j) => j.jobId));
+  const settled = batch.filter((j) => !undecidedIds.has(j.jobId)).map((j) => j.jobId);
+  await SeenJobs.clearPending(query._id, settled);
 
   if (!wanted.length) {
     log.info("sweep found new jobs but none matched the watch", {

@@ -18,7 +18,8 @@
     "test-windows": "node scripts/test-windows.js",
     "preview-email": "node scripts/preview-email.js",
     "verify-geoids": "node scripts/verify-geoids.js",
-    "parity": "node scripts/parity.js"
+    "parity": "node scripts/parity.js",
+    "set-password": "node scripts/set-password.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

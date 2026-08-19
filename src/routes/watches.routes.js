@@ -16,6 +16,7 @@ const DEFAULT_GEO = "100446352"; // Sri Lanka
 import { canonicalKey, tprFor } from "../services/linkedin/buildUrl.js";
 import { listSources, getSource, DEFAULT_SOURCE } from "../services/sources/index.js";
 import { rel, countdown } from "../utils/time.js";
+import { headerState } from "../utils/header.js";
 import { env } from "../config/env.js";
 
 export const watchesRoutes = Router();
@@ -24,14 +25,12 @@ export const watchesRoutes = Router();
 
 async function render(req, res, extra = {}) {
   const watches = await Subs.listForUser(req.user._id);
-  const activeCount = watches.filter((w) => w.active).length;
   page(res, "pages/watches", {
     title: "Watches",
     nav: "watches",
     user: req.user,
     watches,
-    watchCount: watches.length,
-    activeCount,
+    ...headerState(watches, env.pollerEnabled),
     pollerEnabled: env.pollerEnabled,
     countries: selectableCountries(),
     sources: listSources(),

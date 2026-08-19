@@ -18,10 +18,14 @@
       </span>
 
       <div class="chips">
-        <span class="chip"><span class="dot <%= activeCount ? 'live' : 'off' %> live-dot"></span>
-          <b><%= activeCount ? 'Sweeping' : 'Idle' %></b></span>
+        <span class="chip"><span class="dot <%= sweeping ? 'live' : 'off' %> live-dot"></span>
+          <b><%= sweeping ? 'Sweeping' : (watchCount && !activeCount ? 'All held' : (activeCount ? 'Poller off' : 'Idle')) %></b></span>
         <span class="chip"><span class="k">Watches</span><b><%= activeCount %>/<%= watchCount %></b></span>
-        <span class="chip"><span class="k">Next</span><b class="tnum" id="nextSweep">—</b></span>
+        <%# The countdown comes from the server. Deriving it from row
+            elements meant it only worked on /watches, so the page people
+            actually sit on showed "—" forever. %>
+        <span class="chip"><span class="k">Next</span><b class="tnum" id="nextSweep"
+          data-next-sweep="<%= typeof nextSweepAt !== 'undefined' && nextSweepAt ? nextSweepAt : '' %>">—</b></span>
       </div>
 
       <span class="sp"></span>
@@ -51,6 +55,14 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
         Watches <span class="n"><%= watchCount %></span></a>
+      <%# Shown only to admins. The route guards itself regardless — a
+          hidden link is not access control, it is just tidiness. %>
+      <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
+        <a href="/admin" <%= nav === 'admin' ? 'aria-current="page"' : '' %>>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round"><path d="M12 3l7 3v5c0 4.4-2.9 8.3-7 10-4.1-1.7-7-5.6-7-10V6l7-3Z"/></svg>
+          Admin</a>
+      <% } %>
       <span class="sp"></span>
       <span class="me"><%= user.email %></span>
     </nav>

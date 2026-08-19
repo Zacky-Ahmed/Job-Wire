@@ -80,6 +80,19 @@ export async function insertNew(queryId, jobs) {
   }
 }
 
+/**
+ * How many jobs actually matched, across these queries.
+ *
+ * The wire renders a capped page of rows, and the "Caught" stat used to
+ * be that page's length — so it read 50 for a user with 226 matches and
+ * would have read 50 for one with exactly 50. A count is a count.
+ */
+export function countMatched(queryIds) {
+  if (!queryIds.length) return Promise.resolve(0);
+  return collections.seenJobs()
+    .countDocuments({ queryId: { $in: queryIds }, matched: { $ne: false } });
+}
+
 export function countFor(queryId) {
   return collections.seenJobs().countDocuments({ queryId });
 }
@@ -92,11 +105,17 @@ export function countFor(queryId) {
  * not deferred at all, it is discarded, which is the precise failure this
  * whole project keeps having to fix.
  */
-export async function markPending(queryId, jobs) {
+export async function markPending(queryId, jobs, { failedAttempt = false } = {}) {
   if (!jobs.length) return;
+  const update = { $set: { refinePending: true } };
+  // Only a FAILED verification counts against the job. Being pushed back
+  // because the sweep ran out of request budget is not the job's fault,
+  // and counting it would force-accept a perfectly readable job after
+  // three busy sweeps.
+  if (failedAttempt) update.$inc = { refineAttempts: 1 };
   await collections.seenJobs().updateMany(
     { queryId, jobId: { $in: jobs.map((j) => j.jobId) } },
-    { $set: { refinePending: true } }
+    update
   );
 }
 

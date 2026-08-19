@@ -10,6 +10,7 @@ import * as Subs from "../models/subscriptions.js";
 import * as SeenJobs from "../models/seenJobs.js";
 import * as EmailLog from "../models/emailLog.js";
 import { rel, minutesSince } from "../utils/time.js";
+import { headerState } from "../utils/header.js";
 import { env } from "../config/env.js";
 import { dailyCap, providerLabel } from "../services/mail/transport.js";
 
@@ -61,10 +62,11 @@ async function gather(user) {
 
   return {
     watches,
-    watchCount: watches.length,
-    activeCount: watches.filter((w) => w.active).length,
+    ...headerState(watches, env.pollerEnabled),
     dispatches,
-    emailCount: emails.filter((e) => e.status === "sent").length,
+    // The COUNT, not the length of the page we happen to render. These
+    // differed by 176 for this user: 226 matches, a 50-row page.
+    caughtCount: await SeenJobs.countMatched(queryIds),
     sentToday: await EmailLog.countToday(),
     mailCap: dailyCap(),
     mailProvider: providerLabel(),
@@ -84,8 +86,8 @@ wireRoutes.get("/wire", requireAuth, async (req, res, next) => {
 // HTMX polls this every 15s — fragment only, no layout.
 wireRoutes.get("/wire/rows", requireAuth, async (req, res, next) => {
   try {
-    const { dispatches } = await gather(req.user);
-    res.render("partials/wire-rows", { dispatches }, (err, html) => {
+    const { dispatches, watchCount } = await gather(req.user);
+    res.render("partials/wire-rows", { dispatches, watchCount }, (err, html) => {
       if (err) return next(err);
       res.type("text/html").send(html);
     });
