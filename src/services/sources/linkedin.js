@@ -44,7 +44,17 @@ export const pageSize = 10;
 const ENDPOINT =
   "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search";
 const WINDOW = 86400; // 24h. Narrower windows silently drop recent jobs.
-const MAX_PAGES = 10;
+// The Sri Lanka feed alone is 232 jobs deep. At 10 per page a cap of 10
+// pages saw the first 100 and silently discarded the rest — and because
+// sortBy is not honoured, "the rest" is not the oldest, it is a lottery.
+// A Software Engineer Intern posted 40 minutes earlier sat on page 19.
+// The break on an empty page is what actually ends the walk; this is only
+// a runaway guard.
+const MAX_PAGES = 40;
+// Tolerate a repeated page rather than treating it as the end of the
+// feed. Stopping at the first page that adds nothing new means one
+// hiccup costs every job after it.
+const STALE_PAGES_BEFORE_STOP = 2;
 
 function urlFor({ geoId, keywords, page }) {
   const geo = findGeo(geoId);
@@ -62,8 +72,9 @@ function urlFor({ geoId, keywords, page }) {
 /** Walk every page of one query until a page adds nothing new. */
 async function collect(makeUrl) {
   const found = new Map();
+  let stale = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const html = await guardedFetch(makeUrl(page), hosts, { jitter: page === 0 });
+    const html = await guardedFetch(makeUrl(page), hosts, { jitter: true });
 
     const shape = classifyResponse(html);
     if (shape === "empty") break;
@@ -81,8 +92,9 @@ async function collect(makeUrl) {
     const before = found.size;
     jobs.forEach((j) => found.set(j.jobId, j));
     // sortBy is not honoured, so we cannot stop early on age — only when
-    // a page stops contributing.
-    if (found.size === before) break;
+    // the feed stops contributing, and only after it has done so twice.
+    stale = found.size === before ? stale + 1 : 0;
+    if (stale >= STALE_PAGES_BEFORE_STOP) break;
   }
   return found;
 }
