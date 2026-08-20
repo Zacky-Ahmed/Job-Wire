@@ -178,8 +178,18 @@ export async function sweepQuery(query) {
   );
   if (!byNewest.length) return { ok: true, fetched: fetched.length, alerted: 0 };
 
-  const batch = byNewest.slice(0, REFINE_BUDGET);
-  const deferred = byNewest.slice(REFINE_BUDGET);
+  // The budget exists because refining costs a request per job. Sources
+  // that decide during the fetch — the local boards, which carry the
+  // title in the listing and have nothing further to ask — cost nothing
+  // extra, so making them queue behind it just delays their alerts by
+  // whole sweeps. Measured: a three-board sweep deferred 67 jobs that
+  // needed no requests at all.
+  const needsRequest = (j) => !!getSource(j.jobId.split(":")[0])?.refine;
+  const free = byNewest.filter((j) => !needsRequest(j));
+  const costly = byNewest.filter(needsRequest);
+
+  const batch = [...free, ...costly.slice(0, REFINE_BUDGET)];
+  const deferred = costly.slice(REFINE_BUDGET);
   await SeenJobs.markPending(query._id, deferred);
   if (deferred.length || carried.length) {
     log.info("refining the newest first; the rest carry to the next sweep", {

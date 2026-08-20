@@ -29,8 +29,9 @@
 import * as linkedin from "./linkedin.js";
 import * as keells from "./keells.js";
 import * as topjobs from "./topjobs.js";
+import * as mas from "./mas.js";
 
-export const SOURCES = { linkedin, keells, topjobs };
+export const SOURCES = { linkedin, keells, topjobs, mas };
 
 export const DEFAULT_SOURCE = "linkedin";
 
