@@ -14,7 +14,7 @@ import { selectableCountries, isKnownGeo, findGeo } from "../services/linkedin/g
 
 const DEFAULT_GEO = "100446352"; // Sri Lanka
 import { canonicalKey, tprFor } from "../services/linkedin/buildUrl.js";
-import { listSources, getSource, DEFAULT_SOURCE } from "../services/sources/index.js";
+import { listSources, getSource, sourceCoversCountry, DEFAULT_SOURCE } from "../services/sources/index.js";
 import { rel, countdown } from "../utils/time.js";
 import { headerState } from "../utils/header.js";
 import { env } from "../config/env.js";
@@ -62,7 +62,12 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     // several are. Normalise, then keep only sources we actually have —
     // a hand-crafted POST must not be able to name an arbitrary adapter.
     const rawSources = [].concat(req.body.sources ?? []).map((v) => str(v, { max: 24 }));
-    const chosen = [...new Set(rawSources)].filter((id) => getSource(id));
+    // Keep only sources that exist AND cover the chosen country. The form
+    // hides the inapplicable ones, but a hidden checkbox is not a rule —
+    // without this a hand-written POST could attach a Sri Lankan board to
+    // a watch for Germany and quietly sweep it forever for nobody.
+    const chosen = [...new Set(rawSources)]
+      .filter((id) => getSource(id) && sourceCoversCountry(id, geoId));
     const sources = chosen.length ? chosen : [DEFAULT_SOURCE];
     const every = int(req.body.every, { min: env.minSweepMinutes, max: 60, fallback: 5 });
     // Deliberately opt-in. A keyword can only ever be matched against a

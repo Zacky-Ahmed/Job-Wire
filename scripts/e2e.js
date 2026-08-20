@@ -167,6 +167,23 @@ ok(html.includes(">Your alerts<"), "the alerts card is labelled as the reader’
 await collections.emailLog().deleteMany({ userId: other.insertedId });
 await collections.users().deleteOne({ _id: other.insertedId });
 
+console.log("\n── a local board cannot be attached to a foreign country ──");
+// topjobs and Keells only cover Sri Lanka. The form hides them once you
+// pick elsewhere, but a hidden checkbox is not a rule — a hand-written
+// POST must not be able to bolt a Sri Lankan board onto a German watch
+// and leave it sweeping forever for a country it cannot serve.
+html = await (await get("/watches?new=1")).text();
+token = csrf(html);
+r = await post("/watches", { _csrf: token, label: "Germany probe", keywords: "intern",
+  geoId: "101282230", every: "5", sources: ["topjobs", "keells"] });
+await r.text();
+const gq = await collections.queries().findOne({ geoId: "101282230" });
+ok(!!gq, "the German watch was created");
+ok(!!gq && !gq.sources.includes("topjobs") && !gq.sources.includes("keells"),
+  `Sri Lanka-only boards stripped from a German watch (got ${gq ? gq.sources.join()  : "?"})`);
+ok(!!gq && gq.sources.includes("linkedin"),
+  "it falls back to a source that actually covers that country");
+
 console.log("\n── admin stays hidden from ordinary accounts ──");
 // This account is not in ADMIN_EMAILS. 404 rather than 403 is deliberate:
 // "forbidden" confirms to a stranger that an admin area lives at this URL.
