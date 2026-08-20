@@ -56,6 +56,24 @@ export function listSources() {
   }));
 }
 
+/**
+ * Every source that can serve this country.
+ *
+ * Which sites to search was once a row of checkboxes, which asked the
+ * reader to make a decision they had no basis for: nobody wants FEWER
+ * places searched for the same keyword. Watching Sri Lanka means watching
+ * everything that covers Sri Lanka.
+ *
+ * Resolved at sweep time rather than frozen into the query row, so
+ * adding an adapter reaches every existing watch instead of only new
+ * ones.
+ */
+export function sourcesForCountry(geoId) {
+  return Object.values(SOURCES)
+    .filter((s) => !s.countries?.length || s.countries.includes(String(geoId)))
+    .map((s) => s.id);
+}
+
 /** Is this source usable for that country? */
 export function sourceCoversCountry(sourceId, geoId) {
   const s = SOURCES[sourceId];

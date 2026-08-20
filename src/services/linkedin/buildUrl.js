@@ -57,6 +57,11 @@ export function buildSearchUrl({ keywords, geoId, sweepMinutes = 5, page = 0 }) 
  * on LinkedIn + Keells" are different searches and must not collapse into
  * one query, or whoever saved second would silently get the other's set.
  */
+// NOTE: `sources` is retained for callers that still pass it, but the app
+// no longer does. Sources are derived from the country now, so folding
+// them into identity would re-fragment sharing every time an adapter is
+// added: the same search would hash differently before and after, and
+// two people running it would stop sharing a query row.
 export function canonicalKey(keywords, sources = []) {
   const kw = (Array.isArray(keywords) ? keywords : [keywords])
     .map((k) => String(k).trim().toLowerCase())

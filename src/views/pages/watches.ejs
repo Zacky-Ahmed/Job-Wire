@@ -86,26 +86,20 @@
       </div>
 
       <div class="f">
-        <span class="lbl">Where to look</span>
-        <div class="srcs">
-          <%# data-countries is empty for a worldwide source and a list of
-              geoIds for one that only covers certain places. source-filter.js
-              hides the ones that do not apply to the country chosen below;
-              the server re-checks, because a hidden checkbox is not a rule. %>
-          <% sources.forEach(function (src) { %>
-            <label class="src" data-countries="<%= (src.countries || []).join(',') %>">
-              <input type="checkbox" name="sources" value="<%= src.id %>"
-                <%= (values.sources || ['linkedin']).includes(src.id) ? 'checked' : '' %>>
-              <span class="src-b">
-                <span class="src-n"><%= src.label %></span>
-                <% if (src.note) { %><span class="src-h"><%= src.note %></span><% } %>
-              </span>
-            </label>
-          <% }) %>
-        </div>
-        <span class="hint">Company sites and local boards publish instantly.
-          LinkedIn covers everyone but runs about half an hour behind.
-          <span id="srcHidden" hidden></span></span>
+        <span class="lbl">Where we look</span>
+        <%# Not a choice any more. Nobody wants FEWER sites searched for
+            the same keyword, and the country already answers the
+            question — so state the answer instead of asking it. The list
+            is resolved at sweep time, so a source added later reaches
+            this watch without anyone editing it. %>
+        <%# Escaped output, in double quotes. One source note contains an
+            apostrophe ("Sri Lanka’s biggest board") and a raw apostrophe
+            inside a single-quoted attribute ends the attribute early,
+            truncating the JSON. EJS escapes it; the browser hands it back. %>
+        <div class="srcs-note" id="srcList" data-sources="<%= JSON.stringify(sources) %>"></div>
+        <span class="hint">Every site that covers the country you picked.
+          Local boards publish instantly; LinkedIn covers every employer but
+          runs about half an hour behind.</span>
       </div>
 
       <div class="f">
@@ -132,5 +126,5 @@
   </form>
 </div>
 <script src="<%= asset('/js/range-label.js') %>"></script>
-<script src="<%= asset('/js/source-filter.js') %>"></script>
+<script src="<%= asset('/js/source-list.js') %>"></script>
 <% } %>

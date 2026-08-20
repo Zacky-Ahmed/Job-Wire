@@ -6,7 +6,7 @@
 // One fetch serves every subscriber of the query — that is what keeps
 // request volume to LinkedIn flat as users grow.
 
-import { getSource, DEFAULT_SOURCE } from "../sources/index.js";
+import { getSource, sourcesForCountry, DEFAULT_SOURCE } from "../sources/index.js";
 import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
@@ -38,11 +38,16 @@ const MAX_REFINE_ATTEMPTS = 3;
 export async function sweepQuery(query) {
   const started = Date.now();
 
-  // A watch can span several sources. Each is fetched independently so
-  // one site being down or blocked does not cost you the others — a
-  // failure is recorded per source, and the sweep still delivers whatever
-  // the working ones found.
-  const sourceIds = query.sources?.length ? query.sources : [DEFAULT_SOURCE];
+  // Every source that covers this country, resolved fresh each sweep
+  // rather than read off the row — a watch created before an adapter
+  // existed would otherwise never see it, and the reader has no way of
+  // knowing they are missing a whole site.
+  //
+  // Each is fetched independently so one site being down does not cost
+  // you the others: a failure is recorded per source, and the sweep still
+  // delivers whatever the working ones found.
+  const sourceIds = sourcesForCountry(query.geoId);
+  if (!sourceIds.length) sourceIds.push(DEFAULT_SOURCE);
   const fetchedMap = new Map();
   const failures = [];
 
