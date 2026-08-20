@@ -265,6 +265,18 @@ export async function sweepQuery(query) {
   // are. LinkedIn's own indexing runs about an hour behind, so the
   // threshold sits well clear of that.
   const fresh = wanted.filter((j) => {
+    // Only judge age where age is knowable. A board that prints dates and
+    // nothing finer resolves every posting to midnight, so a job put up
+    // this morning already reads as hours old — this gate silently
+    // suppressed EVERY Keells alert, which is why ticking that source
+    // produced a wire full of jobs and an inbox with none of them.
+    //
+    // For those sources the backlog is absorbed by the priming sweep and
+    // dedupe: if a job is appearing now and was not there before, it is
+    // news, whatever date it prints.
+    const src = getSource(j.jobId.split(":")[0]);
+    if (src && src.timePrecision === "day") return true;
+
     const at = j.postedAt ? new Date(j.postedAt) : null;
     return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
   });

@@ -97,6 +97,31 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
 
     const myWatches = await Subs.listForUser(req.user._id);
 
+    // WHY MAIL IS NOT ARRIVING.
+    //
+    // "sent" here only means the provider accepted the message. It says
+    // nothing about whether a mailbox kept it. The commonest reason for
+    // "0 failed" and an empty inbox is DMARC: sending AS a gmail.com
+    // address THROUGH Brevo claims a domain Brevo cannot prove it owns,
+    // and Gmail filters that hardest of all — including the very
+    // verification codes new accounts need to sign in.
+    //
+    // env.js already warns about this at boot, but a line in a log at
+    // startup is a line nobody reads twice.
+    const from = (env.mailFrom || "").match(/<([^>]+)>/)?.[1] || env.mailFrom || "";
+    const freemail = /@(gmail|googlemail|yahoo|outlook|hotmail|live|aol|icloud|proton(mail)?)\./i;
+    const relayed = !!env.brevoApiKey;
+    const lastSend = await collections.emailLog()
+      .find({ status: "sent" }).sort({ sentAt: -1 }).limit(1).next();
+
+    const delivery = {
+      provider: providerLabel(),
+      from,
+      relayed,
+      misaligned: relayed && freemail.test(from),
+      lastSentAt: lastSend ? rel(lastSend.sentAt) : "never",
+    };
+
     page(res, "pages/admin", {
       title: "Admin",
       nav: "admin",
@@ -105,6 +130,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       ...headerState(myWatches, env.pollerEnabled),
       people,
       queryRows,
+      delivery,
       totals: {
         users: people.length,
         verified: people.filter((p) => p.verified).length,
