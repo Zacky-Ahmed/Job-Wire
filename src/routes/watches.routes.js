@@ -14,7 +14,7 @@ import { selectableCountries, isKnownGeo, findGeo } from "../services/linkedin/g
 
 const DEFAULT_GEO = "100446352"; // Sri Lanka
 import { canonicalKey, tprFor } from "../services/linkedin/buildUrl.js";
-import { listSources, getSource, sourceCoversCountry, DEFAULT_SOURCE } from "../services/sources/index.js";
+import { listSources, getSource, sourcesForCountry, DEFAULT_SOURCE } from "../services/sources/index.js";
 import { rel, countdown } from "../utils/time.js";
 import { headerState } from "../utils/header.js";
 import { env } from "../config/env.js";
@@ -58,17 +58,12 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     const kw = cleanKeywords(req.body.keywords);
     const geoId = str(req.body.geoId, { max: 20 });
 
-    // Checkboxes arrive as a string when one is ticked, an array when
-    // several are. Normalise, then keep only sources we actually have —
-    // a hand-crafted POST must not be able to name an arbitrary adapter.
-    const rawSources = [].concat(req.body.sources ?? []).map((v) => str(v, { max: 24 }));
-    // Keep only sources that exist AND cover the chosen country. The form
-    // hides the inapplicable ones, but a hidden checkbox is not a rule —
-    // without this a hand-written POST could attach a Sri Lankan board to
-    // a watch for Germany and quietly sweep it forever for nobody.
-    const chosen = [...new Set(rawSources)]
-      .filter((id) => getSource(id) && sourceCoversCountry(id, geoId));
-    const sources = chosen.length ? chosen : [DEFAULT_SOURCE];
+    // Not asked, derived. Whatever the request says about sources is
+    // ignored: nobody wants FEWER sites searched for the same keyword,
+    // and a hand-written POST cannot attach a Sri Lankan board to a
+    // German watch when the country is the only thing that decides.
+    const sources = sourcesForCountry(geoId);
+    if (!sources.length) sources.push(DEFAULT_SOURCE);
     const every = int(req.body.every, { min: env.minSweepMinutes, max: 60, fallback: 5 });
     // Deliberately opt-in. A keyword can only ever be matched against a
     // job TITLE, and employers routinely tag a job "Internship" while
@@ -76,7 +71,7 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     // logged-in search for "intern" and no title filter on earth finds
     // it. This is the only setting that catches those.
     const matchAll = req.body.matchAll === "on" || req.body.matchAll === "1";
-    const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every, sources, matchAll };
+    const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every, matchAll };
 
     if (!label)
       return render(req, res, { showNew: true, values, error: "Give it a name so you can tell watches apart." });
@@ -89,7 +84,10 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     const query = await Queries.upsert({
       // matchAll changes WHICH jobs a query yields, so two watches that
       // differ only by it must not share a row.
-      keywordsKey: canonicalKey(kw, sources) + (matchAll ? "@@all" : ""),
+      // Keywords + country decide identity. Sources are derived from the
+      // country, so including them would change the key the moment a new
+      // adapter shipped and quietly split one shared query into two.
+      keywordsKey: canonicalKey(kw) + (matchAll ? "@@all" : ""),
       keywords: kw,
       geoId,
       location: geo.name,

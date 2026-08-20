@@ -524,6 +524,16 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .src-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .src-n{font-size:14.5px;font-weight:600;}
 .src-h{font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:1.4;}
+
+/* The sources this watch covers. Reported, not chosen — so it reads as a
+   statement rather than a set of controls: no boxes, no hover, nothing
+   that invites a click that would do nothing. */
+.srcs-note{display:flex;flex-direction:column;gap:6px;}
+.srcs-chip{display:flex;align-items:baseline;gap:9px;padding:9px 12px;
+  border-radius:var(--r-sm);background:var(--sunk);border:1px solid var(--line);}
+.srcs-chip b{font-size:14px;font-weight:600;flex:none;}
+.srcs-chip i{font-style:normal;font-family:var(--mono);font-size:10.5px;
+  color:var(--faint);line-height:1.4;min-width:0;}
 /* Not a source — a coverage decision, so it carries the signal colour
    rather than the structural violet of the source list above it. */
 /* Why a job is here when its title never says so. Amber, not coral:
