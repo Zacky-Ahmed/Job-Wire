@@ -145,6 +145,28 @@ ok(!!allQ, "matchAll persisted on the query row");
 ok(!!allQ && /@@all$/.test(allQ.keywordsKey),
   "matchAll owns a distinct key — it must never share a row with the keyword watch");
 
+console.log("\n── one account never sees another account’s data ──");
+// Query rows are SHARED. Reading one unscoped handed a new account the
+// whole history of a search other people had been running for weeks, and
+// the "emails sent" figure was the whole instance’s, so an empty inbox
+// was greeted by other people’s send count.
+const other = await collections.users().insertOne({
+  email: `e2e-other-${Date.now()}@example.invalid`,
+  passHash: await pw.hash(PASS), verified: true, verifiedAt: new Date(), createdAt: new Date(),
+});
+await collections.emailLog().insertOne({
+  userId: other.insertedId, queryId: null, jobIds: ["linkedin:e2e-not-yours"],
+  status: "sent", attempts: 0, sentAt: new Date(),
+});
+const EmailLog2 = await import("../src/models/emailLog.js");
+const mine = await EmailLog2.countTodayForUser((await collections.users().findOne({ email: EMAIL }))._id);
+const everyone = await EmailLog2.countToday();
+ok(everyone > mine, `the shared total (${everyone}) is not shown as this user’s count (${mine})`);
+html = await (await get("/wire")).text();
+ok(html.includes(">Your alerts<"), "the alerts card is labelled as the reader’s own");
+await collections.emailLog().deleteMany({ userId: other.insertedId });
+await collections.users().deleteOne({ _id: other.insertedId });
+
 console.log("\n── admin stays hidden from ordinary accounts ──");
 // This account is not in ADMIN_EMAILS. 404 rather than 403 is deliberate:
 // "forbidden" confirms to a stranger that an admin area lives at this URL.
