@@ -93,6 +93,41 @@ export function countMatched(queryIds) {
     .countDocuments({ queryId: { $in: queryIds }, matched: { $ne: false } });
 }
 
+/**
+ * Scope a query row's history to the person reading it.
+ *
+ * Query rows are SHARED — that is what makes a hundred people watching
+ * "intern / Sri Lanka" cost one fetch. The cost is that subscribing to
+ * one inherits everything it ever caught, so a new account opened onto a
+ * wire of 232 jobs it had never been told about, thirteen of them from
+ * before the account existed. Their own inbox said otherwise.
+ *
+ * A job belongs to a reader only from the moment they started watching.
+ */
+function scopedToSubscriptions(pairs) {
+  return {
+    matched: { $ne: false },
+    $or: pairs.map(({ queryId, since }) => ({
+      queryId,
+      firstSeenAt: since ? { $gte: since } : { $exists: true },
+    })),
+  };
+}
+
+export function recentForSubscriptions(pairs, limit = 50) {
+  if (!pairs.length) return Promise.resolve([]);
+  return collections.seenJobs()
+    .find(scopedToSubscriptions(pairs))
+    .sort({ firstSeenAt: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+export function countMatchedForSubscriptions(pairs) {
+  if (!pairs.length) return Promise.resolve(0);
+  return collections.seenJobs().countDocuments(scopedToSubscriptions(pairs));
+}
+
 export function countFor(queryId) {
   return collections.seenJobs().countDocuments({ queryId });
 }

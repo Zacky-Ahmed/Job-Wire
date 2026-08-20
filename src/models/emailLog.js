@@ -23,7 +23,25 @@ export function recentForUser(userId, limit = 30) {
     .find({ userId }).sort({ sentAt: -1 }).limit(limit).toArray();
 }
 
-/** Emails sent today — used to stay inside the Gmail 500/day ceiling. */
+/**
+ * Emails sent to ONE person today.
+ *
+ * The dashboard used to show the instance-wide figure to everybody, so a
+ * brand-new account with an empty inbox was greeted by "4 emails sent
+ * today" — four emails that went to other people. A per-user page must
+ * count per user.
+ */
+export function countTodayForUser(userId) {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  return collections.emailLog()
+    .countDocuments({ userId, sentAt: { $gte: start }, status: "sent" });
+}
+
+/**
+ * Emails sent today by the whole instance — the figure that matters for
+ * the provider's daily ceiling, because that ceiling is shared. Used by
+ * the poller and the admin page, never as a personal statistic.
+ */
 export function countToday() {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   return collections.emailLog().countDocuments({ sentAt: { $gte: start }, status: "sent" });

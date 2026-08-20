@@ -25,9 +25,12 @@ const WINDOW_MIN = 60; // assumed application window — an estimate, labelled a
 async function gather(user) {
   const watches = await Subs.listForUser(user._id);
   const labelByQuery = new Map(watches.map((w) => [String(w.queryId), w.label]));
-  const queryIds = watches.map((w) => w.queryId);
 
-  const caught = queryIds.length ? await SeenJobs.recentForQueries(queryIds, 50) : [];
+  // Scoped to when THIS person started watching. The query row behind a
+  // watch is shared, so an unscoped read handed a new account the whole
+  // history of a search other people had been running for weeks.
+  const scope = watches.map((w) => ({ queryId: w.queryId, since: w.createdAt }));
+  const caught = await SeenJobs.recentForSubscriptions(scope, 50);
   const emails = await EmailLog.recentForUser(user._id, 30);
 
   // Only SUCCESSFUL sends count as delivered. Including failed ones here
@@ -52,6 +55,10 @@ async function gather(user) {
       ...j,
       label: labelByQuery.get(String(j.queryId)) || "deleted watch",
       ageText: rel(j.firstSeenAt),
+      // The row-arrival flash has a CSS rule and a class hook but nothing
+      // ever set the flag, so it never once fired. A job caught since the
+      // last poll of this page is what "new" means here.
+      isNew: minutesSince(j.firstSeenAt) < 5,
       emailed: emailedIds.has(j.jobId),
       failed: !emailedIds.has(j.jobId) && failedIds.has(j.jobId),
       windowPct: pct,
@@ -66,8 +73,12 @@ async function gather(user) {
     dispatches,
     // The COUNT, not the length of the page we happen to render. These
     // differed by 176 for this user: 226 matches, a 50-row page.
-    caughtCount: await SeenJobs.countMatched(queryIds),
-    sentToday: await EmailLog.countToday(),
+    caughtCount: await SeenJobs.countMatchedForSubscriptions(scope),
+    // Yours, not the instance's. This used to be the global figure, so a
+    // brand-new account with an empty inbox was told "4 emails sent
+    // today" — four emails that had gone to other people.
+    sentToday: await EmailLog.countTodayForUser(user._id),
+    sentTodayAll: await EmailLog.countToday(),
     mailCap: dailyCap(),
     mailProvider: providerLabel(),
     pollerEnabled: env.pollerEnabled,
