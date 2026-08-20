@@ -24,6 +24,41 @@
 
   <div class="panel">
     <div class="panel-h">
+      <span class="dot <%= delivery.misaligned ? 'sig' : 'live' %>"></span>
+      <h3>Delivery</h3>
+      <span class="sp"></span>
+      <span class="lbl">"sent" means accepted, not received</span>
+    </div>
+    <div class="row r-admin">
+      <div class="role">
+        <div class="a">Sending as <%= delivery.from %></div>
+        <div class="b">via <%= delivery.provider %> · last accepted <%= delivery.lastSentAt %></div>
+      </div>
+      <span>
+        <% if (delivery.misaligned) { %><span class="pill sig">DMARC broken</span>
+        <% } else { %><span class="pill go">Aligned</span><% } %>
+      </span>
+      <span class="muted hide"></span><span class="muted hide"></span>
+    </div>
+    <% if (delivery.misaligned) { %>
+      <div class="note" style="margin:12px 14px;border-radius:8px">
+        <span><b><%= delivery.from %></b> is a freemail address being relayed through
+          <%= delivery.provider %>. Only Google may send as gmail.com, so these messages
+          claim a domain the relay cannot prove. Gmail accepts them and then files them
+          in <b>Spam</b> — or drops them silently. That is why the provider reports
+          0&nbsp;failed while nothing arrives.
+          <br><br>
+          The fix is a domain you own: register one, authenticate it in
+          <%= delivery.provider %> with SPF and DKIM, and send as
+          <b>alerts@yourdomain</b>. Until then, check Spam and mark the messages
+          “Not spam”, which teaches Gmail for your own inbox only — new users
+          signing up will still lose their verification codes.</span>
+      </div>
+    <% } %>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h">
       <span class="dot live"></span>
       <h3>People</h3>
       <span class="sp"></span>

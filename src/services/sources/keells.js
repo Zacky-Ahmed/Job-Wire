@@ -22,6 +22,11 @@ export const perCountry = false;
 export const countries = ["100446352"]; // Sri Lanka
 export const note = "Publishes instantly — no search-index delay";
 export const pageSize = 10;
+// The board prints a DATE and nothing finer ("19 Aug 2026"), which
+// resolves to midnight. A job posted at nine this morning therefore reads
+// as several hours old the moment it appears, so its age cannot be used
+// to judge whether it is news. Its arrival is the only signal there is.
+export const timePrecision = "day";
 
 const BASE = "https://careers.keells.com/search/";
 
