@@ -28,8 +28,9 @@
 
 import * as linkedin from "./linkedin.js";
 import * as keells from "./keells.js";
+import * as topjobs from "./topjobs.js";
 
-export const SOURCES = { linkedin, keells };
+export const SOURCES = { linkedin, keells, topjobs };
 
 export const DEFAULT_SOURCE = "linkedin";
 
@@ -37,14 +38,29 @@ export function getSource(id) {
   return SOURCES[id] || null;
 }
 
-/** What the new-watch picker offers. */
+/**
+ * What the new-watch picker offers.
+ *
+ * `countries` matters to the UI: a source that only covers Sri Lanka has
+ * no business appearing when someone picks Germany. An empty list means
+ * the source is country-agnostic and always applicable.
+ */
 export function listSources() {
   return Object.values(SOURCES).map((s) => ({
     id: s.id,
     label: s.label,
     perCountry: s.perCountry,
+    countries: s.countries || [],
     note: s.note || "",
   }));
+}
+
+/** Is this source usable for that country? */
+export function sourceCoversCountry(sourceId, geoId) {
+  const s = SOURCES[sourceId];
+  if (!s) return false;
+  if (!s.countries || !s.countries.length) return true; // global
+  return s.countries.includes(String(geoId));
 }
 
 /** Prefix an id so two sites can never collide on the same number. */

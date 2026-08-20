@@ -88,9 +88,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * @param {string}   rawUrl
  * @param {string[]} allowHosts  hosts this source is permitted to reach
- * @param {object}   opts        { jitter, accept }
+ * @param {object}   opts        { jitter, accept, charset }
  */
-export async function guardedFetch(rawUrl, allowHosts, { jitter = true, accept } = {}) {
+export async function guardedFetch(rawUrl, allowHosts, { jitter = true, accept, charset } = {}) {
   let url = assertAllowed(rawUrl, allowHosts);
 
   // Random delay so a schedule does not look like a metronome.
@@ -135,8 +135,13 @@ export async function guardedFetch(rawUrl, allowHosts, { jitter = true, accept }
     const len = Number(res.headers.get("content-length") || 0);
     if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
 
-    const text = await res.text();
-    if (text.length > MAX_BYTES) throw new Error("Response too large");
+    // res.text() always decodes as UTF-8 in Node, whatever the response
+    // declares. topjobs serves iso-8859-1, so every en-dash and accented
+    // character came back as "?" — "Intern ? Human Resources Operations".
+    // A source that knows its own encoding can say so.
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_BYTES) throw new Error("Response too large");
+    const text = new TextDecoder(charset || "utf-8").decode(buf);
     return text;
   }
 
