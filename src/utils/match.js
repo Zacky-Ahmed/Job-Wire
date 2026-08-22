@@ -21,6 +21,39 @@
 
 const SUFFIX = "(?:s|es|ship|ships|ing|ed|er|ers)?";
 
+/**
+ * Words that mean the same job to the person reading.
+ *
+ * Sri Lankan employers use "trainee" and "intern" interchangeably —
+ * topjobs alone lists "Trainee Software Engineers", "Trainee QA Engineer"
+ * and "Trainee IT" alongside roles titled "Intern", and they are the same
+ * thing. Someone watching one and not being shown the other is missing
+ * jobs for a vocabulary reason, not a relevance one.
+ *
+ * Kept deliberately small. Every entry here widens what arrives in
+ * somebody's inbox, so a pair earns its place by being genuinely the same
+ * role, not merely adjacent — "graduate" and "junior" are NOT here,
+ * because plenty of those want experience an intern does not have.
+ */
+const SYNONYMS = {
+  intern: ["trainee"],
+  trainee: ["intern"],
+  internship: ["trainee", "traineeship"],
+  traineeship: ["intern", "internship"],
+};
+
+/** The word itself plus anything that means the same job. */
+function expand(keywords) {
+  const out = [];
+  for (const w of keywords) {
+    if (!w) continue;
+    out.push(w);
+    const also = SYNONYMS[String(w).trim().toLowerCase()];
+    if (also) out.push(...also);
+  }
+  return [...new Set(out)];
+}
+
 const cache = new Map();
 
 function pattern(word) {
@@ -33,14 +66,19 @@ function pattern(word) {
   return re;
 }
 
-/** True if any keyword appears in the text as a word, not as a fragment. */
+/** True if any keyword, or a synonym of one, appears as a word. */
 export function matchesAny(text, keywords) {
   if (!text) return false;
-  return keywords.some((w) => w && pattern(w).test(text));
+  return expand(keywords).some((w) => pattern(w).test(text));
 }
 
-/** Which keyword hit, or null. Useful for explaining a match to the user. */
+/** Which word actually hit, or null. Useful for explaining a match. */
 export function firstMatch(text, keywords) {
   if (!text) return null;
-  return keywords.find((w) => w && pattern(w).test(text)) || null;
+  return expand(keywords).find((w) => pattern(w).test(text)) || null;
+}
+
+/** What a keyword will really be searched for. For showing the reader. */
+export function expandedFor(keywords) {
+  return expand(Array.isArray(keywords) ? keywords : [keywords]);
 }
