@@ -60,7 +60,10 @@
         <label class="lbl" for="kw">Job titles or keywords</label>
         <div class="inp"><input id="kw" name="keywords" placeholder="intern, software engineer"
           value="<%= values.keywords || '' %>" autocomplete="off"></div>
-        <span class="hint">Separate with commas. Matched against the job title.</span>
+        <span class="hint">Separate with commas. Matched against the job title as a
+          whole word, so “intern” finds <i>Internship</i> but not <i>internal</i>.
+          Words that mean the same job are included automatically —
+          “intern” also finds <i>Trainee</i>.</span>
       </div>
 
       <div class="f">
