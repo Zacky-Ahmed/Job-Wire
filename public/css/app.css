@@ -58,6 +58,11 @@ h1,h2,h3{font-family:var(--display);font-stretch:87.5%;font-weight:700;
   letter-spacing:-.02em;line-height:1.1;}
 .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint);}
+/* Sits on the same line as the field label it belongs to, so the way out
+   of a forgotten password is next to the box you just failed to fill. */
+.lbl-link{float:right;text-transform:none;letter-spacing:0;font-size:11.5px;
+  color:var(--vio);border-bottom:1px solid transparent;transition:border-color .15s;}
+.lbl-link:hover{border-bottom-color:var(--vio);}
 .data,.tnum{font-family:var(--mono);font-variant-numeric:tabular-nums;}
 .num{font-family:var(--display);font-stretch:75%;font-weight:700;
   font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:.95;}

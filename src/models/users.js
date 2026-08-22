@@ -36,3 +36,28 @@ export function setOtp(id, { otpHash, otpExpiresAt }) {
     { $set: { otpHash, otpExpiresAt, otpAttempts: 0 } }
   );
 }
+
+/** Attach a pending password-reset code, replacing any earlier one. */
+export function setReset(id, { resetHash, resetExpiresAt }) {
+  return collections.users().updateOne(
+    { _id: id },
+    { $set: { resetHash, resetExpiresAt, resetAttempts: 0 } }
+  );
+}
+
+/**
+ * Set a new password and retire the reset code in one write.
+ *
+ * passwordChangedAt is recorded so a session issued before the change can
+ * be told apart from one issued after — the hook a "sign out everywhere"
+ * would need, and a cheap thing to write now rather than backfill later.
+ */
+export function setPassword(id, passHash) {
+  return collections.users().updateOne(
+    { _id: id },
+    {
+      $set: { passHash, passwordChangedAt: new Date() },
+      $unset: { resetHash: "", resetExpiresAt: "", resetAttempts: "" },
+    }
+  );
+}

@@ -69,6 +69,37 @@ export function buildVerification({ code }) {
   };
 }
 
+export function buildPasswordReset({ code }) {
+  // Deliberately a CODE, not a link. A reset link in a message that is
+  // already fighting for the inbox is the thing spam filters distrust
+  // most, and this address sends through a relay it cannot prove it owns.
+  // Six digits the reader retypes needs no clickable URL at all.
+  const inner = `
+    <p style="margin:0 0 16px;">Use this code to set a new Job Wire password:</p>
+    <p style="margin:0 0 16px;font-size:30px;font-weight:bold;letter-spacing:6px;
+      text-indent:6px;font-family:Menlo,Consolas,monospace;">${esc(code)}</p>
+    <p style="margin:0 0 16px;">It expires in 10 minutes.</p>
+    <p style="margin:0;color:${MUTED};font-size:13px;">
+      If you didn't ask to reset your password, ignore this email — nothing
+      has changed, and your current password still works.</p>`;
+
+  return {
+    subject: `Your Job Wire password reset code is ${code}`,
+    text:
+      `Use this code to set a new Job Wire password:
+
+${code}
+
+` +
+      `It expires in 10 minutes.
+
+` +
+      `If you didn't ask to reset your password, ignore this email — nothing ` +
+      `has changed, and your current password still works.`,
+    html: SHELL(inner, `Your reset code is ${code}. It expires in 10 minutes.`),
+  };
+}
+
 export function buildAlert({ label, jobs }) {
   const n = jobs.length;
 
@@ -117,4 +148,8 @@ export function sendVerification({ to, code }) {
 
 export function sendAlert({ to, label, jobs }) {
   return sendMail({ to, ...buildAlert({ label, jobs }) });
+}
+
+export function sendPasswordReset({ to, code }) {
+  return sendMail({ to, ...buildPasswordReset({ code }) });
 }

@@ -1,0 +1,55 @@
+<form method="post" action="/reset" novalidate>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <%# The address is carried so the page can name it and so a failed
+      attempt re-renders with it. It is NOT what selects the account —
+      the session holds that, or the code could be pointed at someone
+      else's account by editing this field. %>
+  <input type="hidden" name="email" value="<%= email %>">
+
+  <div class="ftitle"><h2>Set a new password</h2>
+    <p>Enter the six digits we sent<% if (email) { %> to <b><%= email %></b><% } %>,
+      then choose a new password.</p></div>
+
+  <% if (error) { %><div class="banner err"><%= error %></div><% } %>
+  <% if (notice) { %><div class="banner go"><%= notice %></div><% } %>
+
+  <div class="f">
+    <span class="lbl">Reset code</span>
+    <div class="otp<%= error ? ' bad' : '' %>" id="otpBox">
+      <input name="d1" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1">
+      <input name="d2" inputmode="numeric" maxlength="1" aria-label="Digit 2">
+      <input name="d3" inputmode="numeric" maxlength="1" aria-label="Digit 3">
+      <input name="d4" inputmode="numeric" maxlength="1" aria-label="Digit 4">
+      <input name="d5" inputmode="numeric" maxlength="1" aria-label="Digit 5">
+      <input name="d6" inputmode="numeric" maxlength="1" aria-label="Digit 6">
+    </div>
+  </div>
+
+  <div class="f">
+    <label class="lbl" for="password">New password</label>
+    <div class="inp">
+      <input id="password" name="password" type="password" placeholder="••••••••"
+        autocomplete="new-password" minlength="8" required>
+      <button type="button" class="eye" data-eye="password" aria-label="Show password" aria-pressed="false"></button>
+    </div>
+    <span class="hint">At least 8 characters.</span>
+  </div>
+
+  <div class="f">
+    <label class="lbl" for="password2">Confirm new password</label>
+    <div class="inp">
+      <input id="password2" name="password2" type="password" placeholder="••••••••"
+        autocomplete="new-password" required>
+      <button type="button" class="eye" data-eye="password2" aria-label="Show password" aria-pressed="false"></button>
+    </div>
+  </div>
+
+  <button class="btn btn-sig btn-lg btn-full" type="submit">Set password and sign in</button>
+</form>
+
+<form method="post" action="/forgot" style="margin-top:-8px">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="email" value="<%= email %>">
+  <p class="alt">No code? <button type="submit">Send another</button></p>
+</form>
+<p class="alt"><a href="/signin" style="color:var(--faint)">← Back to sign in</a></p>

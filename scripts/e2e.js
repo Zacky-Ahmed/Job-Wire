@@ -200,6 +200,39 @@ await post("/signout", { _csrf: csrf(html) });
 r = await get("/wire");
 ok(r.status === 302, "signed out user is bounced from /wire");
 
+// Runs after sign-out on purpose: /signin and /forgot both redirect an
+// authenticated visitor to /wire, so every assertion here would have been
+// checking the wire page instead of the one it names.
+console.log("\n── forgotten password ──");
+// Only the paths that send no mail. Driving the happy path from here
+// would fire a real message at an @example.invalid recipient on every
+// run, and bouncing mail off a reserved domain is a poor way to treat a
+// sender reputation this project has already had to repair once.
+html = await (await get("/signin")).text();
+ok(html.includes('href="/forgot"'), "the sign-in page offers a way out");
+
+html = await (await get("/forgot")).text();
+ok(html.includes("Forgotten password"), "the reset page renders");
+r = await post("/forgot", { _csrf: csrf(html), email: "no-such-account@example.invalid" });
+html = await r.text();
+// Never "no account with that email": that turns this form into a
+// membership oracle, and helps a mistyped address not at all.
+ok(/If that address has an account/.test(html),
+  "an unknown address is not told it is unknown");
+ok(!/no account|not found|does not exist/i.test(html), "no wording leaks account existence");
+const strays = await collections.users().countDocuments({ email: "no-such-account@example.invalid" });
+ok(strays === 0, "asking about an unknown address creates nothing");
+
+// A reset code is meaningless without the session that requested it,
+// so a stolen or guessed code cannot be aimed at another account.
+r = await post("/reset", { _csrf: csrf(html), email: EMAIL,
+  d1: "1", d2: "2", d3: "3", d4: "4", d5: "5", d6: "6",
+  password: "attackerpassword", password2: "attackerpassword" });
+ok(/not valid/.test(await r.text()), "a reset with no pending request is refused");
+const untouched = await collections.users().findOne({ email: EMAIL });
+ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
+
+
 // cleanup
 //
 // Scoped to THIS run's account only. Two earlier versions were wrong:

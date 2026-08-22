@@ -1,0 +1,19 @@
+<form method="post" action="/forgot" novalidate>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="ftitle"><h2>Forgotten password</h2>
+    <p>Tell us the address on the account and we'll send a six-digit code
+      to set a new password.</p></div>
+
+  <% if (error) { %><div class="banner err"><%= error %></div><% } %>
+  <% if (notice) { %><div class="banner go"><%= notice %></div><% } %>
+
+  <div class="f">
+    <label class="lbl" for="email">Email</label>
+    <div class="inp"><input id="email" name="email" type="email" placeholder="you@gmail.com"
+      value="<%= values.email || '' %>" autocomplete="email" autofocus required></div>
+  </div>
+
+  <button class="btn btn-sig btn-lg btn-full" type="submit">Send me a code</button>
+</form>
+
+<p class="alt"><a href="/signin" style="color:var(--faint)">← Back to sign in</a></p>
