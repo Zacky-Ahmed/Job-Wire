@@ -247,6 +247,7 @@ const attacks = [
   ["delete another account", `/admin/users/${victim._id}/delete`],
   ["park a query",           `/admin/queries/${anyQuery._id}/toggle`],
   ["force a sweep",          `/admin/queries/${anyQuery._id}/sweep`],
+  ["delete a query",         `/admin/queries/${anyQuery._id}/delete`],
 ];
 html = await (await get("/wire")).text();
 token = csrf(html);

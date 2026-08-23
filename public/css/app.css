@@ -552,5 +552,15 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
   background:color-mix(in srgb,var(--amber) 14%,transparent);
   border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);cursor:help;}
 
+/* Who is on a shared search. Reads as a list of people, not as chips to
+   click — nothing here is interactive. */
+.watchers{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;}
+.w-one{display:inline-flex;align-items:baseline;gap:6px;font-family:var(--mono);
+  font-size:10px;padding:2px 7px;border-radius:4px;
+  background:var(--vio-soft);color:var(--vio);}
+.w-one.held{background:var(--bg-2);color:var(--faint);}
+.w-lbl{opacity:.65;}
+.w-none{font-family:var(--mono);font-size:10px;color:var(--faint);}
+
 .src-wide input{accent-color:var(--sig);}
 .src-wide:has(input:checked){border-color:var(--sig);background:var(--sig-soft);}

@@ -64,10 +64,19 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       if (!subsByUser.has(k)) subsByUser.set(k, []);
       subsByUser.get(k).push(s);
     }
+    // Who is on each query, not merely how many. "1 subscriber" answers
+    // the wrong question: an owner looking at a search that is spending
+    // requests wants to know whose it is before touching it.
+    const emailById = new Map(users.map((u) => [String(u._id), u.email]));
     const subsByQuery = new Map();
     for (const s of watches) {
       const k = String(s.queryId);
-      subsByQuery.set(k, (subsByQuery.get(k) || 0) + 1);
+      if (!subsByQuery.has(k)) subsByQuery.set(k, []);
+      subsByQuery.get(k).push({
+        email: emailById.get(String(s.userId)) || "(deleted account)",
+        label: s.label,
+        active: s.active !== false,
+      });
     }
 
     const now = Date.now();
@@ -86,7 +95,8 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
     });
 
     const queryRows = queries.map((q) => {
-      const subscribers = subsByQuery.get(String(q._id)) || 0;
+      const watchers = subsByQuery.get(String(q._id)) || [];
+      const subscribers = watchers.length;
       const qid = String(q._id);
       const overdueMin = q.nextFetchAt
         ? Math.round((now - new Date(q.nextFetchAt).getTime()) / 60000)
@@ -98,6 +108,13 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         sources: (q.sources || ["linkedin"]).join(", "),
         matchAll: !!q.matchAll,
         subscribers,
+        watchers,
+        // Only a query nobody is on can be removed from here. Deleting one
+        // out from under a live watch would leave that person a
+        // subscription row pointing at nothing — listForUser inner-joins
+        // on the query, so their watch would simply vanish from their page
+        // with no explanation and no way to get it back.
+        deletable: subscribers === 0,
         tracked: q.trackedCount ?? 0,
         peak: q.trackedPeak ?? 0,
         every: q.everyMinutes,
@@ -152,7 +169,8 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       // itself rather than silently doing nothing.
       adminError:
         req.query.err === "self"  ? "You cannot delete the account you are signed in with." :
-        req.query.err === "admin" ? "That account is an admin. Remove it from ADMIN_EMAILS first." : null,
+        req.query.err === "admin" ? "That account is an admin. Remove it from ADMIN_EMAILS first." :
+        req.query.err === "inuse" ? "Someone still watches that search. Remove their watch first, or park it instead." : null,
       adminNotice: req.query.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." : null,
       totals: {
         users: people.length,
@@ -266,5 +284,39 @@ adminRoutes.post("/admin/queries/:id/sweep", ...guard, async (req, res, next) =>
       sweepQuery(q).catch((e) => log.error("forced sweep failed", { message: e.message }));
     }
     res.redirect("/admin?swept=1");
+  } catch (err) { next(err); }
+});
+
+/**
+ * Remove a query and the jobs it remembered.
+ *
+ * Refused while anyone is subscribed, and that is not timidity: a
+ * subscription is joined to its query, so deleting the query would make
+ * the watch disappear from that person's page with no message and no way
+ * to restore it. Parked and orphaned rows are what this is for — they
+ * accumulate, and until now nothing could clear them.
+ */
+adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) => {
+  try {
+    const id = oid(req.params.id);
+    if (!id) return res.redirect("/admin");
+    const q = await collections.queries().findOne({ _id: id });
+    if (!q) return res.redirect("/admin");
+
+    const subs = await collections.subscriptions().countDocuments({ queryId: id });
+    if (subs > 0) {
+      log.warn("ADMIN tried to delete a query someone still watches",
+        { by: req.user.email, location: q.location, subscribers: subs });
+      return res.redirect("/admin?err=inuse");
+    }
+
+    const jobs = await collections.seenJobs().countDocuments({ queryId: id });
+    await collections.seenJobs().deleteMany({ queryId: id });
+    await collections.queries().deleteOne({ _id: id });
+    log.warn("ADMIN deleted a query", {
+      by: req.user.email, location: q.location,
+      keywords: (q.keywords || []).join("+") || "everything", jobsDropped: jobs,
+    });
+    res.redirect("/admin");
   } catch (err) { next(err); }
 });

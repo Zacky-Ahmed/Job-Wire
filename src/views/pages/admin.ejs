@@ -126,8 +126,20 @@
       <div class="row r-admin">
         <div class="role">
           <div class="a"><%= q.label %><% if (q.matchAll) { %><span class="why">everything</span><% } %></div>
-          <div class="b"><%= q.location %> · <%= q.sources %> · every <%= q.every %> min ·
-            <%= q.subscribers %> subscriber<%= q.subscribers === 1 ? '' : 's' %></div>
+          <div class="b"><%= q.location %> · <%= q.sources %> · every <%= q.every %> min</div>
+          <%# Who is on it. A count answers the wrong question: before
+              parking or deleting a search you want to know whose it is. %>
+          <div class="watchers">
+            <% if (!q.watchers.length) { %>
+              <span class="w-none">nobody is watching this</span>
+            <% } %>
+            <% q.watchers.forEach(function (w) { %>
+              <span class="w-one<%= w.active ? '' : ' held' %>"
+                title="<%= w.active ? 'Watching' : 'Paused by them' %>">
+                <%= w.email %><span class="w-lbl"><%= w.label %></span>
+              </span>
+            <% }) %>
+          </div>
         </div>
         <span>
           <% if (q.retired) { %><span class="pill off" title="Nobody watches this any more, so it has stopped sweeping">Parked</span>
@@ -150,14 +162,18 @@
               <button class="btn btn-xs" type="submit" title="Fetch now instead of waiting for the schedule">Sweep</button>
             </form>
           <% } %>
+          <% if (q.deletable) { %>
+            <form method="post" action="/admin/queries/<%= q.id %>/delete"
+              onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs btn-bad" type="submit"
+                title="Only possible because nobody is subscribed">Delete</button>
+            </form>
+          <% } %>
         </div>
       </div>
     <% }) %>
   </div>
 
-  <div class="note" style="margin-top:2px">
-    <span>Admin comes from <b>ADMIN_EMAILS</b> in the
-      environment, not from anything stored in the database — so it cannot be
-      granted by writing to Mongo, and there is no first-admin bootstrap.</span>
-  </div>
+  
 </div>
