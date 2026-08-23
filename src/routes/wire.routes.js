@@ -22,7 +22,21 @@ export const wireRoutes = Router();
 
 const WINDOW_MIN = 60; // assumed application window — an estimate, labelled as one
 
-async function gather(user) {
+// The feed used to render a hard 50 with no way past it. The count above
+// it said 226, so 176 caught jobs were being announced and then withheld
+// — they were not expired (the TTL is 14 days and nothing here is older),
+// they were simply unreachable. 50 stays the first page; "show older"
+// walks back through the rest.
+const PAGE = 50;
+const MAX_SHOW = 500;
+
+function showCount(raw) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return PAGE;
+  return Math.min(Math.max(n, PAGE), MAX_SHOW);
+}
+
+async function gather(user, show = PAGE) {
   const watches = await Subs.listForUser(user._id);
   const labelByQuery = new Map(watches.map((w) => [String(w.queryId), w.label]));
 
@@ -30,7 +44,7 @@ async function gather(user) {
   // watch is shared, so an unscoped read handed a new account the whole
   // history of a search other people had been running for weeks.
   const scope = watches.map((w) => ({ queryId: w.queryId, since: w.createdAt }));
-  const caught = await SeenJobs.recentForSubscriptions(scope, 50);
+  const caught = await SeenJobs.recentForSubscriptions(scope, show);
   // Look up delivery BY THE JOBS ON SCREEN, not by a fixed slice of the
   // email log. Reading the newest 30 rows only worked while sweeps
   // happened to batch several jobs per email: measured on this account it
@@ -88,13 +102,21 @@ async function gather(user) {
     };
   });
 
+  const caughtCount = await SeenJobs.countMatchedForSubscriptions(scope);
+
   return {
     watches,
     ...headerState(watches, env.pollerEnabled),
     dispatches,
     // The COUNT, not the length of the page we happen to render. These
     // differed by 176 for this user: 226 matches, a 50-row page.
-    caughtCount: await SeenJobs.countMatchedForSubscriptions(scope),
+    caughtCount,
+    shown: dispatches.length,
+    // Only offer "older" when there is genuinely something behind it, and
+    // never offer a page the query would refuse to grow into.
+    hasMore: caughtCount > dispatches.length && show < MAX_SHOW,
+    show,
+    nextShow: Math.min(show + PAGE, MAX_SHOW),
     // Yours, not the instance's. This used to be the global figure, so a
     // brand-new account with an empty inbox was told "4 emails sent
     // today" — four emails that had gone to other people.
@@ -108,7 +130,7 @@ async function gather(user) {
 
 wireRoutes.get("/wire", requireAuth, async (req, res, next) => {
   try {
-    const data = await gather(req.user);
+    const data = await gather(req.user, showCount(req.query.show));
     page(res, "pages/wire", { title: "The Wire", nav: "wire", user: req.user, ...data });
   } catch (err) {
     next(err);
@@ -118,7 +140,10 @@ wireRoutes.get("/wire", requireAuth, async (req, res, next) => {
 // HTMX polls this every 15s — fragment only, no layout.
 wireRoutes.get("/wire/rows", requireAuth, async (req, res, next) => {
   try {
-    const { dispatches, watchCount } = await gather(req.user);
+    // The poll must keep the reader where they are. Without carrying
+    // `show` through, expanding to 200 rows and waiting 15 seconds
+    // silently collapsed the list back to 50.
+    const { dispatches, watchCount } = await gather(req.user, showCount(req.query.show));
     res.render("partials/wire-rows", { dispatches, watchCount }, (err, html) => {
       if (err) return next(err);
       res.type("text/html").send(html);

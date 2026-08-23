@@ -564,3 +564,8 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 
 .src-wide input{accent-color:var(--sig);}
 .src-wide:has(input:checked){border-color:var(--sig);background:var(--sig-soft);}
+
+/* wire: the "show older" control under the feed */
+.more{display:flex;align-items:center;justify-content:center;gap:12px;
+  flex-wrap:wrap;padding:16px 12px 4px}
+.more-note{font-size:12px;color:var(--muted)}

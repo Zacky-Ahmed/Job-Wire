@@ -46,8 +46,21 @@
       <span class="hide">Watch</span><span class="hide">Caught</span>
       <span class="hide">Window</span><span style="text-align:right">Act</span>
     </div>
-    <div id="wireRows" hx-get="/wire/rows" hx-trigger="every 15s" hx-swap="innerHTML">
+    <div id="wireRows" hx-get="/wire/rows?show=<%= show %>" hx-trigger="every 15s" hx-swap="innerHTML">
       <%- include('../partials/wire-rows', { dispatches }) %>
     </div>
+    <%# Outside #wireRows on purpose: the 15s poll replaces that element's
+        innerHTML, so a control placed inside it would vanish and reappear
+        under the reader's cursor. %>
+    <% if (hasMore) { %>
+      <div class="more">
+        <a class="btn" href="/wire?show=<%= nextShow %>">Show older</a>
+        <span class="more-note">showing <%= shown %> of <%= caughtCount %></span>
+      </div>
+    <% } else if (shown < caughtCount) { %>
+      <div class="more">
+        <span class="more-note">showing the most recent <%= shown %> of <%= caughtCount %></span>
+      </div>
+    <% } %>
   </div>
 </div>
