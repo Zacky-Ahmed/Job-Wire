@@ -40,7 +40,7 @@ authRoutes.post("/signup", redirectIfAuthed, signupLimiter, async (req, res, nex
     const values = { email: str(req.body.email, { max: 254 }) };
 
     if (!email) return show(res, "signup", { error: "Enter a valid email address.", values });
-    const problem = pw.validate(password);
+    const problem = pw.validate(password, { email });
     if (problem) return show(res, "signup", { error: problem, values });
     if (password !== confirm)
       return show(res, "signup", { error: "The two passwords do not match.", values });
@@ -293,8 +293,8 @@ authRoutes.post("/reset", resetLimiter, async (req, res, next) => {
 
     // Check the passwords BEFORE spending an attempt on the code: a typo
     // in the confirm box should not burn one of five tries.
-    if (password.length < 8)
-      return back({ error: "Use at least 8 characters." });
+    const weak = pw.validate(password, { email: user.email });
+    if (weak) return back({ error: weak });
     if (password !== confirm)
       return back({ error: "Those passwords do not match." });
 
