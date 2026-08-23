@@ -1,70 +1,115 @@
-<!-- ── hero ─────────────────────────────────────────────────── -->
-<section class="hero-lp">
-  <div class="lp-wrap hero-grid">
+<!-- ═══════════════════════════════════════════════════════════════
+     HERO — the thesis, stated as a clock that will not stop.
+     The minute counter is live; the panel beside it streams real
+     roles. Nothing here is a screenshot.
+     ═══════════════════════════════════════════════════════════ -->
+<section class="hero" id="hero">
+  <canvas class="hero-aurora" id="aurora" aria-hidden="true"></canvas>
+  <div class="hero-grain" aria-hidden="true"></div>
+
+  <div class="lp-wrap hero-in">
     <div class="hero-copy">
-      <span class="eyebrow reveal">Job alerts for people who apply early</span>
-      <h1 class="reveal d1">
-        The job was posted<br>
-        <span class="live-line">
-          <span class="tnum" id="heroMins">4</span> minutes ago.
-        </span><br>
-        <em>You already know.</em>
+      <span class="eyebrow rv">
+        <span class="eyebrow-dot"></span>
+        Four job boards · one email · minutes, not mornings
+      </span>
+
+      <h1 class="rv d1">
+        <span class="h-line">The job was posted</span>
+        <span class="h-line h-live">
+          <span class="ticker" id="heroMins" aria-live="off">4</span>
+          <span class="h-unit">minutes ago.</span>
+        </span>
+        <span class="h-line h-shout">You already know.</span>
       </h1>
-      <p class="lead reveal d2">
-        Job Wire watches LinkedIn for the roles you want and emails you within
-        minutes of one appearing — while the recruiter is still reading the
-        first handful of applications.
+
+      <p class="lead rv d2">
+        Job Wire watches LinkedIn, topjobs, John&nbsp;Keells and MAS for the roles
+        you want, and emails you within minutes of one appearing — while the
+        recruiter is still reading the first handful of applications.
       </p>
-      <div class="hero-cta reveal d3">
-        <a class="btn btn-sig btn-lg" href="/signup">
-          Start watching — free
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2.4" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+
+      <div class="hero-cta rv d3">
+        <a class="cta cta-go" href="/signup">
+          <span>Start watching — free</span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
         </a>
-        <a class="btn btn-lg" href="/signin">I have an account</a>
+        <a class="cta cta-ghost" href="/signin">I have an account</a>
       </div>
-      <p class="microcopy reveal d4">No card. Set it up once, then close the tab.</p>
+
+      <p class="microcopy rv d4">No card. Set it up once, then close the tab.</p>
     </div>
 
-    <!-- A living miniature of the product, not a screenshot. -->
-    <div class="hero-panel reveal d2" aria-hidden="true">
-      <div class="hp-bar">
-        <span class="dot live"></span><span class="hp-t">THE WIRE</span>
-        <span class="sp"></span><span class="hp-t" id="hpClock">T-04:58</span>
+    <!-- A living miniature of the product. Rows land as you watch. -->
+    <div class="wire rv d2" aria-hidden="true">
+      <div class="wire-bar">
+        <span class="beat"></span>
+        <span class="wire-t">THE WIRE</span>
+        <span class="sp"></span>
+        <span class="wire-t tnum" id="wireClock">T-04:58</span>
       </div>
-      <div class="hp-rows" id="hpRows">
-        <div class="hp-row"><span class="hp-lead">2:14</span>
-          <span class="hp-role">Software Engineering Intern</span><span class="hp-co">Sysco LABS</span></div>
-        <div class="hp-row"><span class="hp-lead">3:41</span>
-          <span class="hp-role">Data Analyst Intern</span><span class="hp-co">99x</span></div>
-        <div class="hp-row"><span class="hp-lead">4:07</span>
-          <span class="hp-role">Full Stack Developer Intern</span><span class="hp-co">Niyamu</span></div>
+      <div class="wire-rows" id="wireRows"></div>
+      <div class="wire-foot">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.4" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg>
+        <span class="wire-t">Emailed to you</span>
       </div>
-      <div class="hp-foot"><span class="hp-t">Emailed to you</span></div>
     </div>
+  </div>
+
+  <div class="scroll-hint" aria-hidden="true">
+    <span>the first hour</span>
+    <span class="scroll-rail"><i></i></span>
   </div>
 </section>
 
-<!-- ── the hour ─────────────────────────────────────────────── -->
-<section class="band" id="hour">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     THE PILE — 200 applicants arriving in an hour, drawn one by
+     one. You are the coral one. This is the entire argument.
+     ═══════════════════════════════════════════════════════════ -->
+<section class="band pile-band">
   <div class="lp-wrap">
-    <div class="band-head reveal">
+    <div class="band-head rv">
       <span class="eyebrow">What actually decides it</span>
-      <h2>The first hour is the whole competition.</h2>
+      <h2>The first hour is the <em>whole competition</em>.</h2>
       <p class="lead">
-        In small markets an internship post collects hundreds of applications
-        before lunch. Recruiters stop reading long before they stop receiving.
-        Being qualified is not what separates you. <strong>Arrival time is.</strong>
+        In a small market an internship collects hundreds of applications before
+        lunch. Recruiters stop reading long before they stop receiving. Being
+        qualified is not what separates you. <strong>Arrival time is.</strong>
       </p>
     </div>
 
-    <!-- Scroll-driven: the hour fills as you move down the page. -->
-    <div class="clock reveal" id="clock">
+    <figure class="pile rv">
+      <canvas id="pileCanvas" aria-hidden="true"></canvas>
+      <figcaption class="pile-legend">
+        <span class="lg"><i class="lg-you"></i>You, at minute four</span>
+        <span class="lg"><i class="lg-them"></i>Everyone who arrives after</span>
+        <span class="lg-count tnum" id="pileCount">0</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     THE HOUR — scrubbed by scroll position. Moving down the page
+     is time passing, and your odds visibly rot as you go.
+     ═══════════════════════════════════════════════════════════ -->
+<section class="band hour-band" id="hour">
+  <div class="lp-wrap">
+    <div class="band-head rv">
+      <span class="eyebrow">Scroll to move through it</span>
+      <h2>Watch the window close.</h2>
+    </div>
+
+    <div class="clock rv" id="clock">
       <div class="clock-track">
         <div class="clock-fill" id="clockFill"></div>
         <span class="clock-you" id="clockYou">
           <span class="clock-you-dot"></span>
-          <span class="clock-you-lbl">You</span>
+          <span class="clock-you-lbl">you</span>
         </span>
       </div>
       <div class="clock-ticks">
@@ -79,72 +124,129 @@
   </div>
 </section>
 
-<!-- ── how ──────────────────────────────────────────────────── -->
-<section class="band alt">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SOURCES — four boards, honestly ranked by how fast each one
+     will actually tell you. The bar lengths are the real lag.
+     ═══════════════════════════════════════════════════════════ -->
+<section class="band alt src-band">
   <div class="lp-wrap">
-    <div class="band-head reveal">
+    <div class="band-head rv">
+      <span class="eyebrow">Where it looks</span>
+      <h2>Four boards, one inbox.</h2>
+      <p class="lead">
+        Pick a country and it searches every site that covers it. Company boards
+        publish the instant an employer posts. LinkedIn reaches every employer
+        but runs about an hour behind its own index.
+      </p>
+    </div>
+
+    <ul class="srcs rv">
+      <li class="src-item" data-lag="4">
+        <span class="src-name">topjobs.lk</span>
+        <span class="src-meta">Sri Lanka's largest board</span>
+        <span class="src-bar"><i></i></span>
+        <span class="src-lag tnum">instant</span>
+      </li>
+      <li class="src-item" data-lag="4">
+        <span class="src-name">John Keells</span>
+        <span class="src-meta">Group careers portal</span>
+        <span class="src-bar"><i></i></span>
+        <span class="src-lag tnum">instant</span>
+      </li>
+      <li class="src-item" data-lag="4">
+        <span class="src-name">MAS Holdings</span>
+        <span class="src-meta">Live requisition API</span>
+        <span class="src-bar"><i></i></span>
+        <span class="src-lag tnum">instant</span>
+      </li>
+      <li class="src-item" data-lag="100">
+        <span class="src-name">LinkedIn</span>
+        <span class="src-meta">Every employer, everywhere</span>
+        <span class="src-bar"><i class="slow"></i></span>
+        <span class="src-lag tnum">~1 hour</span>
+      </li>
+    </ul>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     HOW — three steps, because it is genuinely three steps.
+     ═══════════════════════════════════════════════════════════ -->
+<section class="band">
+  <div class="lp-wrap">
+    <div class="band-head rv">
       <span class="eyebrow">Three minutes to set up</span>
       <h2>Then you never open it again.</h2>
     </div>
-    <ol class="steps-lp">
-      <li class="reveal">
+
+    <ol class="steps">
+      <li class="rv">
         <span class="step-n">01</span>
         <h3>Say what you want</h3>
-        <p>Keywords and a country. <em>"intern, software engineer"</em> in Sri Lanka.
-           Add as many watches as you like — each runs on its own clock.</p>
+        <p>Keywords and a country. <em>"intern"</em> in Sri Lanka. It also knows
+          that <em>trainee</em> means the same thing.</p>
       </li>
-      <li class="reveal d1">
+      <li class="rv d1">
         <span class="step-n">02</span>
         <h3>It watches, you don't</h3>
-        <p>Every few minutes it checks LinkedIn for postings it has never seen.
-           No feed to scroll, no tab to keep open, no laptop to leave on.</p>
+        <p>Every few minutes it checks all four boards for postings it has never
+          seen. No feed to scroll, no tab to leave open, no laptop running.</p>
       </li>
-      <li class="reveal d2">
+      <li class="rv d2">
         <span class="step-n">03</span>
-        <h3>It only interrupts you when it matters</h3>
-        <p>One email per sweep with every new role and a direct apply link.
-           Nothing new means silence — which is the point.</p>
+        <h3>It interrupts you only when it matters</h3>
+        <p>One email per sweep, every new role, a direct apply link. Nothing new
+          means silence — which is the point.</p>
       </li>
     </ol>
   </div>
 </section>
 
-<!-- ── honesty ──────────────────────────────────────────────── -->
-<section class="band">
-  <div class="lp-wrap honest reveal">
-    <div class="honest-copy">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     HONESTY — the section that makes the rest believable.
+     ═══════════════════════════════════════════════════════════ -->
+<section class="band honest-band">
+  <div class="lp-wrap honest rv">
+    <div>
       <span class="eyebrow">The part most tools won't tell you</span>
       <h2>We say <em>minutes</em>, not <em>instantly</em>.</h2>
       <p class="lead">
         LinkedIn does not put a job into its search index the moment it is
-        published — that takes tens of minutes, and nothing can poll its way
-        past it. Anyone promising instant alerts is guessing.
+        published — that takes tens of minutes, and nothing can poll its way past
+        it. Anyone promising instant alerts is guessing.
       </p>
       <p class="lead">
         What you get is the rest of the hour. Applicant number nine instead of
         number two hundred. That gap is the entire product, and it is enough.
       </p>
     </div>
-    <div class="honest-figs">
-      <div class="fig"><span class="fig-n tnum">&lt;5<small>min</small></span>
+    <div class="figs">
+      <div class="fig"><span class="fig-n tnum" data-count="5" data-prefix="&lt;">0<small>min</small></span>
         <span class="fig-k">Our part of the delay</span></div>
       <div class="fig"><span class="fig-n tnum">24/7</span>
         <span class="fig-k">Runs while you sleep</span></div>
-      <div class="fig"><span class="fig-n tnum">0</span>
+      <div class="fig"><span class="fig-n tnum" data-count="0">0</span>
         <span class="fig-k">Feeds to check</span></div>
     </div>
   </div>
 </section>
 
-<!-- ── cta ──────────────────────────────────────────────────── -->
-<section class="band cta-band">
-  <div class="lp-wrap cta-in reveal">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     CTA
+     ═══════════════════════════════════════════════════════════ -->
+<section class="cta-band">
+  <canvas class="cta-canvas" id="ctaCanvas" aria-hidden="true"></canvas>
+  <div class="lp-wrap cta-in rv">
     <h2>Somewhere a role you'd be good at<br>is about to be posted.</h2>
     <p class="lead">Set the watch once. Be early by default.</p>
-    <a class="btn btn-sig btn-lg" href="/signup">
-      Start watching — free
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        stroke-width="2.4" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+    <a class="cta cta-invert" href="/signup">
+      <span>Start watching — free</span>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
     </a>
   </div>
 </section>
