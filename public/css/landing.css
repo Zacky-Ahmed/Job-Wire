@@ -15,17 +15,55 @@
 
 /* ── page-local tokens ────────────────────────────────────── */
 :root{
-  --lp-glow-1:rgba(91,83,240,.28);
-  --lp-glow-2:rgba(255,77,41,.24);
-  --lp-glow-3:rgba(255,171,46,.20);
-  --lp-ring:rgba(91,83,240,.16);
+  /* The hero is night in BOTH themes, so its glows are tuned once, for
+     a dark ground, rather than per theme. */
+  --lp-glow-1:rgba(109,99,255,.42);
+  --lp-glow-2:rgba(255,83,48,.34);
+  --lp-glow-3:rgba(255,176,64,.20);
+  --lp-ring:rgba(109,99,255,.20);
+
+  /* Night palette — hero and closing band. */
+  --lp-night:#0b0d17;
+  --lp-night-2:#151a2b;
+  --lp-paper:#f3f5fc;
+  --lp-hush:#a9b2d2;      /* quiet type ON night: 8.9:1 */
+  --lp-line-n:rgba(255,255,255,.10);
+
+  /* Quiet type on PAPER. --faint is 2.84:1 against the page and fails
+     AA outright — it is a hairline colour doing a typography job, which
+     is why the microcopy and every company name read as smudges. */
+  --lp-quiet:#5d6684;
+  --lp-grain:#8b93b0;
 }
 :root[data-theme="dark"]{
-  --lp-glow-1:rgba(138,131,255,.24);
-  --lp-glow-2:rgba(255,100,64,.20);
-  --lp-glow-3:rgba(240,174,78,.14);
-  --lp-ring:rgba(138,131,255,.22);
+  --lp-glow-1:rgba(138,131,255,.34);
+  --lp-glow-2:rgba(255,100,64,.26);
+  --lp-glow-3:rgba(240,174,78,.16);
+  --lp-ring:rgba(138,131,255,.24);
+  --lp-quiet:#98a1c2;
+  --lp-grain:#6b7396;
 }
+
+/* ══ THE HOUR RAIL ════════════════════════════════════════════
+   Not a scroll-progress bar. The page argues that one hour decides
+   whether you are read, so scrolling it IS the hour passing: the
+   readout counts minutes, not percent, and the colour heats the way
+   the application window does — green while you are early, amber as
+   it closes, coral once it has. Reading to the bottom takes you to
+   minute sixty, which is the whole point of the product. */
+.hour-rail{position:fixed;top:0;left:0;right:0;height:2px;z-index:80;
+  background:rgba(127,137,170,.18);pointer-events:none;}
+.hour-rail i{display:block;height:100%;width:100%;transform-origin:0 50%;
+  transform:scaleX(0);background:var(--go);
+  transition:transform .12s linear,background .5s var(--ease);}
+.hour-read{position:fixed;top:12px;right:16px;z-index:80;pointer-events:none;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--lp-quiet);
+  opacity:0;transition:opacity .4s var(--ease);}
+.hour-read.on{opacity:.85;}
+.hour-read b{font-variant-numeric:tabular-nums;color:var(--sig);font-weight:700;}
+/* Over the night hero the readout needs the other side of the contrast. */
+.hour-read.night{color:var(--lp-hush);}
 
 /* ── nav ──────────────────────────────────────────────────── */
 .lp-nav{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:10px;
@@ -43,13 +81,53 @@
 .rv.d3{transition-delay:.27s;} .rv.d4{transition-delay:.36s;}
 
 /* ══ HERO ═════════════════════════════════════════════════════ */
-.hero{position:relative;overflow:hidden;padding:86px 0 40px;isolation:isolate;}
+.hero{position:relative;overflow:hidden;padding:104px 0 72px;isolation:isolate;
+  background:var(--lp-night);color:var(--lp-paper);
+  /* The seam into daylight. Without it the hero ends on a hard edge and
+     the page reads as two pages stapled together. */
+  box-shadow:inset 0 -1px 0 var(--lp-line-n);}
+.hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:120px;
+  background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--bg) 92%,transparent));
+  pointer-events:none;z-index:-1;}
+
+/* ── everything inside the hero is on ink, not paper ───────── */
+.hero .lead{color:var(--lp-hush);}
+.hero .lead strong{color:var(--lp-paper);}
+.hero .microcopy{color:var(--lp-hush);opacity:.82;}
+.hero .h-shout{color:var(--sig-2, #ff5330);}
+.hero .ticker{color:#8f87ff;}
+.hero .ticker::after{background:#8f87ff;opacity:.32;}
+.hero .eyebrow{color:#ff8266;background:rgba(255,83,48,.13);
+  border-color:rgba(255,83,48,.30);}
+.hero .eyebrow-dot{background:#ff8266;}
+.hero .cta-ghost{background:rgba(255,255,255,.06);color:var(--lp-paper);
+  border-color:rgba(255,255,255,.22);box-shadow:none;
+  backdrop-filter:blur(6px);}
+.hero .cta-ghost:hover{border-color:#8f87ff;color:#c9c4ff;
+  background:rgba(255,255,255,.10);}
+.hero .scroll-hint{color:var(--lp-hush);}
+.hero .scroll-rail{background:rgba(255,255,255,.18);}
+
+/* the wire panel, as a lit screen in a dark room */
+.hero .wire{background:var(--lp-night-2);border-color:var(--lp-line-n);
+  box-shadow:0 30px 70px -30px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.04);}
+.hero .wire-bar{background:rgba(255,255,255,.035);border-bottom-color:var(--lp-line-n);}
+.hero .wire-row{border-bottom-color:var(--lp-line-n);}
+.hero .wire-role{color:var(--lp-paper);}
+.hero .wire-t,.hero .wire-co{color:var(--lp-hush);}
+.hero .wire-lead{color:#ff7a5c;}
+.hero .wire-foot{background:rgba(61,220,154,.10);border-top-color:var(--lp-line-n);
+  color:#4fe3a8;}
+.hero .wire-foot .wire-t{color:#4fe3a8;}
+@keyframes land{
+  from{opacity:0;transform:translateY(-14px);background:rgba(255,83,48,.16);}
+  to{opacity:1;transform:none;background:transparent;}}
 .hero-aurora{position:absolute;inset:0;width:100%;height:100%;z-index:-2;
   opacity:.9;pointer-events:none;}
 /* Faint tooth over the gradient so it reads as printed, not rendered. */
-.hero-grain{position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+.hero-grain{position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.30;
   background-image:radial-gradient(currentColor .5px,transparent .5px);
-  background-size:5px 5px;color:var(--faint);
+  background-size:5px 5px;color:rgba(255,255,255,.55);
   -webkit-mask-image:linear-gradient(180deg,#000 0%,transparent 72%);
   mask-image:linear-gradient(180deg,#000 0%,transparent 72%);}
 
@@ -72,8 +150,8 @@
   0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--sig) 55%,transparent);}
   70%{box-shadow:0 0 0 9px transparent;} 100%{box-shadow:0 0 0 0 transparent;}}
 
-.hero h1{font-size:clamp(42px,6.4vw,84px);font-stretch:75%;line-height:.94;
-  letter-spacing:-.04em;}
+.hero h1{font-size:clamp(46px,7.4vw,96px);font-stretch:75%;line-height:.92;
+  letter-spacing:-.045em;text-wrap:balance;}
 .h-line{display:block;}
 .h-live{display:flex;align-items:baseline;gap:.22em;flex-wrap:wrap;}
 .h-unit{white-space:nowrap;}
@@ -89,7 +167,7 @@
 .lead{font-size:17.5px;line-height:1.62;color:var(--ink-2);max-width:54ch;margin-top:22px;}
 .lead strong{color:var(--ink);font-weight:650;}
 .hero-cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:32px;}
-.microcopy{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:16px;}
+.microcopy{font-family:var(--mono);font-size:11.5px;color:var(--lp-quiet);margin-top:16px;}
 
 /* ── buttons that feel like a switch, not a link ──────────── */
 .cta{position:relative;display:inline-flex;align-items:center;justify-content:center;
@@ -118,7 +196,7 @@
   border-bottom:1px solid var(--line);background:var(--sunk);}
 .wire-bar .sp{flex:1;}
 .wire-t{font-family:var(--mono);font-size:10px;letter-spacing:.16em;
-  text-transform:uppercase;color:var(--faint);}
+  text-transform:uppercase;color:var(--lp-quiet);}
 .beat{width:8px;height:8px;border-radius:50%;background:var(--go);flex:none;
   animation:beat 1.9s var(--ease) infinite;}
 @keyframes beat{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.78);}}
@@ -134,7 +212,7 @@
   font-variant-numeric:tabular-nums;color:var(--sig);}
 .wire-role{font-size:14px;font-weight:600;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;}
-.wire-co{font-family:var(--mono);font-size:10.5px;color:var(--faint);}
+.wire-co{font-family:var(--mono);font-size:10.5px;color:var(--lp-quiet);}
 .wire-foot{display:flex;align-items:center;gap:8px;padding:11px 15px;
   border-top:1px solid var(--line);background:var(--go-soft);color:var(--go);}
 .wire-foot .wire-t{color:var(--go);}
@@ -142,7 +220,7 @@
 /* ── scroll hint ──────────────────────────────────────────── */
 .scroll-hint{display:flex;align-items:center;gap:11px;justify-content:center;
   margin-top:44px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;
-  text-transform:uppercase;color:var(--faint);}
+  text-transform:uppercase;color:var(--lp-quiet);}
 .scroll-rail{width:34px;height:1px;background:var(--line-2);position:relative;overflow:hidden;}
 .scroll-rail i{position:absolute;inset:0;background:var(--sig);
   animation:railrun 2.2s var(--ease) infinite;}
@@ -168,7 +246,7 @@
 #pileCanvas{display:block;width:100%;height:190px;}
 .pile-legend{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-top:20px;
   padding-top:18px;border-top:1px solid var(--line);
-  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--faint);}
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--lp-quiet);}
 .lg{display:inline-flex;align-items:center;gap:8px;}
 .lg i{width:9px;height:9px;border-radius:50%;flex:none;}
 .lg-you{background:var(--sig);box-shadow:0 0 0 3px var(--sig-soft);}
@@ -192,7 +270,7 @@
 .clock-you-lbl{position:absolute;top:25px;font-family:var(--mono);font-size:9.5px;
   letter-spacing:.16em;text-transform:uppercase;color:var(--vio);}
 .clock-ticks{display:flex;justify-content:space-between;margin-top:30px;
-  font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--faint);}
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--lp-quiet);}
 .clock-read{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;
   margin-top:34px;padding-top:26px;border-top:1px solid var(--line);}
 .clock-read > div{display:flex;flex-direction:column;gap:7px;min-width:0;}
@@ -201,7 +279,7 @@
 #clockApps{color:var(--sig);}
 #clockVerdict{font-size:clamp(19px,2.4vw,27px);}
 .clock-k{font-family:var(--mono);font-size:10px;letter-spacing:.13em;
-  text-transform:uppercase;color:var(--faint);}
+  text-transform:uppercase;color:var(--lp-quiet);}
 
 /* ── sources ──────────────────────────────────────────────── */
 .srcs{list-style:none;display:flex;flex-direction:column;gap:10px;}
@@ -216,7 +294,7 @@
 .src-bar i{display:block;height:100%;width:0;border-radius:100px;background:var(--go);
   transition:width 1.1s var(--ease);}
 .src-bar i.slow{background:var(--grad-sig);}
-.src-lag{font-family:var(--mono);font-size:11px;color:var(--faint);text-align:right;}
+.src-lag{font-family:var(--mono);font-size:11px;color:var(--lp-quiet);text-align:right;}
 
 /* ── steps ────────────────────────────────────────────────── */
 .steps{list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;}
@@ -243,9 +321,9 @@
   border:1px solid var(--line);box-shadow:var(--sh-1);}
 .fig-n{display:block;font-family:var(--display);font-stretch:75%;font-weight:700;
   font-size:44px;line-height:.88;letter-spacing:-.03em;color:var(--vio);}
-.fig-n small{font-size:15px;color:var(--faint);margin-left:5px;font-weight:500;}
+.fig-n small{font-size:15px;color:var(--lp-quiet);margin-left:5px;font-weight:500;}
 .fig-k{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.13em;
-  text-transform:uppercase;color:var(--faint);margin-top:10px;}
+  text-transform:uppercase;color:var(--lp-quiet);margin-top:10px;}
 
 /* ── cta ──────────────────────────────────────────────────── */
 .cta-band{position:relative;padding:118px 0;overflow:hidden;isolation:isolate;

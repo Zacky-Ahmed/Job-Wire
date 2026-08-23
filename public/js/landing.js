@@ -60,6 +60,34 @@
     });
   }, 1400);
 
+  // ── the hour rail ───────────────────────────────────────────
+  // Scroll position IS the hour. Minute sixty is the bottom of the page.
+  var hourFill = $("hourFill"), hourMin = $("hourMin"), hourRead = $("hourRead");
+  if (hourFill) {
+    var hero = $("hero");
+    var railTick = function () {
+      var max = document.documentElement.scrollHeight - innerHeight;
+      var p = max > 0 ? Math.min(1, Math.max(0, scrollY / max)) : 0;
+      hourFill.style.transform = "scaleX(" + p + ")";
+      hourFill.style.background =
+        p < .34 ? "var(--go)" : p < .72 ? "var(--amber)" : "var(--sig)";
+      if (hourMin) {
+        var m = Math.round(p * 60);
+        hourMin.textContent = (m < 10 ? "0" : "") + m;
+      }
+      if (hourRead) {
+        // Hidden at the very top: the readout is a companion to scrolling,
+        // and announcing "00 min" before anyone has moved is just clutter.
+        hourRead.classList.toggle("on", scrollY > 120);
+        var overHero = hero && scrollY < hero.offsetHeight - 60;
+        hourRead.classList.toggle("night", !!overHero);
+      }
+    };
+    addEventListener("scroll", railTick, { passive: true });
+    addEventListener("resize", railTick, { passive: true });
+    railTick();
+  }
+
   // ── nav shadow ──────────────────────────────────────────────
   var nav = document.querySelector(".lp-nav");
   if (nav) {

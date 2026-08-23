@@ -1,3 +1,9 @@
+<%# The hour, drawn along the top edge. See .hour-rail in landing.css —
+    it counts minutes rather than percent because that is what the page
+    is actually about. %>
+<div class="hour-rail" aria-hidden="true"><i id="hourFill"></i></div>
+<div class="hour-read" id="hourRead" aria-hidden="true"><b id="hourMin">00</b> min into the hour</div>
+
 <!-- ═══════════════════════════════════════════════════════════════
      HERO — the thesis, stated as a clock that will not stop.
      The minute counter is live; the panel beside it streams real
