@@ -71,6 +71,30 @@ function getSmtp() {
   return smtp;
 }
 
+/**
+ * Headers that tell Gmail this is wanted, automated mail rather than a
+ * campaign.
+ *
+ * The Brevo path was sending none of these, and the symptom matched
+ * exactly: one-off verification codes arrived in the inbox while the
+ * repeating job alerts — same sender, same domain, same transport — did
+ * not. A recurring message with no List-Unsubscribe is the shape Gmail
+ * files under Promotions or Spam.
+ *
+ * List-Unsubscribe-Post is deliberately NOT advertised. One-click
+ * unsubscribe obliges us to honour an unattended POST, and there is no
+ * endpoint that does; claiming it and then ignoring the POST is worse
+ * for reputation than not claiming it. The links here go to the place a
+ * person actually turns a watch off.
+ */
+function autoMailHeaders() {
+  const inbox = parseFrom(env.mailFrom || env.gmailUser).email;
+  return {
+    "List-Unsubscribe": `<${env.appUrl}/watches>, <mailto:${inbox}?subject=unsubscribe>`,
+    "Auto-Submitted": "auto-generated",
+  };
+}
+
 // ── Brevo HTTP ───────────────────────────────────────────────────
 async function sendViaBrevo({ to, subject, html, text }) {
   const from = parseFrom(env.mailFrom || env.gmailUser);
@@ -92,6 +116,7 @@ async function sendViaBrevo({ to, subject, html, text }) {
         subject,
         htmlContent: html,
         textContent: text,
+        headers: autoMailHeaders(),
       }),
     });
 
@@ -128,7 +153,7 @@ export async function sendMail({ to, subject, html, text }) {
           subject: cleanSubject,
           text,
           html,
-          headers: { "Auto-Submitted": "auto-generated" },
+          headers: autoMailHeaders(),
         })
         .then((info) => ({ ok: true, id: info.messageId }))
         .catch((err) => ({ ok: false, error: err.message }));
