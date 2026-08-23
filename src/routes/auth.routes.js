@@ -48,15 +48,31 @@ authRoutes.post("/signup", redirectIfAuthed, signupLimiter, async (req, res, nex
     const existing = await Users.findByEmail(email);
     if (existing) {
       // Do not confirm that the address is registered — same message either way.
+      /* DELIBERATE, and the opposite of what /forgot does.
+         A registered address is told so. That does leak whether an address
+         has an account — but the alternative, which I built and then threw
+         away, sends someone who simply forgot they had signed up to a
+         code box waiting for a code that will never arrive, with no way
+         out. Forgetting you already registered is enormously more common
+         than someone enumerating this app's users, and the reset flow
+         (which does hide it) is the one that actually guards an account.
+         Sign-up hides nothing and says something useful instead. */
       if (existing.verified)
-        return show(res, "signup", {
-          error: "If that address can be registered, we have sent a code. Otherwise, sign in.",
-          values,
+        return show(res, "signin", {
+          title: "Sign in",
+          values: { email: values.email },
+          notice: "You already have an account with that address — sign in below, or use “Forgotten?” if you need a new password.",
         });
-      // Unverified: reissue rather than blocking them out of their own account.
+      // Unverified: reissue rather than blocking them out of their own
+      // account. The password submitted here is deliberately NOT applied —
+      // anyone can type an address, and letting them overwrite the
+      // password on an account they have not proved they own would make
+      // this form a takeover tool. They will need /forgot for that.
       const { code, hash, expiresAt } = await otp.issue();
       await Users.setOtp(existing._id, { otpHash: hash, otpExpiresAt: expiresAt });
-      await sendVerification({ to: email, code });
+      const resent = await sendVerification({ to: email, code });
+      if (!resent.ok)
+        return show(res, "signup", { error: "We could not send the code. Try again shortly.", values });
       req.session.pendingUserId = String(existing._id);
       return show(res, "verify", { title: "Verify", step: 2, email });
     }

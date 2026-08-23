@@ -3,6 +3,7 @@
 // { userId, queryId, label, active }. Many users -> one query row.
 
 import { collections } from "../config/db.js";
+import * as Queries from "./queries.js";
 
 export function listForUser(userId) {
   return collections.subscriptions()
@@ -23,6 +24,7 @@ export async function create({ userId, queryId, label }) {
   const doc = { userId, queryId, label, active: true, createdAt: new Date() };
   try {
     const { insertedId } = await collections.subscriptions().insertOne(doc);
+    await syncSchedule(queryId);
     return { ...doc, _id: insertedId };
   } catch (err) {
     if (err.code === 11000) return null; // duplicate — the index caught it
@@ -30,8 +32,21 @@ export async function create({ userId, queryId, label }) {
   }
 }
 
-export function setActive(userId, id, active) {
-  return collections.subscriptions().updateOne({ _id: id, userId }, { $set: { active } });
+export async function setActive(userId, id, active) {
+  const sub = await collections.subscriptions().findOne({ _id: id, userId });
+  if (!sub) return;
+  await collections.subscriptions().updateOne({ _id: id, userId }, { $set: { active } });
+  await syncSchedule(sub.queryId);
+}
+
+/**
+ * A shared query should sweep exactly while somebody is listening to it.
+ * Called after anything that changes who is: create, pause, resume,
+ * delete.
+ */
+export async function syncSchedule(queryId) {
+  const live = await collections.subscriptions().countDocuments({ queryId, active: true });
+  await Queries.setSweeping(queryId, live > 0);
 }
 
 /**
@@ -55,13 +70,7 @@ export async function remove(userId, id) {
   if (!sub) return;
   await collections.subscriptions().deleteOne({ _id: id, userId });
 
-  const remaining = await collections.subscriptions().countDocuments({ queryId: sub.queryId });
-  if (!remaining) {
-    await collections.queries().updateOne(
-      { _id: sub.queryId },
-      { $set: { nextFetchAt: null, retiredAt: new Date() } }
-    );
-  }
+  await syncSchedule(sub.queryId);
 }
 
 /** Everyone who should receive an alert for this query. */

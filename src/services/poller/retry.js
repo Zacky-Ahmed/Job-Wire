@@ -13,15 +13,32 @@
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
 import { sendAlert } from "../mail/send.js";
+import { dailyCap } from "../mail/transport.js";
 import { log } from "../../utils/logger.js";
 
 export async function retryFailedSends() {
   const pending = await EmailLog.findRetryable({ maxAttempts: 3, olderThanMs: 60_000, limit: 5 });
   if (!pending.length) return 0;
 
+  /* The cap is a PROVIDER limit, so every path that sends has to respect
+     it. sweepQuery checked it before fanning out; this queue did not — so
+     the moment the ceiling was reached, sweeps went quiet exactly as
+     designed while the retry queue carried on hammering the same provider
+     that had just refused. Which then failed, which queued more retries. */
+  const sentToday = await EmailLog.countToday();
+  if (sentToday >= dailyCap()) {
+    log.warn("daily mail ceiling reached — retries deferred to tomorrow", { sentToday });
+    return 0;
+  }
+  let budget = dailyCap() - sentToday;
+
   let recovered = 0;
 
   for (const entry of pending) {
+    if (budget <= 0) {
+      log.warn("hit the mail ceiling mid-retry — the rest wait for tomorrow");
+      break;
+    }
     const user = await collections.users().findOne(
       { _id: entry.userId },
       { projection: { email: 1, verified: 1 } }
@@ -47,6 +64,7 @@ export async function retryFailedSends() {
       userId: entry.userId, queryId: entry.queryId,
     });
 
+    budget--;
     const res = await sendAlert({
       to: user.email,
       label: sub?.label || "your watch",

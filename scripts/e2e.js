@@ -184,6 +184,27 @@ ok(!!gq && !gq.sources.includes("topjobs") && !gq.sources.includes("keells"),
 ok(!!gq && gq.sources.includes("linkedin"),
   "it falls back to a source that actually covers that country");
 
+console.log("\n── a held watch stops costing anything ──");
+// Deleting the last watch already parked its query. Pausing the last one
+// did not, so a held watch went on spending a full sweep — every page of
+// every source, plus a detail request per new job — to fan out to nobody.
+html = await (await get("/watches")).text();
+token = csrf(html);
+const heldId = html.match(/action="\/watches\/([a-f0-9]{24})\/toggle"/)?.[1];
+if (heldId) {
+  const heldQ = (await collections.subscriptions()
+    .findOne({ _id: new (await import("mongodb")).ObjectId(heldId) }))?.queryId;
+  await post(`/watches/${heldId}/toggle`, { _csrf: token });
+  const others = await collections.subscriptions()
+    .countDocuments({ queryId: heldQ, active: true });
+  const q1 = await collections.queries().findOne({ _id: heldQ });
+  ok(others > 0 || q1?.nextFetchAt == null,
+    "pausing the last active watch parks its query");
+  await post(`/watches/${heldId}/toggle`, { _csrf: token });
+  const q2 = await collections.queries().findOne({ _id: heldQ });
+  ok(q2?.nextFetchAt != null, "resuming it starts the query again");
+}
+
 console.log("\n── admin stays hidden from ordinary accounts ──");
 // This account is not in ADMIN_EMAILS. 404 rather than 403 is deliberate:
 // "forbidden" confirms to a stranger that an admin area lives at this URL.

@@ -4,6 +4,10 @@
     <p>Your watches kept sweeping while you were away.</p></div>
 
   <% if (error) { %><div class="banner err"><%= error %></div><% } %>
+  <%# Sign-up redirects here when the address already has an account, and
+      that explanation is the whole point of the redirect — without this
+      the page rendered the message into nothing. %>
+  <% if (typeof notice !== 'undefined' && notice) { %><div class="banner go"><%= notice %></div><% } %>
 
   <div class="f">
     <span class="lbl">Gmail address</span>

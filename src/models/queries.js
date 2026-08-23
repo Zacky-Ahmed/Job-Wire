@@ -77,6 +77,29 @@ export function reschedule(id, { everyMinutes, primed, tracked }) {
   return collections.queries().updateOne({ _id: id }, update);
 }
 
+/**
+ * Stop or resume sweeping, based on whether anyone is actually listening.
+ *
+ * A query is worth fetching only while at least one ACTIVE subscription
+ * points at it. Deleting the last watch was already handled; pausing the
+ * last one was not, so a held watch went on spending a full sweep — every
+ * page of every source, plus a detail request per new job — to fan out to
+ * nobody.
+ */
+export async function setSweeping(id, shouldSweep) {
+  const q = await collections.queries().findOne({ _id: id }, { projection: { nextFetchAt: 1 } });
+  if (!q) return;
+  const sweeping = q.nextFetchAt != null;
+  if (sweeping === shouldSweep) return;          // already in the right state
+
+  await collections.queries().updateOne(
+    { _id: id },
+    shouldSweep
+      ? { $set: { nextFetchAt: new Date() }, $unset: { retiredAt: "" } }
+      : { $set: { nextFetchAt: null, retiredAt: new Date() } }
+  );
+}
+
 export function recordFailure(id, backoffMinutes) {
   return collections.queries().updateOne(
     { _id: id },
