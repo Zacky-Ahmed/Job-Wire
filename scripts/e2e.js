@@ -205,6 +205,37 @@ if (heldId) {
   ok(q2?.nextFetchAt != null, "resuming it starts the query again");
 }
 
+console.log("\n── one account cannot touch another’s watch ──");
+// Scoping the dashboard is the easy half. The hole that actually gets
+// exploited is the object id: guess a watch id and pause or delete
+// someone else’s. Every mutating watch route must filter on userId as
+// well as _id, not just _id.
+const victimUser = await collections.users().insertOne({
+  email: `e2e-victim-${Date.now()}@example.invalid`,
+  passHash: await pw.hash(PASS), verified: true, verifiedAt: new Date(), createdAt: new Date(),
+});
+const victimQ = await collections.queries().findOne({});
+const victimSub = await collections.subscriptions().insertOne({
+  userId: victimUser.insertedId, queryId: victimQ._id,
+  label: "not yours", active: true, createdAt: new Date(),
+});
+const vid = String(victimSub.insertedId);
+
+html = await (await get("/watches")).text();
+token = csrf(html);
+ok(!html.includes("not yours"), "another account’s watch is not listed");
+
+await post(`/watches/${vid}/toggle`, { _csrf: token });
+let still = await collections.subscriptions().findOne({ _id: victimSub.insertedId });
+ok(still && still.active === true, "cannot pause a watch belonging to someone else");
+
+await post(`/watches/${vid}/delete`, { _csrf: token });
+still = await collections.subscriptions().findOne({ _id: victimSub.insertedId });
+ok(!!still, "cannot delete a watch belonging to someone else");
+
+await collections.subscriptions().deleteOne({ _id: victimSub.insertedId });
+await collections.users().deleteOne({ _id: victimUser.insertedId });
+
 console.log("\n── admin actions refuse a non-admin ──");
 // The page is hidden from non-admins, but hiding a page is not access
 // control — every mutating route has to refuse on its own. A guard that
