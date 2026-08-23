@@ -131,7 +131,25 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
 
   const merged = new Map([...everything, ...relevant]);
 
-  const shaped = [...merged.values()].map((j) => ({
+  /* LinkedIn's own country filter leaks, and badly: a quarter of the
+     matched jobs on a Sri Lanka watch were somewhere else entirely —
+     Australia, the Philippines, and a long tail of American towns like
+     Lander WY and Milton VT. Applying for those is not merely useless,
+     it is the kind of noise that makes someone stop reading the emails.
+
+     LinkedIn always names the country in a real location string
+     ("Colombo, Western Province, Sri Lanka"), and the leaked ones never
+     do ("Lander, WY"), so the country name is a reliable test HERE.
+     It is not applied to the local boards: they print bare place names
+     like "Colombo 3" and are single-country by declaration anyway. */
+  const geo = findGeo(geoId);
+  const country = (geo?.name || "").toLowerCase();
+  const inCountry = (loc) => {
+    if (!loc) return true;                    // never drop on missing data
+    return !country || loc.toLowerCase().includes(country);
+  };
+
+  const shaped = [...merged.values()].filter((j) => inCountry(j.location)).map((j) => ({
     jobId: qualify(id, j.jobId),
     title: j.title,
     company: j.company,
@@ -195,18 +213,24 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
     // one hit — labelling every tag match with the employment type said
     // "Full-time" for a job whose SENIORITY was Internship, which reads
     // as a bug in the wire even though the job belonged there.
+    /* The description is NOT consulted any more.
+       It was added to match LinkedIn's own keyword search, and it does —
+       including all the ways that search is wrong. It let in a Senior
+       Google Ads Specialist, a Mechatronics Engineer, a Junior Estimator
+       and an SEO Manager, none of which are internships: the body simply
+       mentioned interns somewhere. Employment type and seniority are
+       fields an employer deliberately set; prose is not a claim about
+       what the job is. */
     const fields = [
       ["employment type", criteria.employmentType],
       ["seniority", criteria.seniority],
-      ["description", criteria.description],
     ];
     const hit = fields.find(([, v]) => matchesAny(v, words));
 
     if (hit) {
-      // For the tag fields the value itself is the useful label
-      // ("Internship"); for the body it is not, so name the field.
-      const [field, value] = hit;
-      kept.push(strip({ ...job, matchedBy: field === "description" ? "description" : value }));
+      // The tag's own value is the label the reader wants to see
+      // ("Internship"), not the name of the field it came from.
+      kept.push(strip({ ...job, matchedBy: hit[1] }));
     } else {
       log.info("dropped a job LinkedIn's fuzzy search returned but the watch did not ask for", {
         jobId: job.jobId, title: job.title,
