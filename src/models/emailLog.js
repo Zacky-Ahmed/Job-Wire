@@ -31,6 +31,23 @@ export function recentForUser(userId, limit = 30) {
  * today" — four emails that went to other people. A per-user page must
  * count per user.
  */
+/**
+ * Every send that mentions one of these jobs, for this user.
+ *
+ * The wire used to ask for "the newest 30 emails" and hope that covered
+ * the 50 rows it was about to draw. That is the wrong question: delivery
+ * is a fact about a JOB, so ask about the jobs. Measured on the developer
+ * account, 28 of those 30 were already needed — two more single-job sends
+ * and delivered jobs would have started rendering as never sent.
+ */
+export function forJobs(userId, jobIds) {
+  if (!jobIds.length) return Promise.resolve([]);
+  return collections.emailLog()
+    .find({ userId, jobIds: { $in: jobIds } })
+    .sort({ sentAt: -1 })
+    .toArray();
+}
+
 export function countTodayForUser(userId) {
   const start = new Date(); start.setHours(0, 0, 0, 0);
   return collections.emailLog()

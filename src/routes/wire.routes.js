@@ -31,7 +31,12 @@ async function gather(user) {
   // history of a search other people had been running for weeks.
   const scope = watches.map((w) => ({ queryId: w.queryId, since: w.createdAt }));
   const caught = await SeenJobs.recentForSubscriptions(scope, 50);
-  const emails = await EmailLog.recentForUser(user._id, 30);
+  // Look up delivery BY THE JOBS ON SCREEN, not by a fixed slice of the
+  // email log. Reading the newest 30 rows only worked while sweeps
+  // happened to batch several jobs per email: measured on this account it
+  // took 28 of those 30 to cover the 50 rows rendered, so two more
+  // single-job sends would have started marking delivered jobs "—".
+  const emails = await EmailLog.forJobs(user._id, caught.map((j) => j.jobId));
 
   // Only SUCCESSFUL sends count as delivered. Including failed ones here
   // showed "Sent" next to jobs whose email never arrived — the single most
@@ -51,6 +56,19 @@ async function gather(user) {
     // reading "~60m left" is the most misleading thing this screen can say.
     const age = minutesSince(j.postedAt || j.firstSeenAt);
     const pct = Math.min(100, Math.round((age / WINDOW_MIN) * 100));
+    // A column that reads the same on every row carries no information.
+    // Every one of the 50 rows on this account said "likely closed",
+    // because LinkedIn indexes about an hour late and the window is an
+    // hour — so by arrival almost everything had "expired".
+    //
+    // It was also wrong. An internship posted three hours ago is not
+    // closed; you are simply not first any more. Say how old the posting
+    // is, which is true, varies, and still rewards being early.
+    const ageText =
+      age <= WINDOW_MIN ? `~${Math.max(0, WINDOW_MIN - age)}m left`
+      : age < 360       ? `${Math.round(age / 60)}h old`
+      : age < 1440      ? "posted today"
+      : `${Math.round(age / 1440)}d old`;
     return {
       ...j,
       label: labelByQuery.get(String(j.queryId)) || "deleted watch",
@@ -62,7 +80,10 @@ async function gather(user) {
       emailed: emailedIds.has(j.jobId),
       failed: !emailedIds.has(j.jobId) && failedIds.has(j.jobId),
       windowPct: pct,
+      windowText: ageText,
       windowLeft: Math.max(0, WINDOW_MIN - age),
+      // Only the first hour is a race worth drawing a gauge for.
+      inWindow: age <= WINDOW_MIN,
       windowClass: pct > 75 ? "h" : pct > 45 ? "w" : "",
     };
   });

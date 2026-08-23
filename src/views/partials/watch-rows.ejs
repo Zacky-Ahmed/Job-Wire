@@ -16,6 +16,10 @@
         <div class="b"><%= q.location %> · checked every <%= q.everyMinutes %> min</div>
       </div>
       <div class="kws hide w-kws">
+        <%# A matchAll watch has no keywords by design, and rendered an
+            empty gap — the one row where the reader most needs telling
+            what it is doing. %>
+        <% if (q.matchAll) { %><span class="pill sig">every job</span><% } %>
         <% q.keywords.forEach(function (k) { %><span class="pill vio"><%= k %></span><% }) %>
         <% (q.sources || ['linkedin']).forEach(function (sid) { %>
           <span class="pill"><%= sourceLabel(sid) %></span>

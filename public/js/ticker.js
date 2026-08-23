@@ -32,8 +32,29 @@
     }
   }
 
+  /* Flash each arrival ONCE.
+     isNew stays true for five minutes and htmx replaces the whole list
+     every fifteen seconds, so the CSS animation restarted on every poll
+     and a new row strobed roughly twenty times before settling. Remember
+     which jobs have already been announced and strip the class off the
+     rest as they come back. */
+  var announced = Object.create(null);
+  function dedupeFlash() {
+    var rows = document.querySelectorAll(".r-wire[data-job]");
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i].getAttribute("data-job");
+      if (!rows[i].classList.contains("new")) { announced[id] = 1; continue; }
+      if (announced[id]) rows[i].classList.remove("new");
+      else announced[id] = 1;
+    }
+  }
+
   tick();
+  dedupeFlash();
   setInterval(tick, 1000);
   // htmx swaps in fresh rows; re-bind to whatever just arrived
-  document.body.addEventListener("htmx:afterSwap", tick);
+  document.body.addEventListener("htmx:afterSwap", function () {
+    tick();
+    dedupeFlash();
+  });
 })();

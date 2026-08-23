@@ -19,7 +19,7 @@
   </div>
 <% } else { %>
   <% dispatches.forEach(function (d, i) { %>
-    <div class="row r-wire<%= d.isNew ? ' new' : '' %>">
+    <div class="row r-wire<%= d.isNew ? ' new' : '' %>" data-job="<%= d.jobId %>">
       <span class="ix c-ix"><%= String(dispatches.length - i).padStart(3, '0') %></span>
       <span class="c-mail">
         <% if (d.emailed) { %><span class="pill go">Sent</span>
@@ -40,11 +40,22 @@
       <span class="muted hide c-watch"><span class="pill vio"><%= d.label %></span></span>
       <span class="muted hide c-age"><%= d.ageText %></span>
       <div class="hide c-win">
-        <span class="lbl"><%= d.windowLeft ? '~' + d.windowLeft + 'm left' : 'likely closed' %></span>
-        <div class="gauge"><i class="<%= d.windowClass %>" style="width:<%= d.windowPct %>%"></i></div>
+        <%# The gauge is only drawn while the first hour is still running.
+            Past that it filled to 100% on every row and said "likely
+            closed" forever, which is neither true nor useful. %>
+        <span class="lbl"><%= d.windowText %></span>
+        <% if (d.inWindow) { %>
+          <div class="gauge"><i class="<%= d.windowClass %>" style="width:<%= d.windowPct %>%"></i></div>
+        <% } %>
       </div>
       <div class="acts c-act">
-        <a class="btn btn-xs btn-sig" href="<%= d.url %>" target="_blank" rel="noopener noreferrer">Apply</a>
+        <% if (d.url) { %>
+          <a class="btn btn-xs btn-sig" href="<%= d.url %>" target="_blank" rel="noopener noreferrer">Apply</a>
+        <% } else { %>
+          <%# An <a> with an empty href reloads the page you are on. A job
+              we could not build a link for should say so, not pretend. %>
+          <span class="btn btn-xs" aria-disabled="true" title="This source gave us no link">No link</span>
+        <% } %>
       </div>
     </div>
   <% }) %>
