@@ -23,7 +23,10 @@
       if (!e.isIntersecting || seen.has(e.target)) return;
       seen.add(e.target);
       e.target.classList.add("in");
-      if (e.target.id === "pileCanvas") drawPile();
+      /* The observed element is the <figure class="pile rv">; the canvas
+         inside it has no .rv class, so matching on the canvas id meant
+         this never once fired and the panel sat empty. */
+      if (e.target.classList.contains("pile")) drawPile();
       if (e.target.classList.contains("srcs")) fillSourceBars();
       if (e.target.classList.contains("figs")) countFigures();
     });
@@ -54,7 +57,7 @@
          do not depend on anything animating. */
       el.style.opacity = "1";
       el.style.transform = "none";
-      if (el.id === "pileCanvas") drawPile();
+      if (el.classList.contains("pile")) drawPile();
       if (el.classList.contains("srcs")) fillSourceBars();
       if (el.classList.contains("figs")) countFigures();
     });
@@ -116,12 +119,17 @@
   // ── hero: the wire streams ──────────────────────────────────
   var ROLES = [
     ["2:14", "Software Engineering Intern", "Sysco LABS"],
-    ["3:41", "Data Analyst Intern", "99x"],
-    ["4:07", "Full Stack Developer Intern", "Niyamu"],
-    ["1:52", "Intern — Business Intelligence", "MAS Holdings"],
-    ["0:48", "Trainee Software Engineer", "Fidenz"],
-    ["3:16", "Intern — Human Resources", "John Keells"],
-    ["2:39", "UI/UX Engineer — Intern", "Axceera"],
+    /* Roles, not employers. Naming real companies made the demo read as a
+       Sri Lankan product; the source set follows whichever country the
+       reader picks, so the panel shows the KIND of place a role came from
+       instead. It is also honest — these are illustrative rows, and
+       putting real employers' names on invented postings is not. */
+    ["3:41", "Data Analyst Intern", "via a national board"],
+    ["4:07", "Full Stack Developer Intern", "via a careers portal"],
+    ["1:52", "Intern — Business Intelligence", "via LinkedIn"],
+    ["0:48", "Trainee Software Engineer", "via a careers portal"],
+    ["3:16", "Intern — Human Resources", "via a national board"],
+    ["2:39", "UI/UX Engineer — Intern", "via LinkedIn"],
     ["1:07", "Marketing Intern", "PickMe"]
   ];
   var rows = $("wireRows");

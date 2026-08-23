@@ -56,7 +56,10 @@
 .hour-rail i{display:block;height:100%;width:100%;transform-origin:0 50%;
   transform:scaleX(0);background:var(--go);
   transition:transform .12s linear,background .5s var(--ease);}
-.hour-read{position:fixed;top:12px;right:16px;z-index:80;pointer-events:none;
+/* Bottom-left, not top-right. Top-right is where the nav's buttons live,
+   and a fixed readout there printed "16 MIN INTO THE HOUR" straight
+   through the Start watching button. */
+.hour-read{position:fixed;left:16px;bottom:14px;z-index:80;pointer-events:none;
   font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--lp-quiet);
   opacity:0;transition:opacity .4s var(--ease);}
