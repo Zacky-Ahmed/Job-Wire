@@ -3,18 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+    <%# Through asset() like every other file: static assets are served
+      immutable for a year in production, so a plain path could never be
+      changed once a browser had seen it. %>
+  <link rel="icon" href="<%= asset('/favicon.svg') %>" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="<%= asset('/favicon.svg') %>">
   <title><%= title %> · Job Wire</title>
   <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
 </head>
 <body>
   <div class="auth">
     <div class="poster">
-      <span class="wordmark">
+      <%# A link, not a label. Someone who lands on /signin by mistake, or
+          wants to read what this is before making an account, had no way
+          back to the public page except the browser button. %>
+      <a class="wordmark" href="/" aria-label="Job Wire home">
         <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"
           stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0" opacity=".55"/>
           <path d="M8.2 15.5a5 5 0 0 1 7.6 0" opacity=".8"/><circle cx="12" cy="8" r="1.8" fill="#fff"/></svg></span>
         <b>Job<span>&nbsp;Wire</span></b>
-      </span>
+      </a>
 
       <div class="hero">
         <h1>Applications close in an hour.<br><em>You hear in four minutes.</em></h1>

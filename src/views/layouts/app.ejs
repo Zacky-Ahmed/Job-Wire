@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+    <%# Through asset() like every other file: static assets are served
+      immutable for a year in production, so a plain path could never be
+      changed once a browser had seen it. %>
+  <link rel="icon" href="<%= asset('/favicon.svg') %>" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="<%= asset('/favicon.svg') %>">
   <title><%= title %> · Job Wire</title>
   <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
   <script src="<%= asset('/js/htmx.min.js') %>" defer></script>
