@@ -205,6 +205,32 @@ if (heldId) {
   ok(q2?.nextFetchAt != null, "resuming it starts the query again");
 }
 
+console.log("\n── admin actions refuse a non-admin ──");
+// The page is hidden from non-admins, but hiding a page is not access
+// control — every mutating route has to refuse on its own. A guard that
+// only exists on the GET is the classic way admin panels get abused.
+const victim = await collections.users().findOne({ email: EMAIL });
+const anyQuery = await collections.queries().findOne({});
+const attacks = [
+  ["verify another account", `/admin/users/${victim._id}/verify`],
+  ["delete another account", `/admin/users/${victim._id}/delete`],
+  ["park a query",           `/admin/queries/${anyQuery._id}/toggle`],
+  ["force a sweep",          `/admin/queries/${anyQuery._id}/sweep`],
+];
+html = await (await get("/wire")).text();
+token = csrf(html);
+let refused = 0;
+for (const [what, path] of attacks) {
+  const res = await post(path, { _csrf: token });
+  if (res.status === 404) refused++;
+  else ok(false, `${what} was NOT refused (got ${res.status})`);
+}
+ok(refused === attacks.length, `all ${attacks.length} admin actions refuse a non-admin`);
+
+// and the refusal must not have done the thing anyway
+const stillThere = await collections.users().findOne({ email: EMAIL });
+ok(!!stillThere, "the refused delete did not delete anything");
+
 console.log("\n── admin stays hidden from ordinary accounts ──");
 // This account is not in ADMIN_EMAILS. 404 rather than 403 is deliberate:
 // "forbidden" confirms to a stranger that an admin area lives at this URL.

@@ -1,4 +1,10 @@
 <div class="wrap">
+  <% if (typeof adminError !== 'undefined' && adminError) { %>
+    <div class="banner err"><%= adminError %></div>
+  <% } %>
+  <% if (typeof adminNotice !== 'undefined' && adminNotice) { %>
+    <div class="banner go"><%= adminNotice %></div>
+  <% } %>
   <div class="stats stagger">
     <div class="stat vio">
       <div class="k">People</div>
@@ -65,7 +71,7 @@
       <span class="lbl">newest first · 200 max</span>
     </div>
     <div class="row rhead r-admin">
-      <span>Email</span><span>State</span><span class="hide">Watches</span><span class="hide">Joined</span>
+      <span>Email</span><span>State</span><span class="hide">Watches</span><span style="text-align:right">Actions</span>
     </div>
     <% if (!people.length) { %>
       <div class="empty"><b>No accounts yet</b><span>Nobody has signed up.</span></div>
@@ -81,7 +87,24 @@
           <% } else { %><span class="pill amber" title="Signed up but never entered the emailed code — they cannot sign in">Unverified</span><% } %>
         </span>
         <span class="muted hide"><%= p.active %>/<%= p.watches %></span>
-        <span class="muted hide"><%= p.joined %></span>
+        <div class="acts">
+          <% if (!p.verified) { %>
+            <%# The reason this exists: a verification code in a spam
+                folder locks someone out of their own account with no way
+                to help them from inside the app. %>
+            <form method="post" action="/admin/users/<%= p.id %>/verify">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs" type="submit" title="Mark this address confirmed">Verify</button>
+            </form>
+          <% } %>
+          <% if (!p.isAdmin) { %>
+            <form method="post" action="/admin/users/<%= p.id %>/delete"
+              onsubmit="return confirm('Delete <%= p.email %>? Their watches and mail history go too. This cannot be undone.')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs btn-bad" type="submit" aria-label="Delete account">Delete</button>
+            </form>
+          <% } %>
+        </div>
       </div>
     <% }) %>
   </div>
@@ -94,7 +117,7 @@
       <span class="lbl">what the poller is actually doing</span>
     </div>
     <div class="row rhead r-admin">
-      <span>Search</span><span>State</span><span class="hide">Seen</span><span class="hide">Last swept</span>
+      <span>Search</span><span>State</span><span class="hide">Seen</span><span style="text-align:right">Actions</span>
     </div>
     <% if (!queryRows.length) { %>
       <div class="empty"><b>No queries</b><span>Nothing is being swept.</span></div>
@@ -116,13 +139,24 @@
         <span class="muted hide tnum" title="last sweep / best ever">
           <%= q.tracked %><span class="lbl">/<%= q.peak %></span>
         </span>
-        <span class="muted hide"><%= q.lastFetched %></span>
+        <div class="acts">
+          <form method="post" action="/admin/queries/<%= q.id %>/toggle">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn-xs" type="submit"><%= q.retired ? 'Resume' : 'Park' %></button>
+          </form>
+          <% if (!q.retired) { %>
+            <form method="post" action="/admin/queries/<%= q.id %>/sweep">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs" type="submit" title="Fetch now instead of waiting for the schedule">Sweep</button>
+            </form>
+          <% } %>
+        </div>
       </div>
     <% }) %>
   </div>
 
   <div class="note" style="margin-top:2px">
-    <span>This page is read-only. Admin comes from <b>ADMIN_EMAILS</b> in the
+    <span>Admin comes from <b>ADMIN_EMAILS</b> in the
       environment, not from anything stored in the database — so it cannot be
       granted by writing to Mongo, and there is no first-admin bootstrap.</span>
   </div>
