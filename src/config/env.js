@@ -36,6 +36,15 @@ export const env = {
   port: num("PORT", 3000),
   appUrl: process.env.APP_URL || "http://localhost:3000",
 
+  // Search Console's ownership token. Public by design — it is meant to be
+  // read by anyone who fetches the page — so it is not a secret, it just
+  // does not belong hardcoded in a template. Accepts either the bare token
+  // or the whole `google-site-verification=...` string people paste, since
+  // pasting the full line is the usual way this gets entered wrong.
+  googleSiteVerification: (process.env.GOOGLE_SITE_VERIFICATION || "")
+    .trim()
+    .replace(/^google-site-verification=/i, ""),
+
   // Who may open /admin. Deliberately an env var, not a database flag:
   // admin then cannot be granted by anything that can write to Mongo, and
   // there is no bootstrap problem of "who makes the first admin".

@@ -83,6 +83,7 @@ export async function buildApp() {
   // on www and on the platform hostname, so trusting Host would emit a
   // different canonical for each and split the page three ways.
   app.locals.siteOrigin = String(env.appUrl || "").replace(/\/+$/, "");
+  app.locals.googleVerification = env.googleSiteVerification;
 
   const publicDir = path.join(__dirname, "..", "public");
   // Long cache is safe because every URL carries a content hash; see

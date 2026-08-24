@@ -17,6 +17,12 @@
       competing copies rather than one page. %>
   <link rel="canonical" href="<%= siteOrigin %>/">
   <meta name="robots" content="index,follow,max-image-preview:large">
+  <% if (locals.googleVerification) { %>
+  <%# Search Console ownership. The DNS route verifies the whole domain
+      but depends on the registrar saving the record; this one is served
+      by the app itself, so it is true the moment it deploys. %>
+  <meta name="google-site-verification" content="<%= googleVerification %>">
+  <% } %>
 
   <%# What a link to the site looks like when pasted into WhatsApp,
       LinkedIn or Slack. Without these it renders as a bare grey URL. %>
