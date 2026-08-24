@@ -9,6 +9,11 @@
   <link rel="icon" href="<%= asset('/favicon.svg') %>" type="image/svg+xml">
   <link rel="apple-touch-icon" href="<%= asset('/favicon.svg') %>">
   <title><%= title %> · Job Wire</title>
+  <%# Behind a login: never index. robots.txt asks crawlers not to
+      come here, but a link leaking from anywhere else would still
+      put a sign-in redirect in the results. This is the part that
+      actually binds. %>
+  <meta name="robots" content="noindex,nofollow">
   <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
   <script src="<%= asset('/js/htmx.min.js') %>" defer></script>
 </head>

@@ -78,6 +78,12 @@ export async function buildApp() {
   app.set("view engine", "ejs");
   app.set("views", path.join(__dirname, "views"));
 
+  // Canonical and social tags must name one absolute address, and a
+  // request's own Host header is not it — the app answers on the apex,
+  // on www and on the platform hostname, so trusting Host would emit a
+  // different canonical for each and split the page three ways.
+  app.locals.siteOrigin = String(env.appUrl || "").replace(/\/+$/, "");
+
   const publicDir = path.join(__dirname, "..", "public");
   // Long cache is safe because every URL carries a content hash; see
   // utils/assets.js. immutable tells the browser not to revalidate at all.
