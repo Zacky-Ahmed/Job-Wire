@@ -38,7 +38,7 @@ export const id = "linkedin";
 export const label = "LinkedIn";
 export const hosts = ["linkedin.com"];
 export const perCountry = true;
-export const note = "Every employer, but ~30 min behind the actual posting";
+export const note = "Every employer, but minutes to an hour behind the posting";
 export const pageSize = 10;
 // Postings carry a relative age ("40 minutes ago"), so an age here is
 // trustworthy to the minute and can be reasoned about.

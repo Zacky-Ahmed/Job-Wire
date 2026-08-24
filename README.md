@@ -5,7 +5,7 @@ within minutes of one appearing — while the application window is still open.
 
 Sri Lanka is the home market, so three of the four sources are local boards
 that publish the instant an employer posts. LinkedIn covers every employer but
-runs about an hour behind its own index.
+runs behind its own index by anything from a few minutes to over an hour.
 
 ## Sources
 
@@ -16,7 +16,7 @@ something that could never match.
 
 | Source | Coverage | How data arrives | Lag |
 |---|---|---|---|
-| LinkedIn | every country | guest endpoint, HTML fragments | ~1 hour |
+| LinkedIn | every country | guest endpoint, HTML fragments | minutes to 1h+ |
 | topjobs.lk | Sri Lanka | server-rendered listing pages | instant |
 | John Keells Group | Sri Lanka | server-rendered careers search | instant |
 | MAS Holdings | Sri Lanka | Oracle Cloud Recruiting REST API | instant |
@@ -167,7 +167,7 @@ right for the internet and wrong for the machine building the feature.
 
 | Command | What it does |
 |---|---|
-| `npm run e2e` | 41 assertions against a running server |
+| `npm run e2e` | 48 assertions against a running server |
 | `npm run parity` | diff our results against the live LinkedIn page |
 | `npm run test-sweep` | one sweep, no email, prints what it found |
 | `npm run verify-geoids` | check every geoId returns jobs in the right country |
