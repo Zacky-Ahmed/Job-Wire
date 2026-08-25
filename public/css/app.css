@@ -10,12 +10,18 @@
 
   /* brand */
   --sig:#ff4d29; --sig-2:#e03308; --sig-soft:#fff0ec; --on-sig:#fff;
+  /* --sig is a FILL colour. At 11px on #fff0ec it lands at 2.98:1,
+     well under the 4.5 small text needs, so coral TEXT on a light
+     ground uses --sig-ink instead: 4.54:1 on the worst of the four
+     light backgrounds it sits on. Dark mode already passed, so
+     there --sig-ink is just --sig. */
+  --sig-ink:#c73c20;
   --vio:#5b53f0; --vio-2:#4a41e0; --vio-soft:#eeecff;
   --amber:#c8760a; --amber-soft:#fff6e6;
   --go:#0e9f6e; --go-soft:#e6f7f0;
   --bad:#dc2b2b; --bad-soft:#fdecec;
 
-  --grad-sig:linear-gradient(135deg,#ff6a3d 0%,#ff4d29 55%,#f0330a 100%);
+  --grad-sig:linear-gradient(135deg,#e2542c 0%,#d64122 55%,#b8300b 100%);
   --grad-vio:linear-gradient(135deg,#6f67ff 0%,#5b53f0 100%);
   --grad-head:linear-gradient(180deg,#ffffff 0%,#f7f8fd 100%);
 
@@ -37,6 +43,12 @@
   --line:#242940; --line-2:#343b58;
   --ink:#eceefb; --ink-2:#a2aac9; --faint:#6b7396;
   --sig:#ff6440; --sig-2:#ff8663; --sig-soft:#2e1409; --on-sig:#1a0d06;
+  --sig-ink:#ff6440;
+  /* Dark mode sets near-black text ON the coral, so the gradient must
+     stay bright here. The light palette darkens it because there the
+     text is white; using one gradient for both broke whichever theme
+     it was not tuned for. */
+  --grad-sig:linear-gradient(135deg,#ff7a52 0%,#ff6440 55%,#ef4a22 100%);
   --vio:#8a83ff; --vio-2:#a09aff; --vio-soft:#1e1c3d;
   --amber:#f0ae4e; --amber-soft:#2c2110;
   --go:#3ddc9a; --go-soft:#0f2a20;
@@ -94,7 +106,7 @@ h1,h2,h3{font-family:var(--display);font-stretch:87.5%;font-weight:700;
 .wordmark:hover .glyph{transform:rotate(-8deg) scale(1.06);}
 .wordmark .glyph svg{width:17px;height:17px;}
 .wordmark b{font-size:18px;font-weight:700;font-stretch:87.5%;letter-spacing:-.03em;}
-.wordmark b span{color:var(--sig);}
+.wordmark b span{color:var(--sig-ink);}
 
 /* ── buttons ───────────────────────────────────────────────── */
 .btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:7px;

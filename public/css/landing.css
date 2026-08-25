@@ -64,7 +64,7 @@
   text-transform:uppercase;color:var(--lp-quiet);
   opacity:0;transition:opacity .4s var(--ease);}
 .hour-read.on{opacity:.85;}
-.hour-read b{font-variant-numeric:tabular-nums;color:var(--sig);font-weight:700;}
+.hour-read b{font-variant-numeric:tabular-nums;color:var(--sig-ink);font-weight:700;}
 /* Over the night hero the readout needs the other side of the contrast. */
 .hour-read.night{color:var(--lp-hush);}
 
@@ -144,7 +144,7 @@
 
 .eyebrow{display:inline-flex;align-items:center;gap:8px;
   font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;
-  color:var(--sig);padding:6px 13px;border-radius:100px;
+  color:var(--sig-ink);padding:6px 13px;border-radius:100px;
   background:var(--sig-soft);border:1px solid color-mix(in srgb,var(--sig) 22%,transparent);
   margin-bottom:22px;}
 .eyebrow-dot{width:6px;height:6px;border-radius:50%;background:var(--sig);
@@ -235,7 +235,7 @@
 .band-head{max-width:62ch;margin-bottom:48px;}
 .band-head h2{font-size:clamp(31px,4.2vw,50px);font-stretch:75%;letter-spacing:-.035em;
   line-height:1.02;text-wrap:balance;}
-.band-head h2 em{font-style:normal;color:var(--sig);}
+.band-head h2 em{font-style:normal;color:var(--sig-ink);}
 
 /* Section modifiers. Each carries a real spacing decision — the figures
    inside these bands have their own padding, so the band needs less. */
@@ -318,7 +318,7 @@
 .honest{display:grid;grid-template-columns:1.22fr .78fr;gap:56px;align-items:center;}
 .honest h2{font-size:clamp(29px,3.7vw,45px);font-stretch:75%;letter-spacing:-.035em;
   line-height:1.04;text-wrap:balance;}
-.honest h2 em{font-style:normal;color:var(--sig);}
+.honest h2 em{font-style:normal;color:var(--sig-ink);}
 .figs{display:flex;flex-direction:column;gap:14px;}
 .fig{padding:24px 26px;border-radius:15px;background:var(--card);
   border:1px solid var(--line);box-shadow:var(--sh-1);}
