@@ -27,13 +27,54 @@
 
 .lp{overflow-x:hidden;}
 
+
+/* ── chrome: nav + footer ──────────────────────────────────────────
+   These were lost when this file was replaced. The layout still renders
+   .lp-nav and .lp-foot, so with no rules for them the header collapsed
+   into the top-left corner and the footer lost its container entirely.
+
+   Both are night-coloured in either theme, matching the two bookends,
+   so the page is framed the same way whichever theme is chosen. */
+.lp-wrap{width:var(--shell);margin-inline:auto;}
+
+.lp-nav{position:fixed;top:0;left:0;right:0;z-index:60;
+  display:flex;align-items:center;gap:9px;
+  padding:14px calc((100% - var(--shell)) / 2);
+  background:rgba(11,13,23,.78);backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid rgba(255,255,255,.07);}
+.lp-nav .sp{flex:1;}
+.lp-nav .wordmark{display:flex;align-items:center;gap:9px;}
+.lp-nav .wordmark b{color:var(--paper);}
+.lp-nav .wordmark b span{color:var(--flare);}
+.lp-nav .btn{border-radius:999px;padding:8px 15px;font-size:12.5px;
+  font-weight:700;font-stretch:87.5%;color:var(--paper);
+  border:1px solid rgba(255,255,255,.16);background:transparent;
+  display:inline-flex;align-items:center;gap:7px;
+  transition:background-color .16s var(--ease),border-color .16s var(--ease);}
+.lp-nav .btn:hover{background:rgba(255,255,255,.08);
+  border-color:rgba(255,255,255,.3);}
+.lp-nav .btn-sig{background:#d64122;border-color:transparent;color:#fff;}
+.lp-nav .btn-sig:hover{background:#b8300b;border-color:transparent;}
+
+.lp-foot{background:var(--night);color:var(--hush);
+  padding:58px 0 64px;border-top:1px solid var(--night-line);}
+.lp-foot-in{display:flex;flex-direction:column;gap:14px;align-items:flex-start;}
+.lp-foot .wordmark{display:flex;align-items:center;gap:9px;}
+.lp-foot .wordmark b{color:var(--paper);}
+.lp-foot .wordmark b span{color:var(--flare);}
+.lp-foot p{font-size:14px;color:var(--quiet);margin:0;}
+.lp-foot nav{display:flex;gap:22px;font-size:14px;margin-top:4px;}
+.lp-foot nav a{color:var(--hush);}
+.lp-foot nav a:hover{color:var(--paper);text-decoration:underline;}
+
 /* ── the clock spine ───────────────────────────────────────────────
    A fixed rail on the left carrying the running time. It is decorative
    and marked aria-hidden; the same times appear as text in each
    section's .moment line so the sequence survives without it. */
-.rail{position:fixed;left:26px;top:0;bottom:0;width:64px;z-index:40;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:14px;pointer-events:none;}
+.rail{display:none;position:fixed;left:26px;top:64px;bottom:0;
+  width:64px;z-index:40;flex-direction:column;align-items:center;
+  justify-content:center;gap:14px;pointer-events:none;}
 .rail-line{position:relative;width:1px;flex:1;max-height:44vh;
   background:var(--night-line);overflow:hidden;}
 .rail-line i{position:absolute;inset:0 0 auto 0;height:var(--rail,12%);
@@ -42,19 +83,36 @@
 .rail-now{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
   color:var(--quiet);font-variant-numeric:tabular-nums;}
 
+@media (min-width:1400px){ .rail{display:flex;} }
+
 /* ── stages ───────────────────────────────────────────────────── */
-.stage{position:relative;padding:120px 0;}
-.stage-in,.stage > .moment,.stage > .big,.stage > .say,.stage > .mega,
-.stage > .lanes,.stage > .sweep-grid,.stage > .owns,.stage > .acts{
-  width:var(--shell);margin-inline:auto;}
+.stage{position:relative;padding:120px calc((100% - var(--shell)) / 2);
+  scroll-margin-top:80px;}
 
 /* the two dark bookends, fixed regardless of theme so the page opens
    and closes on the same note */
 .hero-stage,.end-stage{background:var(--night);color:var(--paper);}
-.hero-stage{padding:104px 0 96px;display:grid;gap:56px;
-  grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);align-items:center;
-  width:var(--shell);margin-inline:auto;}
-.hero-stage > *{min-width:0;}
+/* Full-bleed: the section paints edge to edge and the GRID is inset with
+   symmetric padding. Giving the section itself a shell width meant the
+   night background stopped where the text did, leaving pale gutters. */
+.hero-stage{overflow:hidden;padding:150px calc((100% - var(--shell)) / 2) 96px;
+  display:grid;gap:56px;
+  grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);align-items:center;}
+/* Only the two flow children get lifted above the canvas. Applying this
+   to `.hero-stage > *` also hit .rail and overrode its position:fixed —
+   the rail then claimed a grid cell, pushing the headline into column
+   two and the panel down into a second row. */
+.hero-stage > .stage-in,
+.hero-stage > .panel{min-width:0;position:relative;z-index:1;}
+
+/* ── the sweep, behind everything ──────────────────────────────────
+   The product watches boards on a timer, so the hero shows a thing
+   that watches. Purely decorative: aria-hidden, sitting under the copy
+   at z-index 0, and the page reads identically if the canvas never
+   paints — which is the case in any browser that blocks it. */
+.radar{position:absolute;right:-14%;top:46%;transform:translateY(-50%);
+  width:min(620px,52%);aspect-ratio:1;z-index:0;opacity:.62;
+  pointer-events:none;}
 
 /* ── the time stamp above every section ───────────────────────── */
 .moment{font-family:var(--mono);font-size:11px;letter-spacing:.17em;
@@ -122,9 +180,20 @@
   color:var(--paper);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .feed-co{grid-column:2;font-size:12px;color:var(--quiet);}
 
-/* ── the race ─────────────────────────────────────────────────── */
-.lanes{display:grid;grid-template-columns:1fr auto 1fr;gap:22px;
+/* ── the race ───────────────────────────────────────────────────
+   Two piles, drawn at the same pip size so the gap between three marks
+   and ninety-four is read as area rather than as a number. This is the
+   argument; the digits underneath are only the caption. */
+.lanes{display:grid;grid-template-columns:1fr 1fr;gap:22px;
   align-items:stretch;}
+.pile{display:flex;flex-wrap:wrap;gap:5px;align-content:flex-start;
+  min-height:74px;margin:0 0 18px;}
+.pip{width:11px;height:11px;border-radius:3px;background:var(--line);
+  flex:0 0 auto;}
+.pile-lose .pip{background:color-mix(in srgb,var(--ink-2) 40%,transparent);}
+.pip-you{background:var(--sig);box-shadow:0 0 0 3px
+  color-mix(in srgb,var(--sig) 22%,transparent);}
+.pile-win{align-content:flex-start;}
 .lane{border:1px solid var(--line);border-radius:18px;padding:30px 28px;
   background:var(--card);}
 .lane-win{border-color:color-mix(in srgb,var(--sig) 34%,transparent);
@@ -132,12 +201,14 @@
 .lane-k{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--ink-2);margin:0 0 18px;}
 .lane-n{font-family:var(--display);font-weight:700;font-stretch:75%;
-  font-size:clamp(58px,8vw,104px);line-height:.82;letter-spacing:-.04em;
-  margin:0;display:flex;align-items:baseline;gap:2px;}
+  font-size:clamp(52px,7vw,88px);line-height:.82;letter-spacing:-.04em;
+  margin:0 0 20px;display:flex;align-items:baseline;gap:2px;flex-wrap:wrap;}
 .lane-win .lane-n{color:var(--sig-ink);}
 .lane-lose .lane-n{color:var(--ink-2);}
 .lane-u{font-size:.3em;letter-spacing:0;}
-.lane-s{font-size:14px;color:var(--ink-2);margin:10px 0 22px;}
+.lane-s{font-size:14px;color:var(--ink-2);margin:0 0 0 10px;
+  font-family:var(--display);font-stretch:100%;font-weight:400;
+  letter-spacing:0;align-self:flex-end;padding-bottom:.7em;}
 .beats{list-style:none;margin:0;padding:20px 0 0;
   border-top:1px solid var(--line);display:grid;gap:11px;}
 .beats li{font-size:14px;color:var(--ink-2);display:flex;gap:12px;}
@@ -217,6 +288,7 @@
   .owns{grid-template-columns:1fr;gap:28px;}
   .lanes{grid-template-columns:1fr;gap:16px;}
   .lane-vs{display:none;}
+  .radar{display:none;}
 }
 @media (max-width:640px){
   :root{--shell:calc(100% - 32px);}
@@ -230,4 +302,11 @@
   .lane{padding:24px 20px;}
   .feed-role{font-size:14px;}
   .log{font-size:11.5px;padding:18px 15px;}
+}
+
+@media (max-width:640px){
+  .lp-nav{padding:10px 16px;gap:7px;}
+  .lp-nav .btn{padding:7px 12px;font-size:12px;}
+  .lp-nav .wordmark b span{display:none;}   /* the glyph still identifies it */
+  .hero-stage{padding-top:104px;}
 }

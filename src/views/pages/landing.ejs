@@ -18,6 +18,8 @@
     <span class="rail-now" id="railNow">00:00</span>
   </div>
 
+  <canvas class="radar" id="radar" aria-hidden="true"></canvas>
+
   <div class="stage-in">
     <p class="moment"><span class="moment-t">09:14</span> a posting appears</p>
 
@@ -78,11 +80,17 @@
 
   <h2 class="big">The same hour,<br>lived two ways.</h2>
 
+  <%# The pile is drawn, not described. Ninety-four marks against three
+      makes the argument before a word of it is read, and the reader can
+      count the difference instead of being told it. %>
   <div class="lanes">
     <article class="lane lane-win">
       <p class="lane-k">with a watch running</p>
-      <p class="lane-n"><span class="tally" data-to="3">3</span><span class="lane-u">rd</span></p>
-      <p class="lane-s">applicant in the pile</p>
+      <div class="pile pile-win" aria-hidden="true">
+        <% for (var i = 0; i < 3; i++) { %><span class="pip pip-you"></span><% } %>
+      </div>
+      <p class="lane-n"><span class="tally" data-to="3">3</span><span class="lane-u">rd</span>
+        <span class="lane-s">in the pile</span></p>
       <ul class="beats">
         <li><b>00:02</b> the email arrives</li>
         <li><b>00:09</b> you have applied</li>
@@ -90,16 +98,17 @@
       </ul>
     </article>
 
-    <div class="lane-vs" aria-hidden="true"><span>vs</span></div>
-
     <article class="lane lane-lose">
       <p class="lane-k">checking once a day</p>
-      <p class="lane-n"><span class="tally" data-to="94">94</span><span class="lane-u">th</span></p>
-      <p class="lane-s">applicant in the pile</p>
+      <div class="pile pile-lose" aria-hidden="true">
+        <% for (var j = 0; j < 93; j++) { %><span class="pip"></span><% } %><span class="pip pip-you"></span>
+      </div>
+      <p class="lane-n"><span class="tally" data-to="94">94</span><span class="lane-u">th</span>
+        <span class="lane-s">in the pile</span></p>
       <ul class="beats">
         <li><b>next&nbsp;day</b> you open the tab</li>
         <li><b>+18h</b> the shortlist is drawn</li>
-        <li><b>—</b> nobody reaches your name</li>
+        <li><b>&mdash;</b> nobody reaches your name</li>
       </ul>
     </article>
   </div>

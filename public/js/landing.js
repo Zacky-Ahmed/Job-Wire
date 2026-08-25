@@ -115,4 +115,88 @@
     }, { threshold: 0.5 });
     Array.prototype.forEach.call(counters, function (el) { cio.observe(el); });
   }
+  /* ── 4. the sweep ──────────────────────────────────────────────
+     A radar behind the hero: rings, a rotating arm, and blips that
+     brighten as the arm passes them. Decorative only — the canvas is
+     aria-hidden and painting nothing changes what the page says.
+
+     Stops when scrolled away and when the tab is hidden, so an
+     animation nobody is looking at is not burning a phone battery. */
+  var cv = document.getElementById("radar");
+  if (cv && cv.getContext && !reduce) {
+    var ctx = cv.getContext("2d");
+    var blips = [];
+    for (var b = 0; b < 9; b++) {
+      blips.push({ a: Math.random() * Math.PI * 2,
+                   r: 0.22 + Math.random() * 0.72,
+                   lit: 0 });
+    }
+    var arm = -Math.PI / 2, running = true, raf = 0;
+
+    function size() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var w = cv.clientWidth || 400;
+      cv.width = w * dpr; cv.height = w * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return w;
+    }
+    var W = size();
+    window.addEventListener("resize", function () { W = size(); });
+
+    function draw() {
+      var c = W / 2, R = W / 2 - 2;
+      ctx.clearRect(0, 0, W, W);
+
+      ctx.strokeStyle = "rgba(130,139,173,.20)";
+      ctx.lineWidth = 1;
+      for (var i = 1; i <= 4; i++) {
+        ctx.beginPath(); ctx.arc(c, c, R * i / 4, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.moveTo(c - R, c); ctx.lineTo(c + R, c);
+      ctx.moveTo(c, c - R); ctx.lineTo(c, c + R); ctx.stroke();
+
+      // the arm, as a fading wedge trailing the leading edge
+      var g = ctx.createConicGradient
+        ? ctx.createConicGradient(arm, c, c) : null;
+      if (g) {
+        g.addColorStop(0, "rgba(255,122,82,.34)");
+        g.addColorStop(0.10, "rgba(255,122,82,0)");
+        g.addColorStop(1, "rgba(255,122,82,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = "rgba(255,122,82,.75)";
+      ctx.beginPath(); ctx.moveTo(c, c);
+      ctx.lineTo(c + Math.cos(arm) * R, c + Math.sin(arm) * R); ctx.stroke();
+
+      blips.forEach(function (p) {
+        var d = Math.abs(((arm - p.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        if (d > Math.PI - 0.09) p.lit = 1;
+        p.lit *= 0.982;
+        var x = c + Math.cos(p.a) * R * p.r, y = c + Math.sin(p.a) * R * p.r;
+        ctx.beginPath(); ctx.arc(x, y, 2.6 + p.lit * 2.4, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,122,82," + (0.16 + p.lit * 0.8) + ")";
+        ctx.fill();
+      });
+
+      arm += 0.0085;
+      if (running) raf = window.requestAnimationFrame(draw);
+    }
+    draw();
+
+    function pause(off) {
+      if (off === running) return;
+      running = !off;
+      if (running) raf = window.requestAnimationFrame(draw);
+      else window.cancelAnimationFrame(raf);
+    }
+    document.addEventListener("visibilitychange", function () {
+      pause(document.hidden);
+    });
+    if ("IntersectionObserver" in window) {
+      new IntersectionObserver(function (e) {
+        pause(!e[0].isIntersecting);
+      }, { threshold: 0 }).observe(cv);
+    }
+  }
 })();
