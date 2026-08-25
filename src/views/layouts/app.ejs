@@ -3,11 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-    <%# Through asset() like every other file: static assets are served
-      immutable for a year in production, so a plain path could never be
-      changed once a browser had seen it. %>
-  <link rel="icon" href="<%= asset('/favicon.svg') %>" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="<%= asset('/favicon.svg') %>">
+  <%# Deliberately NOT through asset(): that appends a content hash that
+      changes on every deploy, and Google's favicon crawler caches by
+      URL — a moving target never settles. Browsers cache favicons fine
+      without it. .ico first because the favicon crawler looks for it. %>
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <title><%= title %> · Job Wire</title>
   <%# Behind a login: never index. robots.txt asks crawlers not to
       come here, but a link leaking from anywhere else would still
