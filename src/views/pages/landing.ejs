@@ -1,256 +1,200 @@
-<%# The hour, drawn along the top edge. See .hour-rail in landing.css —
-    it counts minutes rather than percent because that is what the page
-    is actually about. %>
-<div class="hour-rail" aria-hidden="true"><i id="hourFill"></i></div>
-<div class="hour-read" id="hourRead" aria-hidden="true"><b id="hourMin">00</b> min into the hour</div>
+<%#
+  THE HOUR
+  ────────
+  The page is one hour in the life of a job posting, and scrolling is
+  what moves the clock. Every section is a moment inside that hour
+  rather than a feature to be listed.
 
-<!-- ═══════════════════════════════════════════════════════════════
-     HERO — the thesis, stated as a clock that will not stop.
-     The minute counter is live; the panel beside it streams real
-     roles. Nothing here is a screenshot.
-     ═══════════════════════════════════════════════════════════ -->
-<section class="hero" id="hero">
-  <canvas class="hero-aurora" id="aurora" aria-hidden="true"></canvas>
-  <div class="hero-grain" aria-hidden="true"></div>
+  Non-negotiable, because this page has shipped invisible text before:
+  everything here is legible with no JavaScript, no IntersectionObserver
+  and no animation support. Motion only ever ADDS — it never reveals.
+  Anything that fades in starts visible and is dimmed by script, so a
+  browser that runs none of it simply shows the finished page.
+%>
 
-  <div class="lp-wrap hero-in">
-    <div class="hero-copy">
-      <span class="eyebrow rv">
-        <span class="eyebrow-dot"></span>
-        Four job boards · one email · minutes, not mornings
-      </span>
-
-      <h1 class="rv d1">
-        <span class="h-line">The job was posted</span>
-        <span class="h-line h-live">
-          <span class="ticker" id="heroMins" aria-live="off">4</span>
-          <span class="h-unit">minutes ago.</span>
-        </span>
-        <span class="h-line h-shout">You already know.</span>
-      </h1>
-
-      <p class="lead rv d2">
-        Job Wire watches LinkedIn and every job board and employer career
-        portal that covers your country, and emails you within minutes of a
-        role appearing — while the recruiter is still reading the first
-        handful of applications.
-      </p>
-
-      <div class="hero-cta rv d3">
-        <a class="cta cta-go" href="/signup">
-          <span>Start watching — free</span>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
-        </a>
-        <a class="cta cta-ghost" href="/signin">I have an account</a>
-      </div>
-
-      <p class="microcopy rv d4">No card. Set it up once, then close the tab.</p>
-    </div>
-
-    <!-- A living miniature of the product. Rows land as you watch. -->
-    <div class="wire rv d2" aria-hidden="true">
-      <div class="wire-bar">
-        <span class="beat"></span>
-        <span class="wire-t">THE WIRE</span>
-        <span class="sp"></span>
-        <span class="wire-t tnum" id="wireClock">T-04:58</span>
-      </div>
-      <div class="wire-rows" id="wireRows"></div>
-      <div class="wire-foot">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2.4" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg>
-        <span class="wire-t">Emailed to you</span>
-      </div>
-    </div>
+<section class="stage hero-stage" id="s-post" data-at="00:00">
+  <div class="rail" aria-hidden="true">
+    <span class="rail-line"><i id="railFill"></i></span>
+    <span class="rail-now" id="railNow">00:00</span>
   </div>
 
-  <div class="scroll-hint" aria-hidden="true">
-    <span>the first hour</span>
-    <span class="scroll-rail"><i></i></span>
+  <div class="stage-in">
+    <p class="moment"><span class="moment-t">09:14</span> a posting appears</p>
+
+    <h1 class="mega">
+      <span class="mega-l">Somebody</span>
+      <span class="mega-l">gets there</span>
+      <span class="mega-l"><em>first.</em></span>
+    </h1>
+
+    <p class="say">
+      It is almost never the best application. It is the one that was
+      already open when the posting went up.
+    </p>
+
+    <div class="acts">
+      <a class="act act-go" href="/signup">Start watching<span aria-hidden="true">→</span></a>
+      <a class="act act-quiet" href="/signin">I have an account</a>
+    </div>
+
+    <p class="fine">Free. An email address and a keyword is the whole setup.</p>
   </div>
-</section>
 
-
-<!-- ═══════════════════════════════════════════════════════════════
-     THE PILE — 200 applicants arriving in an hour, drawn one by
-     one. You are the coral one. This is the entire argument.
-     ═══════════════════════════════════════════════════════════ -->
-<section class="band pile-band">
-  <div class="lp-wrap">
-    <div class="band-head rv">
-      <span class="eyebrow">What actually decides it</span>
-      <h2>The first hour is the <em>whole competition</em>.</h2>
-      <p class="lead">
-        In a small market an internship collects hundreds of applications before
-        lunch. Recruiters stop reading long before they stop receiving. Being
-        qualified is not what separates you. <strong>Arrival time is.</strong>
-      </p>
-    </div>
-
-    <figure class="pile rv">
-      <canvas id="pileCanvas" aria-hidden="true"></canvas>
-      <figcaption class="pile-legend">
-        <span class="lg"><i class="lg-you"></i>You, at minute four</span>
-        <span class="lg"><i class="lg-them"></i>Everyone who arrives after</span>
-        <span class="lg-count tnum" id="pileCount">0</span>
-      </figcaption>
-    </figure>
-  </div>
-</section>
-
-
-<!-- ═══════════════════════════════════════════════════════════════
-     THE HOUR — scrubbed by scroll position. Moving down the page
-     is time passing, and your odds visibly rot as you go.
-     ═══════════════════════════════════════════════════════════ -->
-<section class="band hour-band" id="hour">
-  <div class="lp-wrap">
-    <div class="band-head rv">
-      <span class="eyebrow">Scroll to move through it</span>
-      <h2>Watch the window close.</h2>
-    </div>
-
-    <div class="clock rv" id="clock">
-      <div class="clock-track">
-        <div class="clock-fill" id="clockFill"></div>
-        <span class="clock-you" id="clockYou">
-          <span class="clock-you-dot"></span>
-          <span class="clock-you-lbl">you</span>
-        </span>
-      </div>
-      <div class="clock-ticks">
-        <span>0 min</span><span>15</span><span>30</span><span>45</span><span>60 min</span>
-      </div>
-      <div class="clock-read">
-        <div><span class="clock-n tnum" id="clockMin">0</span><span class="clock-k">minutes in</span></div>
-        <div><span class="clock-n tnum" id="clockApps">0</span><span class="clock-k">people ahead of you</span></div>
-        <div><span class="clock-n" id="clockVerdict">Wide open</span><span class="clock-k">your odds</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-
-<!-- ═══════════════════════════════════════════════════════════════
-     SOURCES — four boards, honestly ranked by how fast each one
-     will actually tell you. The bar lengths are the real lag.
-     ═══════════════════════════════════════════════════════════ -->
-<section class="band alt src-band">
-  <div class="lp-wrap">
-    <div class="band-head rv">
-      <span class="eyebrow">Where it looks</span>
-      <h2>Every source that covers <em>your</em> country.</h2>
-      <p class="lead">
-        You pick a country; Job Wire picks the sources — you never choose
-        between them, because nobody wants fewer places searched for the same
-        keyword. New sources reach existing searches automatically.
-      </p>
-    </div>
-
-    <%# Deliberately described by KIND rather than by name. The set is
-        resolved per country at sweep time, so naming this month's four
-        would be wrong for most readers and stale for the rest. %>
-    <ul class="srcs rv">
-      <li class="src-item" data-lag="4">
-        <span class="src-name">Employer career portals</span>
-        <span class="src-meta">Straight from the company, no index in between</span>
-        <span class="src-bar"><i></i></span>
-        <span class="src-lag tnum">instant</span>
-      </li>
-      <li class="src-item" data-lag="4">
-        <span class="src-name">National job boards</span>
-        <span class="src-meta">Where local employers post first</span>
-        <span class="src-bar"><i></i></span>
-        <span class="src-lag tnum">instant</span>
-      </li>
-      <li class="src-item" data-lag="100">
-        <span class="src-name">LinkedIn</span>
-        <span class="src-meta">Every employer, everywhere</span>
-        <span class="src-bar"><i class="slow"></i></span>
-        <span class="src-lag tnum">~1 hour</span>
-      </li>
-    </ul>
-  </div>
-</section>
-
-
-<!-- ═══════════════════════════════════════════════════════════════
-     HOW — three steps, because it is genuinely three steps.
-     ═══════════════════════════════════════════════════════════ -->
-<section class="band">
-  <div class="lp-wrap">
-    <div class="band-head rv">
-      <span class="eyebrow">Three minutes to set up</span>
-      <h2>Then you never open it again.</h2>
-    </div>
-
-    <ol class="steps">
-      <li class="rv">
-        <span class="step-n">01</span>
-        <h3>Say what you want</h3>
-        <p>Keywords and a country. <em>"intern"</em>, wherever you are. It also knows
-          that <em>trainee</em> means the same thing.</p>
-      </li>
-      <li class="rv d1">
-        <span class="step-n">02</span>
-        <h3>It watches, you don't</h3>
-        <p>Every few minutes it checks all four boards for postings it has never
-          seen. No feed to scroll, no tab to leave open, no laptop running.</p>
-      </li>
-      <li class="rv d2">
-        <span class="step-n">03</span>
-        <h3>It interrupts you only when it matters</h3>
-        <p>One email per sweep, every new role, a direct apply link. Nothing new
-          means silence — which is the point.</p>
-      </li>
+  <%# The live panel: jobs arriving. Rows are present in the markup and
+      visible by default; script only staggers their entrance. %>
+  <aside class="panel" aria-label="Recent postings caught">
+    <header class="panel-top">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="panel-t">the wire</span>
+      <span class="sp"></span>
+      <span class="panel-t panel-live">live</span>
+    </header>
+    <ol class="feed">
+      <li class="feed-row"><span class="feed-age">1m</span>
+        <span class="feed-role">Intern — Fintech Operations</span>
+        <span class="feed-co">PickMe</span></li>
+      <li class="feed-row"><span class="feed-age">8m</span>
+        <span class="feed-role">Digital Marketing Intern</span>
+        <span class="feed-co">Applova</span></li>
+      <li class="feed-row"><span class="feed-age">22m</span>
+        <span class="feed-role">Trainee Software Engineer</span>
+        <span class="feed-co">Epinics</span></li>
+      <li class="feed-row"><span class="feed-age">41m</span>
+        <span class="feed-role">Intern — Human Resources</span>
+        <span class="feed-co">MAS Holdings</span></li>
     </ol>
+    <footer class="panel-foot">
+      <span>4 boards swept</span><span class="sp"></span><span>every 5 min</span>
+    </footer>
+  </aside>
+</section>
+
+
+<%# ── the race ────────────────────────────────────────────────────
+    The centre of the page. Not a feature list — the same hour lived
+    twice, side by side, with the number that actually decides it. %>
+<section class="stage race-stage" id="s-race" data-at="00:31">
+  <p class="moment"><span class="moment-t">09:45</span> thirty-one minutes in</p>
+
+  <h2 class="big">The same hour,<br>lived two ways.</h2>
+
+  <div class="lanes">
+    <article class="lane lane-win">
+      <p class="lane-k">with a watch running</p>
+      <p class="lane-n"><span class="tally" data-to="3">3</span><span class="lane-u">rd</span></p>
+      <p class="lane-s">applicant in the pile</p>
+      <ul class="beats">
+        <li><b>00:02</b> the email arrives</li>
+        <li><b>00:09</b> you have applied</li>
+        <li><b>00:31</b> nine people behind you</li>
+      </ul>
+    </article>
+
+    <div class="lane-vs" aria-hidden="true"><span>vs</span></div>
+
+    <article class="lane lane-lose">
+      <p class="lane-k">checking once a day</p>
+      <p class="lane-n"><span class="tally" data-to="94">94</span><span class="lane-u">th</span></p>
+      <p class="lane-s">applicant in the pile</p>
+      <ul class="beats">
+        <li><b>next&nbsp;day</b> you open the tab</li>
+        <li><b>+18h</b> the shortlist is drawn</li>
+        <li><b>—</b> nobody reaches your name</li>
+      </ul>
+    </article>
+  </div>
+
+  <p class="say say-wide">
+    A real posting from this morning took <b>12 applications in its first
+    31 minutes</b>. Recruiters read the pile from the top. Being early is
+    not an advantage over the others — it is the thing that decides
+    whether you are read at all.
+  </p>
+</section>
+
+
+<%# ── the machine ─────────────────────────────────────────────────
+    Honest about being infrastructure. Reads like a log, because that
+    is what it is. %>
+<section class="stage sweep-stage" id="s-sweep" data-at="00:45">
+  <p class="moment"><span class="moment-t">every 5 min</span> the sweep</p>
+
+  <h2 class="big">It is awake<br>when you are not.</h2>
+
+  <div class="sweep-grid">
+    <ol class="log" aria-label="Example sweep">
+      <li><b>06:12:04</b> <span class="log-s">linkedin</span> 61 jobs · <em>+1 new</em></li>
+      <li><b>06:12:04</b> <span class="log-s">topjobs</span> 38 jobs</li>
+      <li><b>06:12:05</b> <span class="log-s">keells</span> 12 jobs</li>
+      <li><b>06:12:05</b> <span class="log-s">mas</span> 64 jobs</li>
+      <li class="log-hit"><b>06:12:05</b> match · Intern — Fintech Operations</li>
+      <li class="log-out"><b>06:12:06</b> mail → you · 58 min left</li>
+    </ol>
+
+    <div class="srcs">
+      <p class="srcs-k">where it looks</p>
+      <p class="srcs-say">
+        Which boards get searched is decided by the country on your watch,
+        not by a checkbox you have to understand. Add a board and every
+        existing watch reaches it the next time it sweeps.
+      </p>
+      <ul class="src-list">
+        <li><b>LinkedIn</b><span>every country</span></li>
+        <li><b>topjobs.lk</b><span>Sri Lanka</span></li>
+        <li><b>John Keells</b><span>Sri Lanka</span></li>
+        <li><b>MAS Holdings</b><span>Sri Lanka</span></li>
+      </ul>
+    </div>
   </div>
 </section>
 
 
-<!-- ═══════════════════════════════════════════════════════════════
-     HONESTY — the section that makes the rest believable.
-     ═══════════════════════════════════════════════════════════ -->
-<section class="band honest-band">
-  <div class="lp-wrap honest rv">
-    <div>
-      <span class="eyebrow">The part most tools won't tell you</span>
-      <h2>We say <em>minutes</em>, not <em>instantly</em>.</h2>
-      <p class="lead">
-        LinkedIn does not put a job into its search index the moment it is
-        published — that takes tens of minutes, and nothing can poll its way past
-        it. Anyone promising instant alerts is guessing.
-      </p>
-      <p class="lead">
-        What you get is the rest of the hour. Applicant number nine instead of
-        number two hundred. That gap is the entire product, and it is enough.
-      </p>
-    </div>
-    <div class="figs">
-      <div class="fig"><span class="fig-n tnum" data-count="5" data-prefix="&lt;">0<small>min</small></span>
-        <span class="fig-k">Our part of the delay</span></div>
-      <div class="fig"><span class="fig-n tnum">24/7</span>
-        <span class="fig-k">Runs while you sleep</span></div>
-      <div class="fig"><span class="fig-n tnum" data-count="0">0</span>
-        <span class="fig-k">Feeds to check</span></div>
-    </div>
+<%# ── the honest bit ──────────────────────────────────────────── %>
+<section class="stage honest-stage" id="s-honest" data-at="00:58">
+  <p class="moment"><span class="moment-t">00:58</span> the part most tools skip</p>
+
+  <h2 class="big">What it<br>cannot do.</h2>
+
+  <div class="owns">
+    <article>
+      <h3>It cannot beat LinkedIn's own index</h3>
+      <p>Job Wire reads the public search, and a posting reaches that
+         index anywhere from a few minutes to over an hour after it goes
+         live. Measured, not guessed. No tool reading the public web is
+         faster than the web is.</p>
+    </article>
+    <article>
+      <h3>It cannot promise every job</h3>
+      <p>Boards go quiet, change their markup and rate-limit. When a
+         sweep sees far less than it usually does, that is recorded as a
+         fault rather than reported to you as a quiet morning.</p>
+    </article>
+    <article>
+      <h3>It will not apply for you</h3>
+      <p>No auto-apply, no generated cover letters. The advantage on
+         offer is minutes, not volume — and volume is what makes a pile
+         worth skimming in the first place.</p>
+    </article>
   </div>
 </section>
 
 
-<!-- ═══════════════════════════════════════════════════════════════
-     CTA
-     ═══════════════════════════════════════════════════════════ -->
-<section class="cta-band">
-  <canvas class="cta-canvas" id="ctaCanvas" aria-hidden="true"></canvas>
-  <div class="lp-wrap cta-in rv">
-    <h2>Somewhere a role you'd be good at<br>is about to be posted.</h2>
-    <p class="lead">Set the watch once. Be early by default.</p>
-    <a class="cta cta-invert" href="/signup">
-      <span>Start watching — free</span>
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
-    </a>
+<%# ── close ───────────────────────────────────────────────────── %>
+<section class="stage end-stage" id="s-end" data-at="60:00">
+  <p class="moment moment-end"><span class="moment-t">10:14</span> the posting closes</p>
+
+  <h2 class="mega mega-end">
+    <span class="mega-l">Be early,</span>
+    <span class="mega-l"><em>by default.</em></span>
+  </h2>
+
+  <p class="say">
+    Set a keyword and a country once. The next hour that matters, you
+    will already be in it.
+  </p>
+
+  <div class="acts acts-end">
+    <a class="act act-go" href="/signup">Start watching<span aria-hidden="true">→</span></a>
+    <a class="act act-quiet" href="/signin">Sign in</a>
   </div>
 </section>
