@@ -63,13 +63,15 @@ authRoutes.post("/signup", redirectIfAuthed, signupLimiter, async (req, res, nex
           values: { email: values.email },
           notice: "You already have an account with that address — sign in below, or use “Forgotten?” if you need a new password.",
         });
-      // Unverified: reissue rather than blocking them out of their own
-      // account. The password submitted here is deliberately NOT applied —
-      // anyone can type an address, and letting them overwrite the
-      // password on an account they have not proved they own would make
-      // this form a takeover tool. They will need /forgot for that.
+      /* Unverified: reissue rather than blocking them out of their own
+         account. The submitted password is STAGED against this new code,
+         never applied directly. Whoever holds the mailbox completes the
+         code that was issued alongside their own password, so a stranger
+         who registered the address first cannot have theirs promoted —
+         at worst they invalidate a code and the real owner asks again. */
       const { code, hash, expiresAt } = await otp.issue();
       await Users.setOtp(existing._id, { otpHash: hash, otpExpiresAt: expiresAt });
+      await Users.setPendingPassword(existing._id, await pw.hash(password));
       const resent = await sendVerification({ to: email, code });
       if (!resent.ok)
         return show(res, "signup", { error: "We could not send the code. Try again shortly.", values });
@@ -77,13 +79,19 @@ authRoutes.post("/signup", redirectIfAuthed, signupLimiter, async (req, res, nex
       return show(res, "verify", { title: "Verify", step: 2, email });
     }
 
+    /* The hash is STAGED, not granted. Anyone can type any address into
+       this form, so an account that has never been verified is unowned —
+       writing passHash here let an attacker register a victim's address
+       under a password of their choosing, and the victim's own
+       verification then blessed it. See setPendingPassword. */
     const { code, hash, expiresAt } = await otp.issue();
     const user = await Users.create({
       email,
-      passHash: await pw.hash(password),
+      passHash: null,
       otpHash: hash,
       otpExpiresAt: expiresAt,
     });
+    await Users.setPendingPassword(user._id, await pw.hash(password));
 
     const sent = await sendVerification({ to: email, code });
     if (!sent.ok)
@@ -121,6 +129,11 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
     if (patch) await Users.applyPatch(user._id, patch);
 
     if (result === otp.OTP_RESULT.OK) {
+      // The code is the proof of mailbox control, so this is the only
+      // place a signup password becomes usable.
+      if (user.pendingPassHash) {
+        await Users.promotePendingPassword(user._id, user.pendingPassHash);
+      }
       // regenerate gives a fresh session id (prevents fixation), and save()
       // must complete BEFORE the redirect: res.redirect ends the response
       // while the store write is still in flight, so a fast client can

@@ -5,6 +5,42 @@
 
 import { collections } from "../config/db.js";
 
+/**
+ * Open a row BEFORE handing the message to the provider.
+ *
+ * Recording only after the send meant a crash between "provider accepted
+ * it" and "we wrote it down" left the jobs deduped with no log row: no
+ * alert, and nothing for the retry queue to find, so it was lost for
+ * good. A row opened first turns that same crash into a visible
+ * "sending" row that findRetryable picks up.
+ */
+export async function open({ userId, queryId, jobIds }) {
+  const { insertedId } = await collections.emailLog().insertOne({
+    userId, queryId, jobIds,
+    status: "sending",
+    providerId: null,
+    error: null,
+    attempts: 0,
+    sentAt: new Date(),
+  });
+  return insertedId;
+}
+
+/** Close the row the send was opened with. */
+export function settle(id, { ok, providerId, error }) {
+  return collections.emailLog().updateOne(
+    { _id: id },
+    { $set: {
+        status: ok ? "sent" : "failed",
+        providerId: providerId || null,
+        error: error || null,
+        // sentAt is stamped at COMPLETION so the daily cap counts the day
+        // the mail actually went out.
+        sentAt: new Date(),
+      } }
+  );
+}
+
 export function record({ userId, queryId, jobIds, status, providerId, error }) {
   return collections.emailLog().insertOne({
     userId, queryId, jobIds, status,
@@ -72,15 +108,27 @@ export function countToday() {
  * Without this the alert is lost permanently, because the job is already
  * in seenJobs and no future sweep will rediscover it.
  */
-export function findRetryable({ maxAttempts = 3, olderThanMs = 60_000, limit = 5 } = {}) {
+export function findRetryable({ maxAttempts = 3, olderThanMs = 60_000,
+                               stalledAfterMs = 5 * 60_000, limit = 5 } = {}) {
+  const now = Date.now();
   return collections.emailLog()
     .find({
-      status: "failed",
+      /* Two different situations, so two different clocks.
+         "failed" means the provider said no and a minute is long enough
+         to wait. "sending" means a row was opened and never closed —
+         which is either a crash, or a send still in flight. Reclaiming
+         those on the same one-minute clock would retry a message that is
+         still being delivered and send it twice, so they need a grace
+         period comfortably past every provider timeout we set (Brevo 20s,
+         SMTP socket 30s). Five minutes clears all of them. */
+      $and: [{ $or: [
+        { status: "failed",  sentAt: { $lte: new Date(now - olderThanMs) } },
+        { status: "sending", sentAt: { $lte: new Date(now - stalledAfterMs) } },
+      ] }],
       // Rows written before `attempts` existed have no such field, and
       // { $lt: n } does NOT match a missing field — those failures would
       // be permanently invisible to the retry queue. Treat absent as 0.
       $or: [{ attempts: { $lt: maxAttempts } }, { attempts: { $exists: false } }],
-      sentAt: { $lte: new Date(Date.now() - olderThanMs) },
     })
     .sort({ sentAt: 1 })
     .limit(limit)
@@ -111,6 +159,12 @@ export function markRetried(id, { ok, providerId, error }) {
       lastTriedAt: new Date(),
     },
   };
+  /* Move sentAt to now when the retry succeeds. countToday() filters on
+     sentAt, so a message that failed yesterday and went out today kept
+     yesterday's stamp and never counted against today's cap — the
+     provider's quota and our own accounting drifted apart, silently, in
+     the direction that overspends. */
+  if (ok) update.$set.sentAt = new Date();
   // Only real, transient failures count against the attempt budget.
   if (!ok && !isConfigError(error)) update.$inc = { attempts: 1 };
   return collections.emailLog().updateOne({ _id: id }, update);

@@ -12,6 +12,28 @@ export function findById(id) {
   return collections.users().findOne({ _id: id });
 }
 
+/**
+ * Stage a password without granting it.
+ *
+ * An unverified account is unowned: anyone can type any address into
+ * /signup. Writing passHash there meant an attacker could register a
+ * victim's address with their own password, and the victim's later
+ * verification blessed it. The candidate sits in pendingPassHash until
+ * whoever controls the mailbox proves it with the code.
+ */
+export function setPendingPassword(id, pendingPassHash) {
+  return collections.users().updateOne({ _id: id }, { $set: { pendingPassHash } });
+}
+
+/** Promote the staged password. Called only on a correct code. */
+export function promotePendingPassword(id, pendingPassHash) {
+  return collections.users().updateOne(
+    { _id: id },
+    { $set: { passHash: pendingPassHash, verified: true },
+      $unset: { pendingPassHash: "", otpHash: "", otpExpiresAt: "", otpAttempts: "" } }
+  );
+}
+
 export async function create({ email, passHash, otpHash, otpExpiresAt }) {
   const doc = {
     email,

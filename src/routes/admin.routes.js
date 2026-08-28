@@ -48,7 +48,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       collections.users()
         .find({}, { projection: { passHash: 0, otpHash: 0 } })
         .sort({ createdAt: -1 })
-        .limit(200)
+        .limit(2000)   // see the note on People totals below
         .toArray(),
       collections.queries().find({}).sort({ createdAt: -1 }).toArray(),
       collections.subscriptions().find({}).toArray(),
@@ -259,6 +259,23 @@ adminRoutes.post("/admin/queries/:id/toggle", ...guard, async (req, res, next) =
     if (!id) return res.redirect("/admin");
     const q = await collections.queries().findOne({ _id: id }, { projection: { nextFetchAt: 1, location: 1 } });
     if (q) {
+      /* Parking is only ever safe for a query nobody is listening to.
+         The toggle enforced nothing, so one click could silently stop
+         every alert for real subscribers — and because syncSchedule only
+         re-runs when a subscription changes, it stayed stopped until
+         someone happened to pause or resume a watch. Waking is always
+         allowed; it is the direction that cannot hurt anyone. */
+      const parking = q.nextFetchAt != null;
+      if (parking) {
+        const live = await collections.subscriptions()
+          .countDocuments({ queryId: id, active: true });
+        if (live > 0) {
+          log.warn("ADMIN tried to park a query people are watching", {
+            by: req.user.email, location: q.location, activeWatchers: live,
+          });
+          return res.redirect("/admin?err=watched");
+        }
+      }
       await Queries.setSweeping(id, q.nextFetchAt == null);
       log.warn("ADMIN " + (q.nextFetchAt == null ? "resumed" : "parked") + " a query",
         { by: req.user.email, location: q.location });
@@ -280,8 +297,14 @@ adminRoutes.post("/admin/queries/:id/sweep", ...guard, async (req, res, next) =>
     if (!id) return res.redirect("/admin");
     const q = await collections.queries().findOne({ _id: id });
     if (q) {
-      log.warn("ADMIN forced a sweep", { by: req.user.email, location: q.location });
-      sweepQuery(q).catch((e) => log.error("forced sweep failed", { message: e.message }));
+      /* Make the poller pick it up rather than sweeping it here. Calling
+         sweepQuery directly ran it alongside whatever the poller was
+         already doing, which breaks the one-request-at-a-time property
+         the whole scraping approach depends on — two concurrent sweeps
+         look exactly like the traffic a board blocks you for. Setting
+         nextFetchAt to now means the next tick claims it, in order. */
+      log.warn("ADMIN queued an immediate sweep", { by: req.user.email, location: q.location });
+      await collections.queries().updateOne({ _id: id }, { $set: { nextFetchAt: new Date() } });
     }
     res.redirect("/admin?swept=1");
   } catch (err) { next(err); }

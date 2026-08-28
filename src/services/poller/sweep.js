@@ -87,6 +87,23 @@ export async function sweepQuery(query) {
 
   // Only treat the sweep as failed if EVERY source failed. One site
   // rate-limiting us should not park a watch that has other sources.
+  /* Record WHICH sources failed, on the query row. A partial failure
+     resets the query as healthy — correctly, since other boards
+     answered — but that also meant a source could be dead for weeks with
+     nothing anywhere to say so. failCount only counts total wipeouts, so
+     a permanently broken LinkedIn behind three working local boards was
+     invisible to the admin page and to me. */
+  await collections.queries().updateOne(
+    { _id: query._id },
+    { $set: {
+        sourceHealth: sourceIds.map((id) => {
+          const bad = failures.find((f) => f.sourceId === id);
+          return { source: id, ok: !bad, error: bad ? String(bad.err.message).slice(0, 160) : null,
+                   at: new Date() };
+        }),
+      } }
+  );
+
   if (failures.length === sourceIds.length) {
     const blocked = failures.some((f) => f.err instanceof BlockedBySource);
     const backoff = blocked
@@ -290,7 +307,21 @@ export async function sweepQuery(query) {
     // dedupe: if a job is appearing now and was not there before, it is
     // news, whatever date it prints.
     const src = getSource(j.jobId.split(":")[0]);
-    if (src && src.timePrecision === "day") return true;
+    if (src && src.timePrecision === "day") {
+      /* Day-precision sources skip the age gate, and that exemption is
+         what makes the dedupe TTL load-bearing. seenJobs expires after
+         SEEN_JOB_TTL_DAYS; a local-board posting still listed after that
+         window is forgotten, rediscovered, and — with no age gate to
+         stop it — emailed a second time as though it were new.
+         postedAt is the only defence left, so use it where the board
+         gave us one: a posting older than the TTL cannot be news. */
+      const posted = j.postedAt ? new Date(j.postedAt) : null;
+      if (posted && Date.now() - posted.getTime() >
+          env.seenJobTtlDays * 24 * 60 * 60000) {
+        return false;
+      }
+      return true;
+    }
 
     const at = j.postedAt ? new Date(j.postedAt) : null;
     return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
@@ -312,9 +343,15 @@ async function fanOut(query, jobs, startedAt) {
   const subs = await Subs.activeSubscribers(query._id);
   if (!subs.length) return 0;
 
-  const sentToday = await EmailLog.countToday();
-  if (sentToday >= dailyCap()) {
-    log.warn("daily mail ceiling reached — alerts suppressed", { sentToday });
+  /* Counted ONCE before the loop, this was a ceiling in name only: with
+     279 of 280 used and a hundred watchers on a shared query, the check
+     passed once and then sent a hundred. The running total is tracked
+     locally and re-checked before every individual send, so the cap
+     bounds the fan-out rather than merely gating its start. */
+  const cap = dailyCap();
+  let sentToday = await EmailLog.countToday();
+  if (sentToday >= cap) {
+    log.warn("daily mail ceiling reached — alerts suppressed", { sentToday, cap });
     return 0;
   }
 
@@ -346,15 +383,27 @@ async function fanOut(query, jobs, startedAt) {
     }
     eligible++;
 
-    const res = await sendAlert({ to: user.email, label: sub.label, jobs });
-    await EmailLog.record({
+    if (sentToday >= cap) {
+      log.warn("daily mail ceiling reached mid fan-out — remaining watchers skipped", {
+        queryId: String(query._id), cap, delivered: sent,
+      });
+      break;
+    }
+
+    /* Open the row BEFORE the provider is called. Sending first and
+       recording after meant a crash in between left the jobs deduped
+       with no log row at all: no alert, and nothing for the retry queue
+       to find, so it was gone for good. Opening first turns that into a
+       "sending" row the queue reclaims once it goes stale. */
+    const logId = await EmailLog.open({
       userId: sub.userId,
       queryId: query._id,
       jobIds: jobs.map((j) => j.jobId),
-      status: res.ok ? "sent" : "failed",
-      providerId: res.id,
-      error: res.error,
     });
+    sentToday++;
+
+    const res = await sendAlert({ to: user.email, label: sub.label, jobs });
+    await EmailLog.settle(logId, { ok: res.ok, providerId: res.id, error: res.error });
     if (res.ok) sent++;
   }
 

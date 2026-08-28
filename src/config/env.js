@@ -63,9 +63,17 @@ export const env = {
   // Gmail SMTP — required on hosts that block outbound SMTP ports.
   brevoApiKey: (process.env.BREVO_API_KEY || "").trim(),
 
-  gmailUser: required("GMAIL_USER"),
+  // Only required when Gmail is the transport. With BREVO_API_KEY set,
+  // transport.js never touches these — but boot refused to start without
+  // them anyway, so a Brevo-only deploy had to invent a Gmail account to
+  // satisfy a check for credentials it would never use.
+  gmailUser: (process.env.BREVO_API_KEY || "").trim()
+    ? (process.env.GMAIL_USER || "").trim()
+    : required("GMAIL_USER"),
   // Google displays the app password as 4 groups of 4; the secret is the 16 chars.
-  gmailAppPassword: required("GMAIL_APP_PASSWORD").replace(/\s+/g, ""),
+  gmailAppPassword: ((process.env.BREVO_API_KEY || "").trim()
+    ? (process.env.GMAIL_APP_PASSWORD || "")
+    : required("GMAIL_APP_PASSWORD")).replace(/\s+/g, ""),
   mailFrom: process.env.MAIL_FROM || process.env.GMAIL_USER,
 
   pollTickSeconds: num("POLL_TICK_SECONDS", 30),
@@ -80,8 +88,14 @@ export const env = {
   seenJobTtlDays: num("SEEN_JOB_TTL_DAYS", 14),
 };
 
+// True when Gmail SMTP is the transport. Every Gmail-specific check
+// below is conditioned on it: with Brevo configured these credentials are
+// legitimately absent, and asserting on them turned an unused setting
+// into a boot failure.
+const usingGmail = !env.brevoApiKey;
+
 // Catch the mistakes that produce confusing failures much later.
-if (env.gmailAppPassword.length !== 16) {
+if (usingGmail && env.gmailAppPassword.length !== 16) {
   throw new Error(
     `GMAIL_APP_PASSWORD should be 16 characters after removing spaces, ` +
     `got ${env.gmailAppPassword.length}. Is it a real app password?`
@@ -91,8 +105,9 @@ if (env.gmailAppPassword.length !== 16) {
 // account, so a mismatch does not fail loudly — it just breaks DMARC
 // alignment, which is exactly what pushes mail into spam. Warn rather
 // than throw: a legitimately configured "Send mail as" alias is valid.
-const fromAddress = (env.mailFrom.match(/<([^>]+)>/)?.[1] || env.mailFrom).trim().toLowerCase();
-if (fromAddress !== env.gmailUser.toLowerCase()) {
+const fromAddress = ((env.mailFrom || "").match(/<([^>]+)>/)?.[1] || env.mailFrom || "")
+  .trim().toLowerCase();
+if (usingGmail && fromAddress !== env.gmailUser.toLowerCase()) {
   console.warn(
     `WARNING  MAIL_FROM address (${fromAddress}) does not match GMAIL_USER ` +
     `(${env.gmailUser}). Gmail will rewrite the From header, and the ` +

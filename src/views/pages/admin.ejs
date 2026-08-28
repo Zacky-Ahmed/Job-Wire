@@ -99,7 +99,14 @@
           <% } %>
           <% if (!p.isAdmin) { %>
             <form method="post" action="/admin/users/<%= p.id %>/delete"
-              onsubmit="return confirm('Delete <%= p.email %>? Their watches and mail history go too. This cannot be undone.')">
+              <%# The address goes in a data- attribute, not inside a JS
+                  string literal. o'brien@x.com is a valid address; EJS
+                  escapes the quote to &#39;, the browser decodes it back
+                  to ' while parsing the attribute, and the literal ends
+                  early — a syntax error, so confirm() never ran and the
+                  form submitted straight through. %>
+              data-email="<%= p.email %>"
+              onsubmit="return confirm('Delete ' + this.dataset.email + '? Their watches and mail history go too. This cannot be undone.')">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button class="btn btn-xs btn-bad" type="submit" aria-label="Delete account">Delete</button>
             </form>
