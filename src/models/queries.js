@@ -95,7 +95,13 @@ export async function setSweeping(id, shouldSweep) {
   await collections.queries().updateOne(
     { _id: id },
     shouldSweep
-      ? { $set: { nextFetchAt: new Date() }, $unset: { retiredAt: "" } }
+      // failCount MUST be cleared here. The loop parks a query once it
+      // reaches maxFailCount, and the only place failCount resets is
+      // reschedule(), which runs after a SUCCESSFUL sweep. Resuming
+      // without clearing it handed back a query the loop would park
+      // again on sight — for ever, since it never got to attempt a
+      // fetch. Resume looked like it worked and silently did nothing.
+      ? { $set: { nextFetchAt: new Date(), failCount: 0 }, $unset: { retiredAt: "" } }
       : { $set: { nextFetchAt: null, retiredAt: new Date() } }
   );
 }
@@ -104,5 +110,19 @@ export function recordFailure(id, backoffMinutes) {
   return collections.queries().updateOne(
     { _id: id },
     { $inc: { failCount: 1 }, $set: { nextFetchAt: new Date(Date.now() + backoffMinutes * 60000) } }
+  );
+}
+
+/**
+ * Park a repeatedly-failing query without touching failCount.
+ *
+ * recordFailure() was being used for this, and it $incs — so every tick
+ * that skipped a parked query pushed its failCount higher, climbing
+ * without limit for a query nobody was even attempting to fetch.
+ */
+export function park(id, minutes) {
+  return collections.queries().updateOne(
+    { _id: id },
+    { $set: { nextFetchAt: new Date(Date.now() + minutes * 60000) } }
   );
 }

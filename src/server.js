@@ -100,11 +100,23 @@ export async function buildApp() {
   app.use(generalLimiter);
   app.use(buildSession());
   app.use(theme); // resolves data-theme before any HTML is written
+
+  /* The routes with no form on them are mounted ABOVE csrf on purpose.
+     csrf puts a token in res.locals, express merges res.locals into the
+     render data, and merging READS every enumerable key — so the token
+     was minted while rendering a page that never referenced it. Minting
+     writes req.session, an initialised session is persisted even with
+     saveUninitialized:false, and the result was a 14-day session document
+     for every crawler and health check: 1,140 of 1,165 rows in the
+     collection had no user attached to them.
+
+     Nothing below needs a token: /healthz returns text, and the landing
+     page, robots.txt and sitemap.xml carry no form and no HTMX post. */
+  app.get("/healthz", (req, res) => res.type("text/plain").send("ok"));
+  app.use(landingRoutes); // public "/" — must come before wireRoutes
+
   app.use(csrf);
 
-  app.get("/healthz", (req, res) => res.type("text/plain").send("ok"));
-
-  app.use(landingRoutes); // public "/" — must come before wireRoutes
   app.use(authRoutes);
   app.use(wireRoutes);
   app.use(watchesRoutes);

@@ -41,9 +41,14 @@ function parseDate(text) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-export async function fetchJobs({ keywords, page = 0 }) {
+export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
-  const q = words.join(" ") || "intern";
+  /* A matchAll watch means "every job in this country", so it must not be
+     narrowed by a search term. The fallback below used to read
+     `|| "intern"`, which quietly turned every keywordless watch into an
+     intern search on this board — the one setting whose entire promise is
+     that nothing is filtered out. An empty q returns the full listing. */
+  const q = matchAll ? "" : words.join(" ") || "intern";
 
   const params = new URLSearchParams({ q });
   if (page > 0) params.set("startrow", String(page * pageSize));

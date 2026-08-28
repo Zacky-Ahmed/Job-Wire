@@ -60,16 +60,23 @@ export async function retryFailedSends() {
       continue;
     }
 
+    /* The watch has to still exist AND still be on. Without active:true a
+       paused watch kept receiving retries, and `sub?.label || "your watch"`
+       meant a DELETED one did too, under a generic label — mail arriving
+       after you switched something off is the kind of thing that gets an
+       address marked as spam by hand. */
     const sub = await collections.subscriptions().findOne({
-      userId: entry.userId, queryId: entry.queryId,
+      userId: entry.userId, queryId: entry.queryId, active: true,
     });
+    if (!sub) {
+      await EmailLog.markRetried(entry._id, {
+        ok: false, error: "watch paused or deleted before the retry ran",
+      });
+      continue;
+    }
 
     budget--;
-    const res = await sendAlert({
-      to: user.email,
-      label: sub?.label || "your watch",
-      jobs,
-    });
+    const res = await sendAlert({ to: user.email, label: sub.label, jobs });
 
     await EmailLog.markRetried(entry._id, {
       ok: res.ok, providerId: res.id, error: res.error,

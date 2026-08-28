@@ -53,7 +53,9 @@ async function tick() {
           queryId: String(query._id), failCount: query.failCount,
         });
         // Push it far out rather than deleting — a human can inspect it.
-        await Queries.recordFailure(query._id, 24 * 60);
+        // park(), not recordFailure(): the latter increments failCount,
+        // so merely skipping a parked query made it look worse each tick.
+        await Queries.park(query._id, 24 * 60);
         continue;
       }
       try {

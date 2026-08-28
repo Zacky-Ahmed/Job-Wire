@@ -303,12 +303,12 @@ export async function sweepQuery(query) {
   }
   if (!fresh.length) return { ok: true, fetched: fetched.length, alerted: 0 };
 
-  const alerted = await fanOut(query, fresh);
+  const alerted = await fanOut(query, fresh, new Date(started));
   return { ok: true, fetched: fetched.length, alerted };
 }
 
 /** One email per subscriber per sweep, carrying every new job at once. */
-async function fanOut(query, jobs) {
+async function fanOut(query, jobs, startedAt) {
   const subs = await Subs.activeSubscribers(query._id);
   if (!subs.length) return 0;
 
@@ -327,6 +327,23 @@ async function fanOut(query, jobs) {
     );
     // Never mail an address that was not confirmed.
     if (!user?.verified) continue;
+
+    /* A sweep can run for minutes. Someone who subscribed midway through
+       would otherwise be emailed everything it found, including jobs
+       discovered before their watch existed — while the wire, which
+       scopes by subscription createdAt, showed them nothing of the kind.
+       The two disagreed about what belonged to the reader.
+
+       The comparison is against the instant the sweep STARTED, not
+       against the jobs: `fresh` is built from the source adapters and
+       has no firstSeenAt on it, so filtering by that field silently
+       matched everything and fixed nothing. */
+    if (sub.createdAt && startedAt && sub.createdAt > startedAt) {
+      log.info("skipping a watch created mid-sweep", {
+        queryId: String(query._id), userId: String(sub.userId),
+      });
+      continue;
+    }
     eligible++;
 
     const res = await sendAlert({ to: user.email, label: sub.label, jobs });
