@@ -24,6 +24,7 @@
 // transactional provider with SPF, DKIM and DMARC set up. See README.
 
 import { sendMail } from "./transport.js";
+import { getSource } from "../sources/index.js";
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) =>
@@ -105,6 +106,12 @@ export function buildAlert({ label, jobs }) {
 
   // Plain links, not buttons. A row of coloured CTAs is the single
   // strongest "this is marketing" signal in an email.
+  /* Every alert said "Open on LinkedIn", including the ones from Keells,
+     MAS and topjobs — three of the four sources. The jobId already
+     carries its adapter as a prefix, so the real name is free. */
+  const sourceLabel = (jobId) =>
+    getSource(String(jobId).split(":")[0])?.label || "the job board";
+
   const rows = jobs
     .map(
       (j) => `
@@ -112,7 +119,7 @@ export function buildAlert({ label, jobs }) {
       <div style="font-weight:600;">${esc(j.title)}</div>
       <div style="color:${MUTED};font-size:14px;margin:3px 0 8px;">
         ${esc(j.company)}${j.location ? " — " + esc(j.location) : ""}</div>
-      <a href="${esc(j.url)}" style="color:${LINK};font-size:14px;">Open on LinkedIn</a>
+      <a href="${esc(j.url)}" style="color:${LINK};font-size:14px;">Open on ${esc(sourceLabel(j.jobId))}</a>
     </div>`
     )
     .join("");

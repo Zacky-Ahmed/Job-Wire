@@ -58,3 +58,23 @@
     dedupeFlash();
   });
 })();
+
+/* Live-wire failure state.
+ *
+ * htmx swallows a failed poll silently: the list just stops changing,
+ * which looks exactly like a quiet morning. That is the same failure
+ * shape the sweep itself has, and it deserves the same treatment —
+ * say so rather than let the reader assume nothing is happening.
+ */
+(function () {
+  var el = document.getElementById("pollDead");
+  if (!el) return;
+  function dead(on) { el.hidden = !on; }
+  document.body.addEventListener("htmx:sendError", function () { dead(true); });
+  document.body.addEventListener("htmx:timeout", function () { dead(true); });
+  document.body.addEventListener("htmx:responseError", function () { dead(true); });
+  // Any successful poll clears it again.
+  document.body.addEventListener("htmx:afterOnLoad", function (e) {
+    if (e.detail && e.detail.xhr && e.detail.xhr.status < 400) dead(false);
+  });
+})();

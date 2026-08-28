@@ -46,6 +46,13 @@
       <span class="hide">Watch</span><span class="hide">Caught</span>
       <span class="hide">Window</span><span style="text-align:right">Act</span>
     </div>
+    <%# A failed poll used to be indistinguishable from a quiet morning —
+        the list simply stopped changing and nothing said so. Same failure
+        mode the sweep itself has, one layer up. %>
+    <p class="poll-dead" id="pollDead" hidden>
+      Live updates stopped — the connection dropped. Refreshing the page
+      restores them; nothing has been lost.
+    </p>
     <div id="wireRows" hx-get="/wire/rows?show=<%= show %>" hx-trigger="every 15s" hx-swap="innerHTML">
       <%- include('../partials/wire-rows', { dispatches }) %>
     </div>

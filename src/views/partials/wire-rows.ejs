@@ -14,7 +14,7 @@
     <% } else { %>
       <b>Nothing caught yet</b>
       <span>The wire is sweeping. New postings land here the moment they appear
-        in LinkedIn's search index.</span>
+        on any board that covers your country.</span>
     <% } %>
   </div>
 <% } else { %>
@@ -32,7 +32,7 @@
               discarding refine's verdict — it explains nothing, so it
               earns no badge. %>
           <% if (d.matchedBy && d.matchedBy !== 'title' && d.matchedBy !== 'keyword') { %>
-            <span class="why" title="Its title does not mention your keyword. It is here because the employer tagged it this way — which is exactly what your LinkedIn filter goes on, spam included."><%= d.matchedBy %> tag</span>
+            <span class="why" title="Its title does not mention your keyword. It is here because the employer tagged it this way — which is exactly what the board's own filter goes on, spam included."><%= d.matchedBy %> tag</span>
           <% } %>
         </div>
         <div class="b"><%= d.company %><%= d.location ? ' · ' + d.location : '' %></div>

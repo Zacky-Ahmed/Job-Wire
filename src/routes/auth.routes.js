@@ -287,6 +287,23 @@ authRoutes.post("/forgot", redirectIfAuthed, forgotLimiter, async (req, res, nex
   }
 });
 
+/* A reset code is only reachable from the session that requested it, so
+   arriving at /reset directly — an old tab, a bookmark, a back button —
+   used to hit the catch-all 404. Technically correct and completely
+   unhelpful: the reader has no idea whether the feature is broken or
+   they simply waited too long. Send them where they can start again. */
+authRoutes.get("/reset", (req, res) => {
+  // The key is resetUserId — set by POST /forgot at the line above that
+  // renders this same view.
+  if (req.session?.resetUserId) {
+    return show(res, "reset", { title: "Reset password", step: 2 });
+  }
+  return show(res, "forgot", {
+    title: "Forgotten password",
+    notice: "That reset link is no longer active. Enter your address and we will send a new code.",
+  });
+});
+
 authRoutes.post("/reset", resetLimiter, async (req, res, next) => {
   try {
     const id = oid(req.session.resetUserId);
