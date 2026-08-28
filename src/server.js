@@ -131,6 +131,14 @@ export async function buildApp() {
     if (req.get("HX-Request") || !req.accepts("html")) {
       return res.type("text/plain").send("Not found");
     }
+    /* Drop the csrf getter before rendering. This handler sits below
+       app.use(csrf) because it has to catch everything, so res.locals
+       carries the token accessor — and express reads every enumerable
+       local while merging render data, which mints a token and writes a
+       session. A 404 needs no token, and crawlers generate far more of
+       them than real pages, so this was the last route still handing a
+       14-day session to anything that walked a dead link. */
+    delete res.locals.csrfToken;
     page(res, "pages/404", { title: "Not found — Job Wire" }, "layouts/public");
   });
 
