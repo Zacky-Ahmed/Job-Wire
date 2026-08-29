@@ -16,15 +16,23 @@
       <div class="v"><%= totals.watches %></div>
       <div class="d"><%= totals.queries %> shared queries behind them</div>
     </div>
-    <div class="stat <%= totals.failed24 ? 'amber' : 'go' %>">
-      <div class="k">Mail · 24h</div>
-      <div class="v"><%= totals.mail24 %> <span class="u">/<%= totals.mailCap %></span></div>
-      <div class="d"><%= totals.failed24 %> failed · <%= totals.mailProvider %></div>
+    <%# Today, not a rolling 24 hours. The denominator is the provider's
+        daily ceiling and the poller enforces it per calendar day, so a
+        rolling numerator made this ratio unreadable: it could show 260 of
+        280 spent while the poller had counted 40. %>
+    <div class="stat <%= totals.failedToday ? 'amber' : 'go' %>">
+      <div class="k">Mail · today</div>
+      <div class="v"><%= totals.mailToday %> <span class="u">/<%= totals.mailCap %></span></div>
+      <div class="d"><%= totals.failedToday %> failed · <%= totals.mailProvider %></div>
     </div>
-    <div class="stat <%= totals.pollerEnabled ? 'go' : 'amber' %>">
+    <%# Measured, not configured. This read POLLER_ENABLED, so it could
+        print "Running" directly above a panel that said "Not ticking" on
+        the same page load. Both now render one verdict from the
+        heartbeat the loop writes itself. %>
+    <div class="stat <%= poller.tone %>">
       <div class="k">Poller</div>
-      <div class="v" style="font-size:26px"><%= totals.pollerEnabled ? 'Running' : 'Off' %></div>
-      <div class="d">shared across every watch</div>
+      <div class="v" style="font-size:26px"><%= poller.label %></div>
+      <div class="d"><%= poller.detail %></div>
     </div>
   </div>
 
@@ -44,7 +52,8 @@
         <div class="a">
           <% if (!poller.configured) { %>Disabled by POLLER_ENABLED
           <% } else if (poller.never) { %>No tick has ever been recorded
-          <% } else if (poller.stale) { %>Last tick <%= poller.tickAgeSec %>s ago — not ticking
+          <% } else if (poller.stale) { %><%= poller.detail %> — wedged
+          <% } else if (poller.sweeping) { %>Sweeping now · started <%= poller.tickAgeSec %>s ago
           <% } else { %>Ticked <%= poller.tickAgeSec %>s ago<% } %>
         </div>
         <div class="b">
@@ -56,7 +65,7 @@
       <span>
         <% if (!poller.configured) { %><span class="pill off">Off</span>
         <% } else if (poller.stale || poller.never) { %><span class="pill sig">Not ticking</span>
-        <% } else { %><span class="pill go">Alive</span><% } %>
+        <% } else { %><span class="pill go"><%= poller.label %></span><% } %>
       </span>
       <span class="muted hide"></span><span class="muted hide"></span>
     </div>
@@ -129,7 +138,9 @@
       <span class="dot live"></span>
       <h3>People</h3>
       <span class="sp"></span>
-      <span class="lbl">newest first · 200 max</span>
+      <%# The cap is a display limit. Saying what is shown out of what
+          exists is the difference between "not on this page" and "gone". %>
+      <span class="lbl">newest first · showing <%= totals.shown %> of <%= totals.users %></span>
     </div>
     <div class="row rhead r-admin">
       <span>Email</span><span>State</span><span class="hide">Watches</span><span style="text-align:right">Actions</span>

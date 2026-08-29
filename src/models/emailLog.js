@@ -84,10 +84,18 @@ export function forJobs(userId, jobIds) {
     .toArray();
 }
 
+/* One definition of "today", because three copies of
+   setHours(0,0,0,0) is three chances to drift from the boundary the
+   provider's quota actually resets on. */
+function startOfDay() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 export function countTodayForUser(userId) {
-  const start = new Date(); start.setHours(0, 0, 0, 0);
   return collections.emailLog()
-    .countDocuments({ userId, sentAt: { $gte: start }, status: "sent" });
+    .countDocuments({ userId, sentAt: { $gte: startOfDay() }, status: "sent" });
 }
 
 /**
@@ -96,8 +104,21 @@ export function countTodayForUser(userId) {
  * the poller and the admin page, never as a personal statistic.
  */
 export function countToday() {
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  return collections.emailLog().countDocuments({ sentAt: { $gte: start }, status: "sent" });
+  return collections.emailLog()
+    .countDocuments({ sentAt: { $gte: startOfDay() }, status: "sent" });
+}
+
+/**
+ * Failures today, counted over the same window as countToday().
+ *
+ * The admin page used to count failures over a rolling 24 hours and show
+ * them beside a figure the poller measures per calendar day. Two windows
+ * in one tile means the "3 failed" cannot be lined up against the sends
+ * it happened among.
+ */
+export function countFailedToday() {
+  return collections.emailLog()
+    .countDocuments({ sentAt: { $gte: startOfDay() }, status: "failed" });
 }
 
 /**
