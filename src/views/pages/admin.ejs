@@ -28,6 +28,67 @@
     </div>
   </div>
 
+  <%# Liveness and per-source health. Both were previously reported from
+      configuration rather than evidence: "Poller: Running" meant
+      POLLER_ENABLED was true, and a query showed healthy whenever any one
+      of its sources answered. %>
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot <%= (!poller.configured || poller.stale || poller.never) ? 'sig' : 'live' %>"></span>
+      <h3>Poller</h3>
+      <span class="sp"></span>
+      <span class="lbl">measured, not configured</span>
+    </div>
+    <div class="row r-admin">
+      <div class="role">
+        <div class="a">
+          <% if (!poller.configured) { %>Disabled by POLLER_ENABLED
+          <% } else if (poller.never) { %>No tick has ever been recorded
+          <% } else if (poller.stale) { %>Last tick <%= poller.tickAgeSec %>s ago — not ticking
+          <% } else { %>Ticked <%= poller.tickAgeSec %>s ago<% } %>
+        </div>
+        <div class="b">
+          state <%= poller.state %><% if (poller.queueDepth !== null) { %> ·
+          queue <%= poller.queueDepth %><% } %><% if (poller.lastTickMs !== null) { %> ·
+          last pass <%= (poller.lastTickMs / 1000).toFixed(1) %>s<% } %>
+        </div>
+      </div>
+      <span>
+        <% if (!poller.configured) { %><span class="pill off">Off</span>
+        <% } else if (poller.stale || poller.never) { %><span class="pill sig">Not ticking</span>
+        <% } else { %><span class="pill go">Alive</span><% } %>
+      </span>
+      <span class="muted hide"></span><span class="muted hide"></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot <%= sourceHealth.some(h => !h.ok) ? 'sig' : 'live' %>"></span>
+      <h3>Sources</h3>
+      <span class="sp"></span>
+      <span class="lbl">last result per board</span>
+    </div>
+    <% if (!sourceHealth.length) { %>
+      <div class="row r-admin"><div class="role"><div class="b">
+        No sweep has recorded source health yet.</div></div>
+        <span></span><span class="muted hide"></span><span class="muted hide"></span></div>
+    <% } %>
+    <% sourceHealth.forEach(function (h) { %>
+      <div class="row r-admin">
+        <div class="role">
+          <div class="a"><%= h.source %></div>
+          <div class="b"><%= h.ok ? "answered" : (h.error || "failed") %></div>
+        </div>
+        <span>
+          <% if (h.ok) { %><span class="pill go">OK</span>
+          <% } else { %><span class="pill sig">Failing<%= h.fails > 1 ? " ×" + h.fails : "" %></span><% } %>
+        </span>
+        <span class="muted hide"></span><span class="muted hide"></span>
+      </div>
+    <% }); %>
+  </div>
+
   <div class="panel">
     <div class="panel-h">
       <span class="dot <%= delivery.misaligned ? 'sig' : 'live' %>"></span>

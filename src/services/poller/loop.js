@@ -11,6 +11,33 @@ import { sweepQuery } from "./sweep.js";
 import { retryFailedSends } from "./retry.js";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
+import { collections } from "../../config/db.js";
+
+/* A heartbeat the loop writes itself.
+ *
+ * The admin page reported "Poller: Running" from POLLER_ENABLED and a
+ * count of active watches — configuration, not liveness. If the loop
+ * threw on startup, or the interval died, or the process was wedged, the
+ * page went on saying Running while nothing swept. That is the same
+ * silent-shortfall shape as every other bug in this project: it reports
+ * success and quietly does less.
+ *
+ * Written on every tick, so staleness is measurable: if lastTickAt is
+ * older than a few tick intervals, the loop is not running whatever the
+ * config says.
+ */
+async function beat(patch) {
+  try {
+    await collections.pollerState().updateOne(
+      { _id: "poller" },
+      { $set: { ...patch, at: new Date() } },
+      { upsert: true }
+    );
+  } catch (err) {
+    // Never let bookkeeping stop the sweep it is describing.
+    log.warn("heartbeat write failed", { message: err.message });
+  }
+}
 
 let timer = null;
 let running = false;
@@ -37,12 +64,15 @@ async function tick() {
   // A slow sweep must not stack: skip this tick rather than overlap.
   if (running || stopped) return;
   running = true;
+  const tickStarted = Date.now();
   try {
+    await beat({ lastTickAt: new Date(), state: "working" });
     // Deliver anything that failed last time before looking for more.
     // A caught job the user never received is worth more than a new one.
     await retryFailedSends();
 
     const due = await Queries.findDue(10);
+    await beat({ queueDepth: due.length });
     if (!due.length) return;
 
     log.debug("tick", { due: due.length });
@@ -59,6 +89,7 @@ async function tick() {
         continue;
       }
       try {
+        await beat({ currentQueryId: String(query._id), currentSince: new Date() });
         await sweepQuery(query);
       } catch (err) {
         log.error("sweep threw", { queryId: String(query._id), message: err.message });
@@ -69,6 +100,11 @@ async function tick() {
     log.error("tick failed", { message: err.message });
   } finally {
     running = false;
+    await beat({
+      state: "idle",
+      currentQueryId: null,
+      lastTickMs: Date.now() - tickStarted,
+    });
   }
 }
 

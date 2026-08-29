@@ -67,5 +67,8 @@ export const collections = {
   subscriptions: () => getDb().collection("subscriptions"),
   seenJobs: () => getDb().collection("seenJobs"),
   emailLog: () => getDb().collection("emailLog"),
+  // One document. The poller's own heartbeat, so "is it running?" is a
+  // measurement rather than a restatement of POLLER_ENABLED.
+  pollerState: () => getDb().collection("pollerState"),
   sessions: () => getDb().collection("sessions"),
 };

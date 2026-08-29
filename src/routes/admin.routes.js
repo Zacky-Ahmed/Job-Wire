@@ -156,6 +156,41 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       lastSentAt: lastSend ? rel(lastSend.sentAt) : "never",
     };
 
+    /* Liveness, measured. "Poller: Running" was computed from
+       POLLER_ENABLED and a count of active watches — configuration, not
+       evidence. A loop that threw on startup or wedged mid-sweep still
+       reported Running. The heartbeat the loop writes each tick makes
+       staleness observable. */
+    const beat = await collections.pollerState().findOne({ _id: "poller" });
+    const tickAgeMs = beat?.lastTickAt ? Date.now() - new Date(beat.lastTickAt) : null;
+    const poller = {
+      configured: env.pollerEnabled,
+      lastTickAt: beat?.lastTickAt || null,
+      tickAgeSec: tickAgeMs == null ? null : Math.round(tickAgeMs / 1000),
+      // Three missed ticks is not a blip.
+      stale: tickAgeMs != null && tickAgeMs > env.pollTickSeconds * 3000,
+      never: !beat?.lastTickAt,
+      state: beat?.state || "unknown",
+      queueDepth: beat?.queueDepth ?? null,
+      lastTickMs: beat?.lastTickMs ?? null,
+    };
+
+    /* sourceHealth is written on every sweep but was never displayed, so
+       a board could be failing for weeks while the query showed healthy —
+       exactly the gap it was added to close. */
+    const sourceHealth = [];
+    for (const q of queries) {
+      for (const h of q.sourceHealth || []) {
+        const row = sourceHealth.find((r) => r.source === h.source);
+        if (!row) sourceHealth.push({ source: h.source, ok: h.ok, fails: h.ok ? 0 : 1,
+                                      error: h.error, at: h.at });
+        else {
+          if (!h.ok) { row.fails++; row.ok = false; row.error = h.error; }
+          if (!row.at || (h.at && h.at > row.at)) row.at = h.at;
+        }
+      }
+    }
+
     page(res, "pages/admin", {
       title: "Admin",
       nav: "admin",
@@ -165,6 +200,8 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       people,
       queryRows,
       delivery,
+      poller,
+      sourceHealth,
       // Refusals come back as a query flag so the redirect can explain
       // itself rather than silently doing nothing.
       adminError:
