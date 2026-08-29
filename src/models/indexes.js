@@ -71,6 +71,25 @@ export async function ensureIndexes() {
       { name: "user_recent" }
     )
   );
+  /* Everything that reads emailLog WITHOUT a userId: the admin page's
+     two daily counts, its "last accepted" lookup, and the retry pass
+     scanning for failed and stalled rows. user_recent cannot serve any
+     of them — its leading field is absent from every one of those
+     filters — so all four were collection scans, over a table that only
+     ever grows, on a page loaded after every admin action and on a
+     query the poller runs every single tick.
+
+     One index, not two. status is an equality match in all four and
+     sentAt is the range and the sort in three, so status-then-sentAt is
+     the right order for each of them. An index led by sentAt would
+     serve nothing this one does not, and every send would pay to keep
+     it. */
+  created.push(
+    await collections.emailLog().createIndex(
+      { status: 1, sentAt: 1 },
+      { name: "status_recent" }
+    )
+  );
 
   log.info("indexes ensured", { count: created.length, ttlDays: env.seenJobTtlDays });
   return created;

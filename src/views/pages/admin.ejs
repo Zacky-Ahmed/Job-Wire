@@ -87,11 +87,14 @@
       <div class="row r-admin">
         <div class="role">
           <div class="a"><%= h.source %></div>
-          <div class="b"><%= h.ok ? "answered" : (h.error || "failed") %></div>
+          <%# The verdict is the newest snapshot, so its age belongs next
+              to it: "answered", four days stale, is not reassurance. %>
+          <div class="b"><%= h.ok ? "answered" : (h.error || "failed") %> · <%= h.seen %><%
+            if (h.failing) { %> · failing in <%= h.failing %> of <%= h.total %> search<%= h.total === 1 ? "" : "es" %><% } %></div>
         </div>
         <span>
           <% if (h.ok) { %><span class="pill go">OK</span>
-          <% } else { %><span class="pill sig">Failing<%= h.fails > 1 ? " ×" + h.fails : "" %></span><% } %>
+          <% } else { %><span class="pill sig">Failing</span><% } %>
         </span>
         <span class="muted hide"></span><span class="muted hide"></span>
       </div>

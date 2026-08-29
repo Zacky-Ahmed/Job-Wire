@@ -253,19 +253,50 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
 
     /* sourceHealth is written on every sweep but was never displayed, so
        a board could be failing for weeks while the query showed healthy —
-       exactly the gap it was added to close. */
-    const sourceHealth = [];
+       exactly the gap it was added to close.
+
+       The reducer that closed it then opened a quieter version of the
+       same gap in the other direction. The ok flag was STICKY: one
+       failure, in one query, at any point in the recorded history
+       pinned a board red permanently, while the timestamp beside it
+       went on advancing to the newest entry. A board that failed once
+       and had answered every sweep since read "Failing" next to a fresh
+       time — and an owner who sees that twice learns to ignore the
+       panel, which costs more than not having it, because the real
+       outage looks identical.
+
+       Each query holds a complete snapshot overwritten on every sweep,
+       so the newest entry across every query IS the last result. That
+       is the verdict. How WIDELY a board is failing is a different
+       question and a useful one, so it is counted separately rather
+       than folded in: "failing in 3 of 7 searches" separates a board
+       that is down from one query asking it something it dislikes. The
+       age travels with it, because the newest entry can still be days
+       old if nothing has swept since. */
+    const bySource = new Map();
     for (const q of queries) {
       for (const h of q.sourceHealth || []) {
-        const row = sourceHealth.find((r) => r.source === h.source);
-        if (!row) sourceHealth.push({ source: h.source, ok: h.ok, fails: h.ok ? 0 : 1,
-                                      error: h.error, at: h.at });
-        else {
-          if (!h.ok) { row.fails++; row.ok = false; row.error = h.error; }
-          if (!row.at || (h.at && h.at > row.at)) row.at = h.at;
+        let row = bySource.get(h.source);
+        if (!row) {
+          row = { source: h.source, ok: true, error: null, at: null, failing: 0, total: 0 };
+          bySource.set(h.source, row);
+        }
+        row.total++;
+        if (!h.ok) row.failing++;
+        // Newest wins, and it carries its own verdict with it. Taking
+        // the flag from one entry and the time from another is exactly
+        // what produced a red pill beside a fresh timestamp.
+        if (row.at == null || (h.at && new Date(h.at) > new Date(row.at))) {
+          row.at = h.at || null;
+          row.ok = !!h.ok;
+          row.error = h.error || null;
         }
       }
     }
+    // Failing boards first: the panel is read to find them.
+    const sourceHealth = [...bySource.values()]
+      .sort((a, b) => Number(a.ok) - Number(b.ok) || a.source.localeCompare(b.source))
+      .map((r) => ({ ...r, seen: r.at ? rel(r.at) : "never" }));
 
     page(res, "pages/admin", {
       title: "Admin",
