@@ -70,6 +70,8 @@ email is a wall of stale posts.
 `intern / Sri Lanka` is one query row and one set of requests, fanned out to a
 hundred emails. Load scales with *distinct searches*, not users.
 
+![Identical subscribers share one job query and source fetch, then receive their own alerts.](public/readme/shared-query-alerts-infographic.png)
+
 **Sweep serially.** Ten simultaneous requests from one IP is what a scraper
 looks like. A steady trickle is what a browser looks like.
 
