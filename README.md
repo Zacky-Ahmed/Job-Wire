@@ -19,6 +19,8 @@ By tonight it could be forty applications deep.
 
 ## The whole product, in one hour
 
+![A new opportunity reaches you before the application pile grows.](public/readme/job-window.png)
+
 **09:14:** a role is posted. **09:16:** Job Wire catches it and emails you.
 By 10:14, the application pile may already be too deep to matter.
 
@@ -35,6 +37,8 @@ That number is real: a PickMe internship measured during development took
 One process. A web server and a poller sharing a Mongo pool, because splitting
 them loses the shared connection and the in-memory schedule. That is the
 entire reason this is not serverless.
+
+![Multiple job sources flow through Job Wire's always-on watch and become one email alert.](public/readme/job-wire-architecture.png)
 
 ### The sweep, step by step
 
