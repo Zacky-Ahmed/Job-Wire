@@ -17,7 +17,7 @@ By tonight it could be forty applications deep.
 
 ## The whole product, in one hour
 
-![A new opportunity reaches you before the application pile grows.](public/readme/job-window.png)
+![A timeline from a job being posted to Job Wire alerting you before the application pile grows.](public/readme/application-window-infographic.png)
 
 **09:14:** a role is posted. **09:16:** Job Wire catches it and emails you.
 By 10:14, the application pile may already be too deep to matter.
