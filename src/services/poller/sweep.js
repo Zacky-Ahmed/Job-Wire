@@ -24,6 +24,11 @@ import { log } from "../../utils/logger.js";
 // One request per new job, so this bounds how hard a single sweep can
 // lean on LinkedIn. Anything over the budget is simply refined next time.
 const REFINE_BUDGET = 45;
+/* How many "is it actually closed?" checks one sweep may spend. Each is
+   one request against the job's own page. Bounded because a catch-up
+   sweep could otherwise rediscover hundreds of old postings at once and
+   turn a 100 second sweep into a very long one. */
+const CLOSURE_CHECK_BUDGET = 12;
 
 // Older than this and a match goes on the wire but not into an email.
 // LinkedIn indexes about an hour late, so four hours leaves plenty of
@@ -340,6 +345,43 @@ export async function sweepQuery(query) {
     const at = j.postedAt ? new Date(j.postedAt) : null;
     return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
   });
+  /* Second chance for anything the clock rejected.
+     
+     The age gate above asks "is this old?" when the question that
+     matters is "is this still open?". Those came apart badly: LinkedIn's
+     index runs a median of 27 minutes late and a 90th percentile of two
+     hours, so plenty of live postings reach us past the four hour mark.
+     604 of them in one week were saved to the wire and never emailed —
+     one missed the cutoff by a single minute.
+     
+     LinkedIn states the fact outright on the job's own page, so ask it
+     rather than guess. Only the jobs the clock already rejected are
+     checked, which keeps the cost proportional: the fresh path spends no
+     extra requests at all, and a quiet day spends none either. */
+  const rejected = wanted.filter((j) => !fresh.includes(j));
+  const revived = [];
+  let budget = CLOSURE_CHECK_BUDGET;
+
+  for (const j of rejected) {
+    if (budget <= 0) break;
+    const src = getSource(j.jobId.split(":")[0]);
+    if (!src || typeof src.isClosed !== "function") continue;
+    budget--;
+    const closed = await src.isClosed(j.jobId);
+    // null is "we could not tell". A failed request is not evidence that
+    // a job is open, so it stays withheld — the same rule that stopped
+    // matchedBy:"unverified" being treated as a match.
+    if (closed === false) revived.push(j);
+  }
+
+  if (revived.length) {
+    log.info("older postings confirmed still open — emailing after all", {
+      queryId: String(query._id), revived: revived.length,
+      checked: Math.min(rejected.length, CLOSURE_CHECK_BUDGET),
+    });
+    fresh.push(...revived);
+  }
+
   const stale = wanted.length - fresh.length;
   if (stale) {
     log.info("matched older postings — recorded on the wire, not emailed", {

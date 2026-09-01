@@ -300,3 +300,36 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
 function strip({ _matchedByLinkedIn, ...job }) {
   return job;
 }
+
+/**
+ * Is this posting still accepting applications?
+ *
+ * LinkedIn says so plainly on the job's own page:
+ *
+ *   <span class="closed-job closed-job__flavor …">
+ *     No longer accepting applications
+ *
+ * Worth one request because the alternative is guessing from age, and
+ * age is a bad proxy: LinkedIn's index runs a median of 27 minutes late
+ * and a 90th percentile of two hours, so "old to us" and "closed" are
+ * different facts. 604 live postings in one week were withheld from
+ * email for being past a four hour clock, one of them by 60 seconds.
+ *
+ * Returns null when the answer is unknown — a failed request is not
+ * evidence that a job is closed, and treating it as such would repeat
+ * the matchedBy:"unverified" mistake in a new place.
+ */
+export async function isClosed(jobId) {
+  const raw = String(jobId).replace(/^linkedin:/, "");
+  try {
+    const html = await guardedFetch(DETAIL + encodeURIComponent(raw), hosts, { jitter: true });
+    if (/closed-job|no longer accepting applications/i.test(html)) return true;
+    // A page that parsed but carries no marker is open.
+    return /topcard|job-details|description__text/i.test(html) ? false : null;
+  } catch (err) {
+    log.warn("could not check whether a posting is closed", {
+      jobId, message: err.message,
+    });
+    return null;
+  }
+}
