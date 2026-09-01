@@ -35,7 +35,7 @@ One process. A web server and a poller sharing a Mongo pool, because splitting
 them loses the shared connection and the in-memory schedule. That is the
 entire reason this is not serverless.
 
-![Four job sources flow through the Job Wire service, MongoDB and one alert email.](public/readme/system-flow.svg)
+![Job boards flow through Job Wire, matching and deduplication, then one email alert.](public/readme/system-flow.svg?v=2)
 
 ### The sweep, step by step
 
