@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://jobwire.me">
-  <img src="public/readme/job-wire-banner.png" alt="Job Wire: early job alerts. Be early, by default." width="100%">
+  <img src="public/readme/job-wire-banner-v2.png" alt="Job Wire: early job alerts. Be early, by default." width="100%">
 </a>
 
 # Job Wire: be early, by default.
