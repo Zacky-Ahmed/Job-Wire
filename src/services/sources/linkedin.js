@@ -46,6 +46,26 @@ export const timePrecision = "minute";
 
 const ENDPOINT =
   "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search";
+
+/* The public search PAGE, which is a different surface from the guest
+   API above and does not agree with it.
+   
+   Measured on one sweep, same keyword, same country, same minute:
+   
+     guest API  106 job ids
+     this page   32 job ids
+     in the page but NOT in the API: 25
+   
+   One of those 25 was an "Intern Software Engineer" posted an hour
+   earlier — a plain title match that the API simply never returned, on
+   any of its twelve pages. Two public endpoints, two different answers,
+   and no way to tell from either one that the other has more.
+   
+   It emits the same base-search-card markup, so parse.js reads it
+   unchanged. /jobs/search-results returns a shell with no cards and the
+   lk. subdomain returns fewer than www., so the host and path here are
+   both load-bearing. */
+const PAGE = "https://www.linkedin.com/jobs/search";
 const WINDOW = 86400; // 24h. Narrower windows silently drop recent jobs.
 // The Sri Lanka feed alone is 232 jobs deep. At 10 per page a cap of 10
 // pages saw the first 100 and silently discarded the rest — and because
@@ -58,6 +78,19 @@ const MAX_PAGES = 40;
 // feed. Stopping at the first page that adds nothing new means one
 // hiccup costs every job after it.
 const STALE_PAGES_BEFORE_STOP = 2;
+
+function pageUrlFor({ geoId, keywords, page }) {
+  const geo = findGeo(geoId);
+  if (!geo) throw new Error(`Unknown geoId: ${geoId}`);
+  const p = new URLSearchParams({
+    location: geo.name,
+    geoId: geo.geoId,
+    f_TPR: "r" + WINDOW,
+    start: String(page * pageSize),
+  });
+  if (keywords) p.set("keywords", keywords);
+  return `${PAGE}?${p}`;
+}
 
 function urlFor({ geoId, keywords, page }) {
   const geo = findGeo(geoId);
@@ -129,7 +162,29 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
     ? await collect((p) => urlFor({ geoId, keywords: query, page: p }))
     : new Map();
 
-  const merged = new Map([...everything, ...relevant]);
+  /* The third surface. Supplementary, so a failure here must not cost
+     the sweep the other two — it is unioned in when it works and logged
+     and skipped when it does not. */
+  let fromPage = new Map();
+  if (!matchAll) {
+    try {
+      fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }));
+    } catch (err) {
+      log.warn("linkedin search page failed — continuing on the guest API alone", {
+        message: err.message,
+      });
+    }
+  }
+
+  const merged = new Map([...everything, ...relevant, ...fromPage]);
+  const onlyOnPage = [...fromPage.keys()].filter(
+    (id) => !everything.has(id) && !relevant.has(id)
+  ).length;
+  if (onlyOnPage) {
+    log.info("search page carried jobs the guest API did not return", {
+      onlyOnPage, apiTotal: everything.size + relevant.size,
+    });
+  }
 
   /* LinkedIn's own country filter leaks, and badly: a quarter of the
      matched jobs on a Sri Lanka watch were somewhere else entirely —
@@ -157,7 +212,7 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
     url: j.url,
     postedText: j.postedText || "",
     postedAt: j.postedAt, // resolved by parse.js against the fetch instant
-    _matchedByLinkedIn: relevant.has(j.jobId),
+    _matchedByLinkedIn: relevant.has(j.jobId) || fromPage.has(j.jobId),
   }));
 
   return shaped;
