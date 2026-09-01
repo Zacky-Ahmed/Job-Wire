@@ -252,23 +252,42 @@
         <span class="muted hide tnum" title="last sweep / best ever">
           <%= q.tracked %><span class="lbl">/<%= q.peak %></span>
         </span>
+        <%# Every row draws the SAME controls in the same places. They used
+            to be added and removed per row — no Sweep on a parked search,
+            no Delete while anyone watched — so each row was a different
+            width and the column looked shuffled. A control that does not
+            apply is now disabled and says why on hover, which is also the
+            only version that answers "why does this row have no Delete". %>
         <div class="acts">
-          <form method="post" action="/admin/queries/<%= q.id %>/toggle">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <button class="btn btn-xs" type="submit"><%= q.retired ? 'Resume' : 'Park' %></button>
-          </form>
-          <% if (!q.retired) { %>
+          <div class="acts-r">
+            <form method="post" action="/admin/queries/<%= q.id %>/toggle">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs" type="submit"
+                title="<%= q.retired ? 'Start sweeping this search again' : 'Stop sweeping it' %>"><%= q.retired ? 'Resume' : 'Park' %></button>
+            </form>
             <form method="post" action="/admin/queries/<%= q.id %>/sweep">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="btn btn-xs" type="submit" title="Fetch now instead of waiting for the schedule">Sweep</button>
+              <button class="btn btn-xs" type="submit"<%= q.retired ? ' disabled' : '' %>
+                title="<%= q.retired ? 'Parked searches are not swept — resume it first' : 'Fetch now instead of waiting for the schedule' %>">Sweep</button>
             </form>
-          <% } %>
+            <form method="post" action="/admin/queries/<%= q.id %>/delete"
+              onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs btn-bad" type="submit"<%= q.deletable ? '' : ' disabled' %>
+                title="<%= q.deletable ? 'Nobody is subscribed, so this is safe to remove' : q.subscribers + ' watch this. Their watch is joined to the search, so deleting it would make their watch vanish with no way back — remove the watches first, or merge it.' %>">Delete</button>
+            </form>
+          </div>
           <% if (q.mergeTargets.length) { %>
             <%# Manual on purpose. upsert() already stops NEW duplicates
                 from appearing, but deciding that "internship" and
                 "intern" are one search is a judgement the system should
                 not make on anybody's behalf. Rows marked * fetch
-                provably identical results and are listed first. %>
+                provably identical results and are listed first.
+
+                Its own line, because a dropdown wide enough to read a
+                search in cannot share 116px with three buttons — the
+                first attempt wrapped mid-control and clipped the select
+                to "Merg". %>
             <form class="merge" method="post" action="/admin/queries/<%= q.id %>/merge"
               data-n="<%= q.subscribers %>"
               onsubmit="return this.into.value !== '' && confirm('Move ' + this.dataset.n + ' watcher(s) onto the chosen search, then park this one?')">
@@ -280,14 +299,6 @@
                 <% }) %>
               </select>
               <button class="btn btn-xs" type="submit">Merge</button>
-            </form>
-          <% } %>
-          <% if (q.deletable) { %>
-            <form method="post" action="/admin/queries/<%= q.id %>/delete"
-              onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="btn btn-xs btn-bad" type="submit"
-                title="Only possible because nobody is subscribed">Delete</button>
             </form>
           <% } %>
         </div>

@@ -307,7 +307,11 @@ form{display:flex;flex-direction:column;gap:18px;}
 .row.new{animation:flash 2.2s var(--ease);}
 .r-wire{grid-template-columns:34px 66px minmax(0,1fr) 120px 92px 120px 84px;}
 .r-watch{grid-template-columns:12px minmax(0,1.6fr) minmax(0,1.4fr) 118px 150px;}
-.r-admin{grid-template-columns:minmax(0,1fr) 112px 92px 116px;}
+/* The last column carries Park/Sweep/Delete on one line and the merge
+   control under them, so it is sized for the widest of the two rather
+   than for three buttons. At 116px the merge select wrapped mid-control
+   and every row settled at a different height. */
+.r-admin{grid-template-columns:minmax(0,1fr) 112px 92px 200px;}
 /* A line that repeats what the hidden columns say. Pointless on a wide
    screen, the only way to see it on a narrow one. */
 .c-only{display:none;}
@@ -326,6 +330,22 @@ form{display:flex;flex-direction:column;gap:18px;}
   transition:width .7s var(--ease),background .5s;}
 .gauge i.w{background:var(--amber);} .gauge i.h{background:var(--grad-sig);}
 .acts{display:flex;gap:6px;justify-content:flex-end;}
+/* Two fixed rows, right-aligned, so the buttons line up across every
+   search whatever state it is in. Scoped: .acts is shared with the
+   landing page, the wire and the watch list, which all want one row. */
+.r-admin .acts{flex-direction:column;align-items:flex-end;}
+.acts-r{display:flex;gap:6px;}
+/* Park and Resume share a slot, and Resume is the wider word — without a
+   floor the whole button row shifts 18px left whenever a search is
+   parked, which is most of what made the column look shuffled. */
+.acts-r form:first-child .btn{min-width:68px;}
+/* flex-direction is not optional here: the global form rule two hundred
+   lines up stacks every form into a column, and in a column the select’s
+   flex:1 sizes its HEIGHT — which collapsed it to 15px and dropped the
+   button onto its own line. */
+.merge{display:flex;flex-direction:row;gap:4px;align-items:center;
+  width:100%;justify-content:flex-end;}
+.merge select{flex:1;min-width:0;}
 .row.paused .role .a{color:var(--faint);}
 .kws{display:flex;flex-wrap:wrap;gap:5px;}
 
@@ -421,6 +441,15 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
      and jabbing at twice. */
   .row .btn-xs{height:40px;padding:0 14px;font-size:13px;}
   .acts{gap:8px;}
+  /* The narrow actions column does not exist here — the row collapses to
+     two columns and .acts lands in the first, 169px wide, with 214px of
+     buttons in it. Right-aligned, that overflowed off the left edge of
+     the card and clipped "Park" to "ark". Give it the full row instead
+     and let it read left-to-right like everything else on the card. */
+  .r-admin .acts{grid-column:1/-1;flex-direction:row;flex-wrap:wrap;
+    align-items:center;justify-content:flex-start;margin-top:4px;}
+  .merge{width:100%;flex:none;justify-content:flex-start;}
+  .merge select{height:40px;font-size:13px;padding:0 8px;max-width:220px;}
   .w-acts .btn-bad{min-width:44px;}
 
   .r-wire{
@@ -584,12 +613,12 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .w-x{position:relative;}
 .w-x::after{content:"";position:absolute;inset:-7px;}
 
-/* Fold one search into another. Sits in the same row as Park/Sweep, so
-   it has to stay on one line at the same height as the buttons. */
-.merge{display:flex;gap:4px;align-items:center;}
-.merge select{font-family:var(--mono);font-size:10px;padding:3px 5px;
-  max-width:150px;border-radius:5px;border:1px solid var(--line);
-  background:var(--bg-2);color:var(--ink);}
+/* Fold one search into another. The select truncates with an ellipsis
+   rather than growing: a keyword list can be any length, and the full
+   text is in the option list the moment it is opened. */
+.merge select{font-family:var(--mono);font-size:10px;height:30px;padding:0 4px;
+  border-radius:6px;border:1px solid var(--line);
+  background:var(--bg-2);color:var(--ink);text-overflow:ellipsis;}
 
 .src-wide input{accent-color:var(--sig);}
 .src-wide:has(input:checked){border-color:var(--sig);background:var(--sig-soft);}
