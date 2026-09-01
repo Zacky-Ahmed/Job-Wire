@@ -1,12 +1,10 @@
 <div align="center">
 
-# Job Wire
-
 <a href="https://jobwire.me">
-  <img src="public/readme/job-wire-flow.png" alt="Four job sources flowing through Job Wire into one email alert" width="100%">
+  <img src="public/readme/job-wire-banner.png" alt="Job Wire: early job alerts. Be early, by default." width="100%">
 </a>
 
-### Be early, by default.
+# Job Wire: be early, by default.
 
 **A job you'd be good at was posted while you were reading this.**<br>
 By tonight it could be forty applications deep.
