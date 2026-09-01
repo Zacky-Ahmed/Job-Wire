@@ -38,7 +38,7 @@ One process. A web server and a poller sharing a Mongo pool, because splitting
 them loses the shared connection and the in-memory schedule. That is the
 entire reason this is not serverless.
 
-![Multiple job sources flow through Job Wire's always-on watch and become one email alert.](public/readme/job-wire-architecture.png)
+![Job Wire architecture: job sources feed the poller, which checks MongoDB, normalises new matches and sends email alerts.](public/readme/job-wire-architecture-infographic.png)
 
 ### The sweep, step by step
 
