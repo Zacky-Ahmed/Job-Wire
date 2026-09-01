@@ -389,6 +389,18 @@ hence `plan: starter`.
 
 ---
 
+## Licence
+
+[MIT](LICENSE). Use it, change it, ship it — keep the copyright notice.
+
+One thing the licence does **not** cover, and cannot: it applies to this
+source code, not to the sites it reads. Job Wire polls LinkedIn's public
+guest endpoints, which is against LinkedIn's terms of service. MIT-licensing a
+scraper grants you rights to the scraper; it grants nobody permission to
+scrape. If you fork this, that decision is yours to make and yours to own.
+
+---
+
 <div align="center">
 
 Built because good applications lose to early ones.
