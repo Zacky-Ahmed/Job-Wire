@@ -30,6 +30,13 @@ export async function ensureIndexes() {
       { unique: true, name: "query_canonical_unique" }
     )
   );
+  // How upsert() decides a new watch is the same search as an existing
+  // one. NOT unique: rows that predate it can already collide, and a
+  // unique index would make every such signup fail with a duplicate-key
+  // error instead of joining the row it found. Admin merges the leftovers.
+  created.push(
+    await collections.queries().createIndex({ identityKey: 1 }, { name: "query_identity" })
+  );
   // The poller's hot path: "which queries are due?"
   created.push(
     await collections.queries().createIndex({ nextFetchAt: 1 }, { name: "due_scan" })

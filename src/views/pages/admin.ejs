@@ -219,6 +219,20 @@
               <span class="w-one<%= w.active ? '' : ' held' %>"
                 title="<%= w.active ? 'Watching' : 'Paused by them' %>">
                 <%= w.email %><span class="w-lbl"><%= w.label %></span>
+                <%# The address goes in a data attribute, not into the
+                    onsubmit string: o'brien@x.com is a valid address and
+                    EJS escapes the quote to &#39;, which the browser
+                    decodes back to ' while parsing the attribute — ending
+                    the JS literal early, so confirm() never ran and the
+                    form submitted straight through. Same trap as the
+                    account delete above. %>
+                <form method="post" action="/admin/watches/<%= w.id %>/delete"
+                  data-who="<%= w.email %>"
+                  onsubmit="return confirm('Remove ' + this.dataset.who + ' from this search? Their account and their other watches are untouched.')">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="w-x" type="submit" title="Remove this watch"
+                    aria-label="Remove <%= w.email %> from this search">&times;</button>
+                </form>
               </span>
             <% }) %>
           </div>
@@ -229,6 +243,11 @@
           <% } else if (q.stalled) { %><span class="pill sig" title="Overdue by <%= q.overdueMin %> min">Stalled</span>
           <% } else if (q.failCount) { %><span class="pill amber"><%= q.failCount %> fails</span>
           <% } else { %><span class="pill go">Healthy</span><% } %>
+          <%# Orthogonal to the state above: a duplicate can be perfectly
+              healthy and still be a second identical fetch in a cycle
+              everybody else is queued behind. %>
+          <% if (q.duplicate) { %><span class="pill amber"
+            title="Another search fetches exactly the same thing — merge them">Duplicate</span><% } %>
         </span>
         <span class="muted hide tnum" title="last sweep / best ever">
           <%= q.tracked %><span class="lbl">/<%= q.peak %></span>
@@ -242,6 +261,25 @@
             <form method="post" action="/admin/queries/<%= q.id %>/sweep">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button class="btn btn-xs" type="submit" title="Fetch now instead of waiting for the schedule">Sweep</button>
+            </form>
+          <% } %>
+          <% if (q.mergeTargets.length) { %>
+            <%# Manual on purpose. upsert() already stops NEW duplicates
+                from appearing, but deciding that "internship" and
+                "intern" are one search is a judgement the system should
+                not make on anybody's behalf. Rows marked * fetch
+                provably identical results and are listed first. %>
+            <form class="merge" method="post" action="/admin/queries/<%= q.id %>/merge"
+              data-n="<%= q.subscribers %>"
+              onsubmit="return this.into.value !== '' && confirm('Move ' + this.dataset.n + ' watcher(s) onto the chosen search, then park this one?')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <select name="into" aria-label="Merge this search into">
+                <option value="">Merge into&hellip;</option>
+                <% q.mergeTargets.forEach(function (t) { %>
+                  <option value="<%= t.id %>"><%= t.same ? "* " : "" %><%= t.label %> (<%= t.watchers %>)</option>
+                <% }) %>
+              </select>
+              <button class="btn btn-xs" type="submit">Merge</button>
             </form>
           <% } %>
           <% if (q.deletable) { %>

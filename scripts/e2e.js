@@ -248,6 +248,8 @@ const attacks = [
   ["park a query",           `/admin/queries/${anyQuery._id}/toggle`],
   ["force a sweep",          `/admin/queries/${anyQuery._id}/sweep`],
   ["delete a query",         `/admin/queries/${anyQuery._id}/delete`],
+  ["remove somebody's watch", `/admin/watches/${anyQuery._id}/delete`],
+  ["merge two searches",      `/admin/queries/${anyQuery._id}/merge`],
 ];
 html = await (await get("/wire")).text();
 token = csrf(html);
@@ -310,6 +312,48 @@ r = await post("/reset", { _csrf: csrf(html), email: EMAIL,
 ok(/not valid/.test(await r.text()), "a reset with no pending request is refused");
 const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
+
+
+// One search, however it is spelled.
+//
+// Every one of these used to create a separate query row issuing an
+// identical fetch, and sweeps run one at a time — so each duplicate put
+// another two minutes in front of everybody else's watch.
+const { keywords: kwClean } = await import("../src/utils/sanitize.js");
+const kwA = kwClean("Intern, intern , INTERN");
+ok(kwA.length === 1, `"Intern, intern, INTERN" is one keyword (got ${kwA.length})`);
+ok(kwClean("full  stack")[0] === "full stack", "a double space is not a second keyword");
+ok(canonicalKey(["b", "A"]) === canonicalKey(["a", "B"]),
+  "order and case do not change the key");
+
+const QMod = await import("../src/models/queries.js");
+ok(QMod.identityOf({ keywords: ["Intern"], geoId: "x" }) ===
+   QMod.identityOf({ keywords: ["intern "], geoId: "x" }),
+  "identityOf ignores case and padding");
+ok(QMod.identityOf({ keywords: ["a"], geoId: "x", matchAll: true }) ===
+   QMod.identityOf({ keywords: ["z"], geoId: "x", matchAll: true }),
+  "two match-all searches in one country are the same search");
+ok(QMod.identityOf({ keywords: ["a"], geoId: "x" }) !==
+   QMod.identityOf({ keywords: ["a"], geoId: "y" }),
+  "the same words in another country are not");
+
+// A watch created under a legacy key must JOIN the modern row, not sit
+// beside it. This is the case that produced three copies of "intern".
+const legacyGeo = "e2e-legacy";
+const legacy = await collections.queries().insertOne({
+  keywordsKey: "intern@@linkedin", keywords: ["intern"], geoId: legacyGeo,
+  matchAll: false, createdAt: new Date(), nextFetchAt: new Date(), everyMinutes: 5,
+});
+const joined = await QMod.upsert({
+  keywordsKey: canonicalKey(["intern"]), keywords: ["intern"], geoId: legacyGeo,
+  location: "E2E", everyMinutes: 5, sources: ["linkedin"], matchAll: false,
+});
+ok(String(joined._id) === String(legacy.insertedId),
+  "a new watch joins the legacy row instead of splitting the search");
+const legacyCount = await collections.queries().countDocuments({ geoId: legacyGeo });
+ok(legacyCount === 1, `and no second row was created (found ${legacyCount})`);
+await collections.queries().deleteMany({ geoId: legacyGeo });
+
 
 
 // A sweep that finishes AFTER its query is retired must not revive it.

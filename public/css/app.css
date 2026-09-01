@@ -564,8 +564,10 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
   background:color-mix(in srgb,var(--amber) 14%,transparent);
   border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);cursor:help;}
 
-/* Who is on a shared search. Reads as a list of people, not as chips to
-   click — nothing here is interactive. */
+/* Who is on a shared search, each with the one control an owner needs:
+   remove this person from this search. The chip stays quiet — the x only
+   gains contrast on hover, so the list still reads as people rather than
+   as a row of buttons. */
 .watchers{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;}
 .w-one{display:inline-flex;align-items:baseline;gap:6px;font-family:var(--mono);
   font-size:10px;padding:2px 7px;border-radius:4px;
@@ -573,6 +575,21 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .w-one.held{background:var(--bg-2);color:var(--faint);}
 .w-lbl{opacity:.65;}
 .w-none{font-family:var(--mono);font-size:10px;color:var(--faint);}
+.w-one form{display:inline;}
+.w-x{background:none;border:0;padding:0 0 0 2px;cursor:pointer;font:inherit;
+  line-height:1;color:currentColor;opacity:.45;}
+.w-x:hover,.w-x:focus-visible{opacity:1;color:var(--bad);}
+/* Bigger than it looks: the glyph is 10px, and a control this small is
+   unhittable on a phone without padding the tap target out to 24px. */
+.w-x{position:relative;}
+.w-x::after{content:"";position:absolute;inset:-7px;}
+
+/* Fold one search into another. Sits in the same row as Park/Sweep, so
+   it has to stay on one line at the same height as the buttons. */
+.merge{display:flex;gap:4px;align-items:center;}
+.merge select{font-family:var(--mono);font-size:10px;padding:3px 5px;
+  max-width:150px;border-radius:5px;border:1px solid var(--line);
+  background:var(--bg-2);color:var(--ink);}
 
 .src-wide input{accent-color:var(--sig);}
 .src-wide:has(input:checked){border-color:var(--sig);background:var(--sig-soft);}

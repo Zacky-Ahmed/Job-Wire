@@ -63,11 +63,16 @@ export function buildSearchUrl({ keywords, geoId, sweepMinutes = 5, page = 0 }) 
 // added: the same search would hash differently before and after, and
 // two people running it would stop sharing a query row.
 export function canonicalKey(keywords, sources = []) {
-  const kw = (Array.isArray(keywords) ? keywords : [keywords])
-    .map((k) => String(k).trim().toLowerCase())
-    .filter(Boolean)
-    .sort()
-    .join("|");
+  // Normalised hard, because this string IS the identity of a shared
+  // query and every distinct value is another sweep in a cycle everyone
+  // else queues behind. "Intern", "intern " and "intern, Intern" are one
+  // search to the person typing them; they used to be three rows. Runs of
+  // inner whitespace count too — "full  stack" is nobody's second search.
+  const kw = [...new Set(
+    (Array.isArray(keywords) ? keywords : [keywords])
+      .map((k) => String(k).trim().toLowerCase().replace(/\s+/g, " "))
+      .filter(Boolean)
+  )].sort().join("|");
   const src = [...sources].map(String).sort().join("+");
   return src ? `${kw}@@${src}` : kw;
 }

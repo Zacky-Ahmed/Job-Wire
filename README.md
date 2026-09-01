@@ -278,7 +278,40 @@ ADMIN_EMAILS=you@example.com,someone@else.com
 
 Nothing with write access to Mongo can promote itself, and there is no
 first-admin bootstrap problem. A non-admin gets **404, not 403**; "forbidden"
-confirms the page is real.
+confirms the page is real. Every mutating admin route re-checks on its own —
+hiding a page is not access control.
+
+The actions exist because a real support case needs each of them:
+
+| | |
+|---|---|
+| **Verify** | a code landed in spam, so the account is locked out of itself |
+| **Delete account** | a spam signup, or someone asking to be removed |
+| **Remove watch** | one person off one search — a bouncing address, or a request by mail from somebody who cannot sign in. The account and their other watches survive |
+| **Park / Resume** | stop a search nobody needs from spending requests. Refused while anyone is actively watching |
+| **Sweep** | check a source is alive without waiting for the schedule |
+| **Merge** | fold one search into another, moving its watchers across |
+| **Delete search** | clear a parked row. Refused while anyone is subscribed |
+
+### Why merge exists
+
+Sweeps run one at a time, so two rows that fetch the same thing are not merely
+untidy — each one puts another sweep in front of everybody else's watch. Three
+copies of `intern` stretched a five-minute cycle to nine.
+
+New duplicates can no longer appear: `upsert()` matches on an **identityKey**
+(normalised keywords + country + match-all) rather than on the display key, so a
+watch joins the existing search however it was spelled — `Intern`, `intern `,
+`intern, INTERN` and the legacy `intern@@linkedin` all land on one row. Two
+match-all watches in one country are also the same search, because
+`sweep.js` passes no keywords at all for those.
+
+Merge is for what normalisation cannot decide. `internship` and `intern` are
+different strings, and only a person can say they are one search — so the button
+is manual, lists same-country rows only, and marks provably identical ones with
+`*`. Nobody loses a watch: subscriptions are repointed, and where that would
+give one person the same watch twice the redundant row goes rather than the
+search. The source is parked, not deleted, so the result can be looked at first.
 
 ---
 

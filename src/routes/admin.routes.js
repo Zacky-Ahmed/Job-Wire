@@ -13,6 +13,10 @@
 //   delete   a spam signup, or someone asking to be removed
 //   park     a query nobody needs, still spending requests
 //   sweep    check a source is alive without waiting for the schedule
+//   unwatch  drop ONE person's watch — the support case is a bounced
+//            address or a watch somebody asks to be taken off by mail,
+//            neither of which they can do without signing in
+//   merge    fold one search into another, moving its watchers across
 //
 // What it deliberately cannot do: change anyone's password, read anyone's
 // mail, or promote an admin. Admin comes from the environment, so this
@@ -103,6 +107,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       const k = String(s.queryId);
       if (!subsByQuery.has(k)) subsByQuery.set(k, []);
       subsByQuery.get(k).push({
+        id: String(s._id),
         email: emailById.get(String(s.userId)) || "(deleted account)",
         label: s.label,
         active: s.active !== false,
@@ -123,6 +128,18 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         isAdmin: env.adminEmails.includes(String(u.email).toLowerCase()),
       };
     });
+
+    /* Which rows are the SAME SEARCH written two ways.
+       Grouped here rather than eyeballed, because the duplicates that
+       actually cost something never look alike: "intern",
+       "intern@@linkedin" and "intern@@keells+linkedin" read as three
+       different searches and issued three identical fetches. */
+    const identityGroups = new Map();
+    for (const q of queries) {
+      const k = q.identityKey || Queries.identityOf(q);
+      if (!identityGroups.has(k)) identityGroups.set(k, []);
+      identityGroups.get(k).push(q);
+    }
 
     const queryRows = queries.map((q) => {
       const watchers = subsByQuery.get(String(q._id)) || [];
@@ -156,6 +173,25 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         orphaned: subscribers === 0 && !!q.nextFetchAt,
         stalled: overdueMin !== null && overdueMin > Math.max(15, q.everyMinutes * 3),
         overdueMin,
+        // True when another row fetches exactly the same thing. Shown as
+        // a badge so it is visible without reading every key on the page.
+        duplicate: (identityGroups.get(q.identityKey || Queries.identityOf(q)) || []).length > 1,
+        /* Where this search could be folded. Same country only: sources
+           are derived from the country and a search fetches that
+           country's pages, so merging across one would hand every
+           watcher a region they did not ask for. Within a country it is
+           a judgement call, which is the whole reason it is a manual
+           button and not something the system does behind the admin. */
+        mergeTargets: queries
+          .filter((o) => String(o._id) !== qid && o.geoId === q.geoId)
+          .map((o) => ({
+            id: String(o._id),
+            label: (o.keywords || []).join(", ") || "everything",
+            same: (o.identityKey || Queries.identityOf(o)) ===
+                  (q.identityKey || Queries.identityOf(q)),
+            watchers: (subsByQuery.get(String(o._id)) || []).length,
+          }))
+          .sort((a, b) => Number(b.same) - Number(a.same) || b.watchers - a.watchers),
       };
     });
 
@@ -318,8 +354,20 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         // Emitted by the park guard since the day it was added, and
         // mapped nowhere — so the refusal it exists to explain looked
         // exactly like a dead button.
-        req.query.err === "watched" ? "Someone is actively watching that search, so parking it would stop their alerts. Ask them to pause the watch first." : null,
-      adminNotice: req.query.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." : null,
+        req.query.err === "watched" ? "Someone is actively watching that search, so parking it would stop their alerts. Ask them to pause the watch first." :
+        req.query.err === "selfmerge" ? "A search cannot be merged into itself." :
+        req.query.err === "geo" ? "Those two searches are in different countries. Merging them would change which region every watcher is following." : null,
+      adminNotice:
+        req.query.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
+        req.query.unwatched ? "Watch removed. If that was the last one on the search, it has stopped sweeping." :
+        // Both halves are worth saying: "moved" is who came across,
+        // "dropped" is who was already on the target and would otherwise
+        // have been sent two copies of every job.
+        req.query.merged !== undefined
+          ? `Merged. ${req.query.merged} watch(es) moved across` +
+            (Number(req.query.dropped) ? `, ${req.query.dropped} duplicate watch(es) removed` : "") +
+            ". The old search is parked — delete it when the move looks right."
+          : null,
       totals: {
         users: userCount,
         verified: verifiedCount,
@@ -504,5 +552,124 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
       keywords: (q.keywords || []).join("+") || "everything", jobsDropped: jobs,
     });
     res.redirect("/admin");
+  } catch (err) { next(err); }
+});
+
+
+/**
+ * Remove ONE person's watch.
+ *
+ * The account survives; only the subscription goes. This is the shape
+ * every support request about watches has actually had — an address that
+ * keeps bouncing, or somebody asking by mail to be taken off a search
+ * they cannot sign in to remove themselves. Deleting the whole account
+ * for that is a bigger hammer than the situation deserves, and deleting
+ * the query is refused outright while anyone is on it.
+ *
+ * syncSchedule afterwards is the point of doing it here rather than in
+ * the database by hand: if that was the last active watcher, the search
+ * stops sweeping in the same breath instead of running on for nobody.
+ */
+adminRoutes.post("/admin/watches/:id/delete", ...guard, async (req, res, next) => {
+  try {
+    const id = oid(req.params.id);
+    if (!id) return res.redirect("/admin");
+    const sub = await collections.subscriptions().findOne({ _id: id });
+    if (!sub) return res.redirect("/admin");
+    const u = await collections.users().findOne(
+      { _id: sub.userId }, { projection: { email: 1 } });
+
+    await collections.subscriptions().deleteOne({ _id: id });
+    await Subs.syncSchedule(sub.queryId);
+
+    log.warn("ADMIN removed somebody's watch", {
+      by: req.user.email, account: u?.email || String(sub.userId), watch: sub.label,
+    });
+    res.redirect("/admin?unwatched=1");
+  } catch (err) { next(err); }
+});
+
+/**
+ * Fold one search into another, taking its watchers with it.
+ *
+ * The manual counterpart to what upsert() now does on its own. New
+ * watches join an existing search by identityKey, so fresh duplicates
+ * cannot appear — but rows created under the old scheme are already
+ * split, and no amount of correctness at the front door merges those.
+ * This is the door for them, and for the judgement calls the system
+ * should not be making by itself: "internship" and "intern" are not the
+ * same string and a person has to decide they are the same search.
+ *
+ * Nobody loses a watch. Subscriptions are repointed at the target, and
+ * where that would give one person the same watch twice the redundant
+ * row is dropped rather than the search — with the watch left switched
+ * on if either copy was on, since the surprise worth avoiding is alerts
+ * going quiet, not an extra one arriving.
+ *
+ * seenJobs stay with their own query and are not copied across. The wire
+ * scopes every watch to its own createdAt, so a repointed watcher sees
+ * what the target found from now on, which is what they were getting
+ * anyway — the two rows were fetching the same jobs.
+ *
+ * The source is parked, not deleted, so the merge can be looked at
+ * before anything is destroyed. Deleting it afterwards is the existing
+ * button, which already refuses while a subscriber remains.
+ */
+adminRoutes.post("/admin/queries/:id/merge", ...guard, async (req, res, next) => {
+  try {
+    const from = oid(req.params.id);
+    const into = oid(req.body.into);
+    if (!from || !into) return res.redirect("/admin");
+    if (String(from) === String(into)) return res.redirect("/admin?err=selfmerge");
+
+    const [src, dst] = await Promise.all([
+      collections.queries().findOne({ _id: from }),
+      collections.queries().findOne({ _id: into }),
+    ]);
+    if (!src || !dst) return res.redirect("/admin");
+
+    /* Refused across countries, and this is not caution for its own
+       sake: sources are chosen by country and each search fetches that
+       country's pages, so merging Sri Lanka into Germany would silently
+       swap every watcher's region for one they never asked for. */
+    if (src.geoId !== dst.geoId) {
+      log.warn("ADMIN tried to merge across countries", {
+        by: req.user.email, from: src.location, into: dst.location,
+      });
+      return res.redirect("/admin?err=geo");
+    }
+
+    const subs = await collections.subscriptions().find({ queryId: from }).toArray();
+    let moved = 0, dropped = 0;
+    for (const sub of subs) {
+      // Re-checked per subscription: two rows belonging to the same
+      // person both look movable until the first one lands.
+      const existing = await collections.subscriptions().findOne({
+        userId: sub.userId, queryId: into,
+      });
+      if (existing) {
+        if (sub.active && !existing.active) {
+          await collections.subscriptions().updateOne(
+            { _id: existing._id }, { $set: { active: true } });
+        }
+        await collections.subscriptions().deleteOne({ _id: sub._id });
+        dropped++;
+      } else {
+        await collections.subscriptions().updateOne(
+          { _id: sub._id }, { $set: { queryId: into } });
+        moved++;
+      }
+    }
+
+    await Subs.syncSchedule(from);
+    await Subs.syncSchedule(into);
+
+    log.warn("ADMIN merged two searches", {
+      by: req.user.email,
+      from: (src.keywords || []).join("+") || "everything",
+      into: (dst.keywords || []).join("+") || "everything",
+      location: src.location, moved, dropped,
+    });
+    res.redirect(`/admin?merged=${moved}&dropped=${dropped}`);
   } catch (err) { next(err); }
 });

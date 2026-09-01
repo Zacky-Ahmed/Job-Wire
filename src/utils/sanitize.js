@@ -39,12 +39,28 @@ export function int(v, { min = 0, max = Number.MAX_SAFE_INTEGER, fallback = min 
 
 /** Comma-separated keywords -> clean array. Caps count and length. */
 export function keywords(v, { maxItems = 8, maxLen = 60 } = {}) {
-  return str(v, { max: 600 })
-    .split(",")
-    .map((k) => k.trim().replace(/[^\p{L}\p{N}\s+#.&/-]/gu, ""))
-    .filter(Boolean)
-    .slice(0, maxItems)
-    .map((k) => k.slice(0, maxLen));
+  const out = [];
+  const seen = new Set();
+  for (const raw of str(v, { max: 600 }).split(",")) {
+    const k = raw
+      .trim()
+      .replace(/[^\p{L}\p{N}\s+#.&/-]/gu, "")
+      // One space between words. Typing two is invisible on screen and
+      // produced a keyword that matched nothing a job title contains.
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, maxLen);
+    if (!k) continue;
+    // Case-insensitively unique. "Intern, intern" used to be kept as two
+    // keywords, giving the key "intern|intern" — a shared query separate
+    // from "intern", sweeping the same jobs on its own schedule.
+    const same = k.toLowerCase();
+    if (seen.has(same)) continue;
+    seen.add(same);
+    out.push(k);
+    if (out.length >= maxItems) break;
+  }
+  return out;
 }
 
 /**
