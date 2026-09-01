@@ -15,6 +15,9 @@ import { signupLimiter, signinLimiter, verifyLimiter, resendLimiter,
   forgotLimiter, resetLimiter } from "../middleware/rateLimit.js";
 import { log } from "../utils/logger.js";
 
+const STALE_NOTICE =
+  "Your session had expired, so that submission was not accepted. Nothing is wrong — please try again.";
+
 export const authRoutes = Router();
 
 const show = (res, view, extra = {}) =>
@@ -29,7 +32,8 @@ const show = (res, view, extra = {}) =>
 
 // ── signup ───────────────────────────────────────────────────────
 authRoutes.get("/signup", redirectIfAuthed, (req, res) =>
-  show(res, "signup", { title: "Create account" })
+  show(res, "signup", { title: "Create account",
+    notice: req.query.stale ? STALE_NOTICE : undefined })
 );
 
 authRoutes.post("/signup", redirectIfAuthed, signupLimiter, async (req, res, next) => {
@@ -181,8 +185,14 @@ authRoutes.post("/resend", resendLimiter, async (req, res, next) => {
 });
 
 // ── signin ───────────────────────────────────────────────────────
+/* ?stale=1 is set by the csrf middleware when it bounces a form POST
+   whose session had expired. Saying so beats leaving the reader to guess
+   why their password "did not work". */
 authRoutes.get("/signin", redirectIfAuthed, (req, res) =>
-  show(res, "signin", { title: "Sign in" })
+  show(res, "signin", {
+    title: "Sign in",
+    notice: req.query.stale ? STALE_NOTICE : undefined,
+  })
 );
 
 authRoutes.post("/signin", redirectIfAuthed, signinLimiter, async (req, res, next) => {

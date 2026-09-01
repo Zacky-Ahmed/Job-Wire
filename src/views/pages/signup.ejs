@@ -6,6 +6,10 @@
        inbox is worse than no alert at all.</p>
   </div>
 
+  <%# csrf bounces an expired-session POST back here with ?stale=1;
+      the route turns that into a notice so the reader is not left
+      guessing why their details "did not work". %>
+  <% if (typeof notice !== 'undefined' && notice) { %><div class="banner go"><%= notice %></div><% } %>
   <% if (error) { %><div class="banner err"><%= error %></div><% } %>
 
   <div class="f">
