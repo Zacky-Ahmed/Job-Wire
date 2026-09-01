@@ -312,6 +312,33 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// A sweep that finishes AFTER its query is retired must not revive it.
+//
+// syncSchedule parks a search by setting nextFetchAt to null, but a sweep
+// already in flight lands in reschedule() afterwards. That used to re-arm
+// the row unconditionally, so a search with zero subscribers went back into
+// the rotation and swept for ever — it happened in production on
+// 2026-09-01 and cost a third of the cycle.
+const Queries = await import("../src/models/queries.js");
+const ghost = await collections.queries().insertOne({
+  keywordsKey: `e2e-ghost-${Date.now()}`, keywords: ["ghost"], geoId: "e2e",
+  matchAll: false, createdAt: new Date(), nextFetchAt: null, retiredAt: new Date(),
+});
+await Queries.reschedule(ghost.insertedId, { everyMinutes: 5, tracked: 7 });
+const afterGhost = await collections.queries().findOne({ _id: ghost.insertedId });
+ok(afterGhost.nextFetchAt === null, "a retired query is not revived by a late sweep");
+ok(afterGhost.trackedCount === 7, "but its last result is still recorded");
+
+const alive = await collections.queries().insertOne({
+  keywordsKey: `e2e-alive-${Date.now()}`, keywords: ["alive"], geoId: "e2e",
+  matchAll: false, createdAt: new Date(), nextFetchAt: new Date(0),
+});
+await Queries.reschedule(alive.insertedId, { everyMinutes: 5, tracked: 3 });
+const afterAlive = await collections.queries().findOne({ _id: alive.insertedId });
+ok(afterAlive.nextFetchAt > new Date(), "a live query is still rescheduled");
+await collections.queries().deleteMany({ _id: { $in: [ghost.insertedId, alive.insertedId] } });
+
+
 // cleanup
 //
 // Scoped to THIS run's account only. Two earlier versions were wrong:

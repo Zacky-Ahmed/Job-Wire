@@ -62,9 +62,8 @@ export function findDue(limit = 20) {
     .toArray();
 }
 
-export function reschedule(id, { everyMinutes, primed, tracked }) {
-  const next = new Date(Date.now() + everyMinutes * 60000);
-  const set = { lastFetchedAt: new Date(), nextFetchAt: next, failCount: 0 };
+export async function reschedule(id, { everyMinutes, primed, tracked }) {
+  const set = { lastFetchedAt: new Date(), failCount: 0 };
   if (primed !== undefined) set.primed = primed;
   // How many the LAST sweep saw, not a running total. $inc made this
   // climb forever — 574 for a search that returns about 25 — which made
@@ -74,7 +73,29 @@ export function reschedule(id, { everyMinutes, primed, tracked }) {
   // High-water mark, so a sweep can tell "quiet morning" from "we went
   // blind". $max both compares and initialises on first write.
   if (tracked !== undefined) update.$max = { trackedPeak: tracked };
-  return collections.queries().updateOne({ _id: id }, update);
+
+  // What the sweep saw is recorded either way — a row on its way out still
+  // reports its last result to the health page.
+  await collections.queries().updateOne({ _id: id }, update);
+
+  // Re-arming, though, is conditional on the row still being scheduled.
+  //
+  // nextFetchAt:null is how syncSchedule parks a search nobody watches. A
+  // sweep already in flight at that moment used to land here afterwards and
+  // set nextFetchAt again, reviving a search with zero subscribers — which
+  // then swept for ever, taking a slot in the cycle from watches that had
+  // somebody behind them. It happened for real on 2026-09-01: the duplicate
+  // merge retired "intern@@linkedin" at 14:26:59 and an in-flight sweep
+  // rescheduled it at 14:37:15, so a third of the cycle was being spent on
+  // a search no account was subscribed to.
+  //
+  // The same race fires whenever anyone deletes or pauses their last watch
+  // mid-sweep, so this is not merely a migration artefact.
+  const next = new Date(Date.now() + everyMinutes * 60000);
+  return collections.queries().updateOne(
+    { _id: id, nextFetchAt: { $ne: null } },
+    { $set: { nextFetchAt: next } },
+  );
 }
 
 /**
