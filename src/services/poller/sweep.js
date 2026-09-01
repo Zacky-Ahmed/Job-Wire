@@ -51,11 +51,22 @@ export async function sweepQuery(query) {
   const fetchedMap = new Map();
   const failures = [];
 
-  for (const sourceId of sourceIds) {
+  /* The four boards are fetched CONCURRENTLY, and the reason this is safe
+     is worth stating: the serial rule exists so that one HOST never sees a
+     burst from us. These are four different hosts. Walking LinkedIn's
+     pages one at a time is what matters, and that still happens inside
+     each adapter — what changes is that we no longer make topjobs sit and
+     wait for LinkedIn to finish.
+
+     It was costing real time. A sweep measured 133 seconds while running
+     these end to end, and four searches at that rate drift to a nine
+     minute cycle against a five minute schedule. The queue was the
+     largest part of the delay this system adds on top of LinkedIn's own. */
+  await Promise.all(sourceIds.map(async (sourceId) => {
     const source = getSource(sourceId);
     if (!source) {
       log.warn("watch names a source that no longer exists", { sourceId });
-      continue;
+      return;
     }
 
     // Sources page 10-ish at a time, so keep asking until a page adds
@@ -72,6 +83,9 @@ export async function sweepQuery(query) {
         });
         if (!jobs.length) break;
 
+        // Map writes are not interleaved: each adapter awaits its own
+        // network calls, and JS resumes one continuation at a time, so
+        // there is no torn read here even with four running.
         const before = fetchedMap.size;
         jobs.forEach((j) => fetchedMap.set(j.jobId, j));
         if (fetchedMap.size === before) break;
@@ -83,7 +97,7 @@ export async function sweepQuery(query) {
         reason: err.name, message: err.message,
       });
     }
-  }
+  }));
 
   // Only treat the sweep as failed if EVERY source failed. One site
   // rate-limiting us should not park a watch that has other sources.
