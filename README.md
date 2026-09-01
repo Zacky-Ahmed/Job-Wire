@@ -153,10 +153,29 @@ something that could never match.
 
 | Source | Coverage | How data arrives | Lag |
 |---|---|---|---|
-| LinkedIn | every country | guest endpoint, HTML fragments | minutes to 1h+ |
+| LinkedIn | every country | 3 public surfaces, HTML | **median 27 min** |
 | topjobs.lk | Sri Lanka | server-rendered listing pages | instant |
 | John Keells Group | Sri Lanka | server-rendered careers search | instant |
 | MAS Holdings | Sri Lanka | Oracle Cloud Recruiting REST API | instant |
+
+**That LinkedIn figure is measured, not promised.** Over 442 postings in a day:
+
+```
+best         1 min
+median      27 min      ← the number that actually matters
+75th pct    61 min
+90th pct   121 min
+under 15m      31%
+```
+
+Almost none of it is the sweep. A sweep takes ~100 seconds against a 5-minute
+schedule, so the poller adds single-digit minutes; the rest is LinkedIn's own
+public index, verified by walking their feed and finding jobs absent that were
+plainly visible to a signed-in browser. The three local boards have no such lag
+— they reach you within one sweep.
+
+Say the smaller true number rather than the larger nice one. "Within minutes"
+was on this page for weeks and was accurate about a third of the time.
 
 Adding a board is one file in `services/sources/`. Nothing downstream — dedupe,
 storage, email, the UI — knows which site a job came from. Sources are resolved
