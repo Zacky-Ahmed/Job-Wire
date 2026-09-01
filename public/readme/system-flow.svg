@@ -1,28 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
-  <title id="title">How Job Wire works</title>
-  <desc id="desc">Four job sources feed a single Job Wire process. It stores jobs in MongoDB, detects new matching roles, and sends one email alert.</desc>
-  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff7655"/></marker></defs>
-  <rect width="1200" height="680" rx="24" fill="#0d1422"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">How Job Wire turns listings into an alert</title>
+  <desc id="desc">Job boards are fetched by Job Wire, checked against stored watches and previously seen jobs, then new matches are sent in one email alert.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff7655"/></marker>
+    <marker id="arrow-both" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8190aa"/></marker>
+  </defs>
+  <rect width="1200" height="500" rx="24" fill="#0d1422"/>
   <g font-family="Arial, sans-serif">
-    <text x="64" y="66" fill="#f8fafc" font-size="28" font-weight="700">One process, one clear path to an alert</text>
-    <text x="64" y="100" fill="#9ba9c3" font-size="18">Sources are normalised, deduplicated, matched and delivered in the same always-on service.</text>
+    <text x="60" y="64" fill="#f8fafc" font-size="28" font-weight="700">A listing becomes an alert in four steps</text>
+    <text x="60" y="98" fill="#9ba9c3" font-size="18">The poller fetches listings, checks what is new, and emails only matching jobs.</text>
+
     <g fill="#161f32" stroke="#34415b" stroke-width="2">
-      <rect x="64" y="170" width="190" height="70" rx="14"/><rect x="64" y="260" width="190" height="70" rx="14"/><rect x="64" y="350" width="190" height="70" rx="14"/><rect x="64" y="440" width="190" height="70" rx="14"/>
-      <rect x="396" y="205" width="320" height="260" rx="20" fill="#17233a" stroke="#ff7655"/>
-      <rect x="820" y="215" width="260" height="110" rx="18"/><rect x="820" y="380" width="260" height="110" rx="18"/>
+      <rect x="60" y="168" width="210" height="150" rx="16"/>
+      <rect x="350" y="168" width="210" height="150" rx="16"/>
+      <rect x="640" y="168" width="230" height="150" rx="16"/>
+      <rect x="950" y="168" width="190" height="150" rx="16"/>
+      <rect x="640" y="384" width="230" height="72" rx="16"/>
     </g>
-    <g fill="#f8fafc" font-size="21" font-weight="700"><text x="94" y="214">LinkedIn</text><text x="94" y="304">topjobs.lk</text><text x="94" y="394">John Keells</text><text x="94" y="484">MAS Holdings</text></g>
-    <g fill="#9ba9c3" font-size="16"><text x="94" y="235">global listings</text><text x="94" y="325">Sri Lanka</text><text x="94" y="415">Sri Lanka</text><text x="94" y="505">Sri Lanka</text></g>
-    <path d="M254 205H350V335H396M254 295H350M254 385H350M254 475H350" fill="none" stroke="#697790" stroke-width="3" marker-end="url(#arrow)"/>
-    <text x="556" y="255" text-anchor="middle" fill="#ffb29f" font-size="16" font-weight="700">JOB WIRE</text>
-    <text x="556" y="305" text-anchor="middle" fill="#f8fafc" font-size="25" font-weight="700">Fetch and normalise</text>
-    <text x="556" y="344" text-anchor="middle" fill="#d8e0ef" font-size="18">Find new jobs, match the watch</text>
-    <text x="556" y="376" text-anchor="middle" fill="#d8e0ef" font-size="18">Refine where needed, check freshness</text>
-    <text x="556" y="424" text-anchor="middle" fill="#9ba9c3" font-size="16">One scheduled sweep at a time</text>
-    <path d="M716 290H820M716 405H820" fill="none" stroke="#ff7655" stroke-width="3" marker-end="url(#arrow)"/>
-    <text x="850" y="260" fill="#f8fafc" font-size="22" font-weight="700">MongoDB</text><text x="850" y="294" fill="#9ba9c3" font-size="17">queries · seen jobs</text><text x="850" y="317" fill="#9ba9c3" font-size="17">subscriptions · email log</text>
-    <text x="850" y="426" fill="#f8fafc" font-size="22" font-weight="700">One alert email</text><text x="850" y="460" fill="#9ba9c3" font-size="17">New matching jobs only</text>
-    <path d="M950 325V380" fill="none" stroke="#697790" stroke-width="3" marker-end="url(#arrow)"/>
-    <text x="1080" y="620" text-anchor="end" fill="#9ba9c3" font-size="16">A new watch is primed first, so old postings do not flood the inbox.</text>
+
+    <text x="165" y="211" text-anchor="middle" fill="#f8fafc" font-size="22" font-weight="700">Job boards</text>
+    <text x="165" y="247" text-anchor="middle" fill="#d8e0ef" font-size="17">LinkedIn · topjobs.lk</text>
+    <text x="165" y="274" text-anchor="middle" fill="#d8e0ef" font-size="17">John Keells · MAS</text>
+
+    <text x="455" y="211" text-anchor="middle" fill="#f8fafc" font-size="22" font-weight="700">Fetch listings</text>
+    <text x="455" y="247" text-anchor="middle" fill="#d8e0ef" font-size="17">One scheduled sweep</text>
+    <text x="455" y="274" text-anchor="middle" fill="#d8e0ef" font-size="17">for each saved search</text>
+
+    <text x="755" y="211" text-anchor="middle" fill="#f8fafc" font-size="22" font-weight="700">Keep new matches</text>
+    <text x="755" y="247" text-anchor="middle" fill="#d8e0ef" font-size="17">Normalise, deduplicate</text>
+    <text x="755" y="274" text-anchor="middle" fill="#d8e0ef" font-size="17">and check freshness</text>
+
+    <text x="1045" y="211" text-anchor="middle" fill="#f8fafc" font-size="22" font-weight="700">Email alert</text>
+    <text x="1045" y="247" text-anchor="middle" fill="#d8e0ef" font-size="17">One batch for each</text>
+    <text x="1045" y="274" text-anchor="middle" fill="#ffb29f" font-size="17">new matching job</text>
+
+    <path d="M270 243H350M560 243H640M870 243H950" fill="none" stroke="#ff7655" stroke-width="4" marker-end="url(#arrow)"/>
+    <text x="755" y="416" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="700">MongoDB</text>
+    <text x="755" y="442" text-anchor="middle" fill="#9ba9c3" font-size="16">watches · subscriptions · seen jobs</text>
+    <path d="M755 318V384" fill="none" stroke="#8190aa" stroke-width="3" marker-start="url(#arrow-both)" marker-end="url(#arrow-both)"/>
+    <text x="786" y="360" fill="#9ba9c3" font-size="15">read and write</text>
   </g>
 </svg>
