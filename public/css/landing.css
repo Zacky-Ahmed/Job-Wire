@@ -326,3 +326,22 @@
   .lp-nav .wordmark b span{display:none;}   /* the glyph still identifies it */
   .hero-stage{padding-top:104px;}
 }
+
+/* ── the live feed rows ─────────────────────────────────────────
+   The whole row title is the link, so the tap target is the job rather
+   than a small word beside it. "Apply" sits at the end as an affordance
+   and appears on hover on a pointer device. */
+.feed-role{display:flex;align-items:baseline;gap:10px;justify-content:space-between;}
+.feed-role:hover{color:var(--flare);}
+.feed-go{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--flare);opacity:.75;flex:0 0 auto;
+  border:1px solid color-mix(in srgb,var(--flare) 38%,transparent);
+  border-radius:999px;padding:3px 9px;}
+.feed-row:hover .feed-go{opacity:1;background:color-mix(in srgb,var(--flare) 14%,transparent);}
+.feed-src{color:var(--quiet);}
+.feed-quiet .feed-role{color:var(--hush);}
+/* One line per row, always: a long company name truncates rather than
+   reflowing the panel and shoving it out of the hero. */
+.feed-co{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.feed-role > span:first-child,
+.feed-role{min-width:0;}

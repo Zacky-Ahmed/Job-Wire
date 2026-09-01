@@ -51,19 +51,26 @@
       <span class="sp"></span>
       <span class="panel-t panel-live">live</span>
     </header>
+    <%# Real rows from the live sweep. If the poller ever stops, this
+        empties rather than continuing to claim freshness it does not
+        have — the page fails the same way the product does. %>
     <ol class="feed">
-      <li class="feed-row"><span class="feed-age">1m</span>
-        <span class="feed-role">Intern — Fintech Operations</span>
-        <span class="feed-co">PickMe</span></li>
-      <li class="feed-row"><span class="feed-age">8m</span>
-        <span class="feed-role">Digital Marketing Intern</span>
-        <span class="feed-co">Applova</span></li>
-      <li class="feed-row"><span class="feed-age">22m</span>
-        <span class="feed-role">Trainee Software Engineer</span>
-        <span class="feed-co">Epinics</span></li>
-      <li class="feed-row"><span class="feed-age">41m</span>
-        <span class="feed-role">Intern — Human Resources</span>
-        <span class="feed-co">MAS Holdings</span></li>
+      <% if (!jobs || !jobs.length) { %>
+        <li class="feed-row feed-quiet">
+          <span class="feed-age">—</span>
+          <span class="feed-role">Nothing caught in the last few minutes</span>
+          <span class="feed-co">The sweep runs every 5 minutes, around the clock</span>
+        </li>
+      <% } %>
+      <% (jobs || []).forEach(function (j) { %>
+        <li class="feed-row">
+          <span class="feed-age"><%= j.age %></span>
+          <a class="feed-role" href="/signup">
+            <%= j.title %><span class="feed-go" aria-hidden="true">Apply</span></a>
+          <span class="feed-co"><%= j.company %><%= j.location ? " · " + j.location : "" %>
+            <span class="feed-src">via <%= j.source %></span></span>
+        </li>
+      <% }); %>
     </ol>
     <footer class="panel-foot">
       <span>4 boards swept</span><span class="sp"></span><span>every 5 min</span>

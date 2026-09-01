@@ -211,3 +211,33 @@ export function forget(queryId, jobIds) {
   if (!jobIds.length) return Promise.resolve();
   return collections.seenJobs().deleteMany({ queryId, jobId: { $in: jobIds } });
 }
+
+/**
+ * The public showcase feed for the landing page.
+ *
+ * Deliberately NOT "the most recent matched jobs". A matchAll watch
+ * matches every posting in the country, so an unfiltered feed put a
+ * Chief Executive Officer and a Quantity Surveyor at the top of a page
+ * arguing about internships. Only keyword watches are drawn from.
+ *
+ * Deduped by jobId because the same search can exist as several query
+ * rows, and the same posting then appears once per row.
+ */
+export async function recentForShowcase(queryIds, limit = 5) {
+  if (!queryIds.length) return [];
+  const rows = await collections.seenJobs()
+    .find({ queryId: { $in: queryIds }, matched: { $ne: false } })
+    .sort({ firstSeenAt: -1 })
+    .limit(limit * 6)          // room to dedupe without a second trip
+    .toArray();
+
+  const seen = new Set();
+  const out = [];
+  for (const r of rows) {
+    if (seen.has(r.jobId)) continue;
+    seen.add(r.jobId);
+    out.push(r);
+    if (out.length === limit) break;
+  }
+  return out;
+}
