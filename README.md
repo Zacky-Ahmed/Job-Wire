@@ -2,10 +2,16 @@
 
 # Job Wire
 
-**A job you'd be good at was posted while you were reading this.**
-By tonight it will be forty applications deep.
+<a href="https://jobwire.me">
+  <img src="public/readme/job-wire-flow.png" alt="Four job sources flowing through Job Wire into one email alert" width="100%">
+</a>
 
-[jobwire.me](https://jobwire.me) · Node.js · MongoDB · HTMX · one always-on process
+### Be early, by default.
+
+**A job you'd be good at was posted while you were reading this.**<br>
+By tonight it could be forty applications deep.
+
+[Try Job Wire](https://jobwire.me) · four job sources · one watch · one useful email
 
 </div>
 
