@@ -19,7 +19,8 @@ By tonight it could be forty applications deep.
 
 ## The whole product, in one hour
 
-![A timeline showing a posting at 09:14, a Job Wire alert at 09:16, twelve applications at 09:45, and ninety-four at 10:14.](public/readme/job-timeline.svg)
+**09:14:** a role is posted. **09:16:** Job Wire catches it and emails you.
+By 10:14, the application pile may already be too deep to matter.
 
 Recruiters read the pile from the top. Being early is not an advantage over
 the other candidates; it decides whether you are read **at all**.
@@ -34,8 +35,6 @@ That number is real: a PickMe internship measured during development took
 One process. A web server and a poller sharing a Mongo pool, because splitting
 them loses the shared connection and the in-memory schedule. That is the
 entire reason this is not serverless.
-
-![Job boards flow through Job Wire, matching and deduplication, then one email alert.](public/readme/system-flow.svg?v=2)
 
 ### The sweep, step by step
 
@@ -66,8 +65,6 @@ email is a wall of stale posts.
 **Identical searches share one fetch.** A hundred users watching
 `intern / Sri Lanka` is one query row and one set of requests, fanned out to a
 hundred emails. Load scales with *distinct searches*, not users.
-
-![Identical watches share one saved query and source fetch before individual alerts are sent.](public/readme/shared-watch.svg)
 
 **Sweep serially.** Ten simultaneous requests from one IP is what a scraper
 looks like. A steady trickle is what a browser looks like.
