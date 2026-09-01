@@ -19,17 +19,10 @@ By tonight it could be forty applications deep.
 
 ## The whole product, in one hour
 
-```
-09:14   ████  a posting goes up
-09:16   ██    Job Wire has it, and so do you          ← 3rd applicant
-09:45   ████████████                                    12 applicants
-10:14   ████████████████████████████████████████████    94 · shortlist drawn
-        └──────────────────────────────────────────┘
-         the only window that ever mattered
-```
+![A timeline showing a posting at 09:14, a Job Wire alert at 09:16, twelve applications at 09:45, and ninety-four at 10:14.](public/readme/job-timeline.svg)
 
 Recruiters read the pile from the top. Being early is not an advantage over
-the other candidates — it decides whether you are read **at all**.
+the other candidates; it decides whether you are read **at all**.
 
 That number is real: a PickMe internship measured during development took
 **12 applications in its first 31 minutes**.
@@ -39,42 +32,10 @@ That number is real: a PickMe internship measured during development took
 ## How it works
 
 One process. A web server and a poller sharing a Mongo pool, because splitting
-them loses the shared connection and the in-memory schedule — which is the
+them loses the shared connection and the in-memory schedule. That is the
 entire reason this is not serverless.
 
-```
-                    ┌──────────────────────────────────────────┐
-                    │           ONE NODE PROCESS               │
-                    │                                          │
-   browser ────────▶│  Express + HTMX ──┐                      │
-                    │                   │                      │
-                    │                   ├──▶  MongoDB          │
-                    │                   │     ├ queries        │
-                    │   poller loop ────┘     ├ seenJobs (TTL) │
-                    │        │                ├ subscriptions  │
-                    └────────┼────────────────┴────────────────┘
-                             │
-              every 30s, ONE query at a time
-                             │
-        ┌────────┬───────────┼───────────┬──────────┐
-        ▼        ▼           ▼           ▼          │
-   ┌────────┐┌────────┐┌──────────┐┌──────────┐    │
-   │LinkedIn││topjobs ││J. Keells ││   MAS    │    │
-   │ guest  ││  HTML  ││   HTML   ││ Oracle   │    │
-   │ HTML   ││        ││          ││   REST   │    │
-   └────────┘└────────┘└──────────┘└──────────┘    │
-        └─────────┴──────┬───────┴──────────┘      │
-                         ▼                          │
-              normalise to one job shape            │
-                         ▼                          │
-        new = fetched − already seen  ◀─────────────┘
-                         ▼
-              refine (LinkedIn only)
-                         ▼
-              drop anything too old to act on
-                         ▼
-                    ONE email
-```
+![Four job sources flow through the Job Wire service, MongoDB and one alert email.](public/readme/system-flow.svg)
 
 ### The sweep, step by step
 
@@ -106,11 +67,7 @@ email is a wall of stale posts.
 `intern / Sri Lanka` is one query row and one set of requests, fanned out to a
 hundred emails. Load scales with *distinct searches*, not users.
 
-```
-  user A ─┐
-  user B ─┼──▶  one query row  ──▶  one set of requests  ──▶  3 emails
-  user C ─┘
-```
+![Identical watches share one saved query and source fetch before individual alerts are sent.](public/readme/shared-watch.svg)
 
 **Sweep serially.** Ten simultaneous requests from one IP is what a scraper
 looks like. A steady trickle is what a browser looks like.
@@ -123,25 +80,25 @@ returned success and simply saw less.
 ## The thing that will keep biting you
 
 Not one of these threw an error. Each was a sweep that *succeeded* and returned
-fewer jobs — indistinguishable from a quiet morning. All measured against the
+fewer jobs; indistinguishable from a quiet morning. All measured against the
 live site:
 
 | What looked fine | What was actually happening |
 |---|---|
 | `f_TPR=r3600` (last hour) | empty document returned while jobs existed |
-| `sortBy=DD` | not honoured — newest jobs sit on pages 2–3 |
+| `sortBy=DD` | not honoured; newest jobs sit on pages 2 to 3 |
 | `keywords=Intern` | 24 results one minute, 3 the next: a ranker, not a filter |
 | pagination cap of 100 | the feed is 232 deep; a 40-minute-old internship sat on page 19 |
-| substring matching | `intern` matched `internal` — pulled in a Chief HR Officer |
+| substring matching | `intern` matched `internal`; pulled in a Chief HR Officer |
 | `matchedBy: unverified` | a failed request treated as a match, emailing three non-internships |
 | 74 emails sent, 0 failures | every one filed as spam; DMARC broken, provider reported success |
 
 Two defences exist because of this:
 
-- **Coverage check** — each sweep compares against the best that query has ever
+- **Coverage check:** each sweep compares against the best that query has ever
   done and logs `COVERAGE DROP` below half. A query that normally yields 60 and
   suddenly yields 10 has not gone quiet, it has gone blind.
-- **`npm run parity`** — diffs our results against the live LinkedIn page and
+- **`npm run parity`:** diffs our results against the live LinkedIn page and
   prints `MISSING` / `EXTRA`, exiting non-zero if anything is missing.
 
 > **The one lesson worth taking from this repo:** a system that returns success
@@ -154,7 +111,7 @@ Two defences exist because of this:
 
 Which sites get searched is **derived from the country**, never chosen. Nobody
 wants fewer sites searched for the same keyword, and the only wrong answers were
-the available ones — ticking a Sri Lankan board for a German watch built
+the available ones; ticking a Sri Lankan board for a German watch built
 something that could never match.
 
 | Source | Coverage | How data arrives | Lag |
@@ -178,13 +135,13 @@ Almost none of it is the sweep. A sweep takes ~100 seconds against a 5-minute
 schedule, so the poller adds single-digit minutes; the rest is LinkedIn's own
 public index, verified by walking their feed and finding jobs absent that were
 plainly visible to a signed-in browser. The three local boards have no such lag
-— they reach you within one sweep.
+and they reach you within one sweep.
 
 Say the smaller true number rather than the larger nice one. "Within minutes"
 was on this page for weeks and was accurate about a third of the time.
 
-Adding a board is one file in `services/sources/`. Nothing downstream — dedupe,
-storage, email, the UI — knows which site a job came from. Sources are resolved
+Adding a board is one file in `services/sources/`. Nothing downstream, including dedupe,
+storage, email and the UI, knows which site a job came from. Sources are resolved
 at sweep time, so a new adapter reaches **every existing watch** without anyone
 editing anything.
 
@@ -219,7 +176,7 @@ Keywords match as **whole words with ordinary endings**, so `intern` reaches
           ✘ Internal, International, Internet
 ```
 
-Words meaning the same job expand automatically — `intern` also finds
+Words meaning the same job expand automatically. `intern` also finds
 `trainee`. The table is deliberately tiny: `graduate` and `junior` are excluded,
 because plenty of those want experience an intern has not got.
 
@@ -230,7 +187,7 @@ reach that. Those requests are budgeted per sweep, newest first; the rest carry
 forward on a pending queue.
 
 **What it deliberately does not read: the description.** It was tried, and it
-faithfully reproduced LinkedIn's own mistakes — a Senior Google Ads Specialist
+faithfully reproduced LinkedIn's own mistakes, including a Senior Google Ads Specialist
 and a Junior Estimator both reached the wire because their body text mentioned
 interns. Employment type and seniority are fields an employer *set*. Prose is
 not a claim about what the job is.
@@ -244,10 +201,10 @@ src/
   server.js              express app + starts the poller in the same process
   config/                env validation, single Mongo pool
   models/                collection accessors, all indexes created at boot
-  routes/                HTMX endpoints — return HTML fragments, not JSON
+  routes/                HTMX endpoints; return HTML fragments, not JSON
   middleware/            session, csrf, auth guard, admin guard, rate limits
   services/
-    http/guardedFetch.js the ONLY outbound HTTP path — SSRF allowlist
+    http/guardedFetch.js the ONLY outbound HTTP path; SSRF allowlist
     sources/             one file per job board, behind a shared contract
     linkedin/            url building, HTML parsing, geoId table
     poller/              the loop, one sweep, the dedupe rule, retry queue
@@ -270,7 +227,7 @@ npm run dev
 
 Set `POLLER_ENABLED=false` while working on the UI. **Do this.** A local poller
 against the production database sends real email alongside the deployed
-instance — pairs of identical alerts two seconds apart are the symptom.
+instance; pairs of identical alerts two seconds apart are the symptom.
 
 Rate limits skip loopback outside production. Four password resets an hour is
 right for the internet and wrong for the machine building the feature.
@@ -291,7 +248,7 @@ right for the internet and wrong for the machine building the feature.
 ## Accounts
 
 Email and password with bcrypt, plus a six-digit emailed code before a first
-sign-in. Forgotten passwords use the same mechanism — a **code, not a link**,
+sign-in. Forgotten passwords use the same mechanism: a **code, not a link**,
 because a clickable reset URL is the thing spam filters distrust most.
 
 **A signup password is staged, not granted.** An unverified account is unowned:
@@ -319,7 +276,7 @@ ADMIN_EMAILS=you@example.com,someone@else.com
 ```
 
 Nothing with write access to Mongo can promote itself, and there is no
-first-admin bootstrap problem. A non-admin gets **404, not 403** — "forbidden"
+first-admin bootstrap problem. A non-admin gets **404, not 403**; "forbidden"
 confirms the page is real.
 
 ---
@@ -330,7 +287,7 @@ A new user's first email is their verification code. If that lands in spam they
 cannot sign up **at all**, so this matters more than any feature.
 
 **The one thing that matters most.** Sending as a `gmail.com` address through a
-third-party relay breaks DMARC — only Google may send as gmail.com, so the relay
+third-party relay breaks DMARC; only Google may send as gmail.com, so the relay
 claims a domain it cannot prove. Gmail accepts the message and files it as spam,
 and the provider reports zero failures the entire time.
 
@@ -346,7 +303,7 @@ the misalignment until you do.
 is really about:
 
 ```
-  2m old    Intern — Fintech Operations
+  2m old    Intern: Fintech Operations
             PickMe · Colombo
             Open on LinkedIn
 
@@ -357,7 +314,7 @@ is really about:
 
 No images, no coloured buttons, no bulk-mail footer, a real `text/plain`
 alternative, `List-Unsubscribe` on both transports. Those are deliverability
-decisions, not a lack of ideas — anything decorative costs inbox placement this
+decisions, not a lack of ideas; anything decorative costs inbox placement this
 account cannot afford. `npm run preview-email` asserts all fourteen.
 
 ---
@@ -366,7 +323,7 @@ account cannot afford. `npm run preview-email` asserts all fourteen.
 
 **LinkedIn does not want to be polled.** It is against their terms, they
 rate-limit hard, and shared cloud IPs are often already flagged. All the
-fragility lives in `services/linkedin/parse.js` — keep it isolated.
+fragility lives in `services/linkedin/parse.js`; keep it isolated.
 
 **A 200 is not a success.** Responses are classified, not assumed: markup with
 no job cards raises an error rather than reporting zero jobs. Oracle's API will
@@ -400,23 +357,23 @@ points the healthcheck at `/healthz`.
 
 1. New Project → Deploy from GitHub repo
 2. Variables → everything from `.env.example` except `PORT` (Railway injects its own)
-3. Set `APP_URL` to your domain — canonical tags and email links both read it
+3. Set `APP_URL` to your domain; canonical tags and email links both read it
 4. MongoDB Atlas → Network Access → allow `0.0.0.0/0`, because Railway's egress
    IPs are not fixed
 
 The Dockerfile forces IPv4 DNS ordering. Without it, outbound SMTP fails with
-`ENETUNREACH` on an IPv6 address that has no route — 43 consecutive send
+`ENETUNREACH` on an IPv6 address that has no route; 43 consecutive send
 failures in one evening before that was found.
 
 **Render (alternative).** `render.yaml` is a blueprint for the same single
-service. Free instances sleep after ~15 minutes idle, which stops the poller —
+service. Free instances sleep after ~15 minutes idle, which stops the poller;
 hence `plan: starter`.
 
 ---
 
 ## Licence
 
-[MIT](LICENSE). Use it, change it, ship it — keep the copyright notice.
+[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
 
 One thing the licence does **not** cover, and cannot: it applies to this
 source code, not to the sites it reads. Job Wire polls LinkedIn's public

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 310" role="img" aria-labelledby="title desc">
+  <title id="title">Identical watches share one fetch</title>
+  <desc id="desc">Three users with the same watch share one saved query, one source fetch and their own email alerts.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff7655"/></marker></defs>
+  <rect width="1200" height="310" rx="24" fill="#0d1422"/>
+  <g font-family="Arial, sans-serif">
+    <text x="56" y="58" fill="#f8fafc" font-size="27" font-weight="700">One shared fetch, individual alerts</text>
+    <text x="56" y="90" fill="#9ba9c3" font-size="18">The same search is fetched once, then safely fanned out to every subscriber.</text>
+    <g fill="#161f32" stroke="#34415b" stroke-width="2"><rect x="56" y="135" width="180" height="52" rx="12"/><rect x="56" y="202" width="180" height="52" rx="12"/><rect x="350" y="150" width="210" height="90" rx="16"/><rect x="680" y="150" width="210" height="90" rx="16"/><rect x="1000" y="135" width="144" height="52" rx="12"/><rect x="1000" y="202" width="144" height="52" rx="12"/></g>
+    <text x="146" y="167" text-anchor="middle" fill="#f8fafc" font-size="19" font-weight="700">User A</text><text x="146" y="234" text-anchor="middle" fill="#f8fafc" font-size="19" font-weight="700">User B + C</text>
+    <text x="455" y="185" text-anchor="middle" fill="#f8fafc" font-size="21" font-weight="700">One saved query</text><text x="455" y="214" text-anchor="middle" fill="#ffb29f" font-size="16">intern · Sri Lanka</text>
+    <text x="785" y="185" text-anchor="middle" fill="#f8fafc" font-size="21" font-weight="700">One source fetch</text><text x="785" y="214" text-anchor="middle" fill="#9ba9c3" font-size="16">new matching jobs</text>
+    <text x="1072" y="167" text-anchor="middle" fill="#f8fafc" font-size="18" font-weight="700">Alert A</text><text x="1072" y="234" text-anchor="middle" fill="#f8fafc" font-size="18" font-weight="700">Alerts B + C</text>
+    <path d="M236 161H350M236 228H300V195H350M560 195H680M890 195H950V161H1000M950 195V228H1000" fill="none" stroke="#ff7655" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+</svg>
