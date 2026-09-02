@@ -68,6 +68,10 @@ export async function insertNew(queryId, jobs) {
     // user's job", and it is what the wire renders.
     matched: false,
     matchedBy: null,
+    // How many identical requisitions this row stands for. Set only where
+    // a source collapsed a group (MAS raises one per plant), so an
+    // ordinary job carries no field at all rather than a misleading 1.
+    ...(j.openings > 1 ? { openings: j.openings } : {}),
   }));
 
   try {

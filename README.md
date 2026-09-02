@@ -293,6 +293,45 @@ The actions exist because a real support case needs each of them:
 | **Merge** | fold one search into another, moving its watchers across |
 | **Delete search** | clear a parked row. Refused while anyone is subscribed |
 
+### Mailed once, however long a board leaves it up
+
+`seenJobs` is the wire's memory and expires after `SEEN_JOB_TTL_DAYS` (14),
+so a posting still listed after that falls out, is rediscovered as new, and
+would be mailed a second time.
+
+The old defence was to refuse day-precision jobs whose printed date was older
+than the TTL. It also killed real listings. Keells stamps a vacancy with the
+date it was *raised* and leaves it up for months, so `Intern - Supply Chain`
+reached us printed **56 days** old and `Technical Intern` **672 days** old.
+Both were genuinely new to us, both went to the wire, neither was ever
+emailed, and nothing said so.
+
+`alertedJobs` splits the two questions: the wire keeps a short memory of what
+it has **shown**, this keeps a long one (`ALERT_TTL_DAYS`, default 730) of what
+it has **sent**. Age stops standing in for novelty, and first sight means what
+the sweep always claimed it meant — appearing now and absent before is news,
+whatever the page prints. It is written *before* the send, so a crash costs at
+most one alert rather than causing a duplicate.
+
+### One vacancy, many requisitions
+
+MAS raises a separate requisition per plant and per head. A single internship
+arrived as `21083, 21084, 21085, 21086, 21088, 21090, 21110` — same title,
+same day, **seven emails**. One morning's list also held 7x Human Resources,
+5x Merchandising and 5x Industrial Engineering the same way.
+
+They cannot be told apart. Checked against the API: `secondaryLocations` is
+`[]` on every one, `PrimaryLocation` is the bare string `Sri Lanka`, and
+`Organization` is `null`. No field, expanded or not, says which plant a
+requisition belongs to — so collapsing them loses nothing the API ever gave
+us, and the row carries the count instead: *7 openings*.
+
+The surviving id is derived from the group (`mas:g<date>-<slug>`), never
+borrowed from a member. Keeping the lowest member's id looks stable and
+quietly is not: fill that requisition and the id becomes one no sweep has
+seen, and the whole group alerts again. `PostedDate` stays in the key so
+tomorrow's batch is tomorrow's alert.
+
 ### Why merge exists
 
 Sweeps run one at a time, so two rows that fetch the same thing are not merely

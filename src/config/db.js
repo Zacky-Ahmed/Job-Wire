@@ -67,6 +67,9 @@ export const collections = {
   subscriptions: () => getDb().collection("subscriptions"),
   seenJobs: () => getDb().collection("seenJobs"),
   emailLog: () => getDb().collection("emailLog"),
+  // What has ever been EMAILED, as opposed to what the wire has shown.
+  // Outlives seenJobs on purpose; see models/alertedJobs.js.
+  alertedJobs: () => getDb().collection("alertedJobs"),
   // One document. The poller's own heartbeat, so "is it running?" is a
   // measurement rather than a restatement of POLLER_ENABLED.
   pollerState: () => getDb().collection("pollerState"),

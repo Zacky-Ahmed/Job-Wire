@@ -68,6 +68,56 @@ function shape(r) {
   };
 }
 
+/* One vacancy, many requisitions.
+ *
+ * MAS raises a separate requisition per plant and per head, so a single
+ * internship arrives as a run of consecutive ids: "Intern - Workforce
+ * Management" came through as 21083, 21084, 21085, 21086, 21088, 21090
+ * and 21110, all dated the same day, and each one produced its own email.
+ * One morning's list held 7x Human Resources, 5x Merchandising, 5x
+ * Industrial Engineering and 4x Planning the same way.
+ *
+ * They are not distinguishable. Checked against the API: secondaryLocations
+ * is [] on every one, PrimaryLocation is the bare string "Sri Lanka", and
+ * Organization is null — there is no field, expanded or otherwise, that
+ * says which plant a requisition belongs to. So there is nothing to show a
+ * reader that would make seven rows worth reading, and collapsing loses no
+ * information the API ever gave us.
+ *
+ * The surviving id is derived from the group, NOT from a member. Keeping
+ * the lowest member's id would look stable and quietly break: fill that
+ * requisition and the id becomes the next one, which no sweep has ever
+ * seen, and the whole group alerts a second time.
+ *
+ * PostedDate stays in the key so a fresh batch tomorrow is a fresh alert
+ * rather than being swallowed by today's group.
+ */
+export function collapse(jobs) {
+  const groups = new Map();
+  for (const j of jobs) {
+    const key = `${j.title.trim().toLowerCase()}::${j.postedText || "?"}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(j);
+  }
+
+  const out = [];
+  for (const members of groups.values()) {
+    if (members.length === 1) { out.push(members[0]); continue; }
+    // Lowest id first only so the link and the fields are taken from a
+    // consistent member, not because the id itself is used.
+    members.sort((a, b) =>
+      Number(a.jobId.split(":")[1]) - Number(b.jobId.split(":")[1]));
+    const slug = members[0].title.trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+    out.push({
+      ...members[0],
+      jobId: qualify(id, `g${members[0].postedText || "x"}-${slug}`),
+      openings: members.length,
+    });
+  }
+  return out;
+}
+
 export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
   if (page > 0) return [];
 
@@ -113,6 +163,9 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
   );
 
   const out = inCountry.map(({ _country, ...job }) => job);
-  if (matchAll || !words.length) return out;
-  return out.filter((j) => matchesAny(j.title, words));
+  // Collapsed AFTER the country filter and BEFORE the keyword filter, so
+  // a group is never split by a member that was filtered out from under it.
+  const rolled = collapse(out);
+  if (matchAll || !words.length) return rolled;
+  return rolled.filter((j) => matchesAny(j.title, words));
 }

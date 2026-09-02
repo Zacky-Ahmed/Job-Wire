@@ -42,6 +42,22 @@ export async function ensureIndexes() {
     await collections.queries().createIndex({ nextFetchAt: 1 }, { name: "due_scan" })
   );
 
+  // ── alertedJobs: what has been MAILED, not merely shown ───────
+  // Unique on the same pair as seenJobs, so a racing double-send is a
+  // duplicate-key error rather than a second email.
+  created.push(
+    await collections.alertedJobs().createIndex(
+      { queryId: 1, jobId: 1 },
+      { unique: true, name: "alerted_unique" }
+    )
+  );
+  created.push(
+    await collections.alertedJobs().createIndex(
+      { sentAt: 1 },
+      { expireAfterSeconds: env.alertTtlDays * 86400, name: "alerted_ttl" }
+    )
+  );
+
   // ── subscriptions: user ↔ query ───────────────────────────────
   created.push(
     await collections.subscriptions().createIndex(

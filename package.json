@@ -21,7 +21,8 @@
     "parity": "node scripts/parity.js",
     "set-password": "node scripts/set-password.js",
     "prune-matches": "node scripts/prune-matches.js",
-    "merge-queries": "node scripts/merge-duplicate-queries.js"
+    "merge-queries": "node scripts/merge-duplicate-queries.js",
+    "backfill-alerts": "node scripts/backfill-alert-ledger.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

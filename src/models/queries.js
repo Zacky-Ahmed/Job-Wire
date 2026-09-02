@@ -79,7 +79,18 @@ export async function upsert({ keywordsKey, keywords, geoId, location, everyMinu
       // Mongo rejects two operators writing the same path in one update.
       $min: { everyMinutes },
     },
-    { upsert: true, returnDocument: "after" }
+    { upsert: true, returnDocument: "after",
+      /* Deterministic when several rows still share an identity — which
+         they can, because identityKey is not unique: rows that predate it
+         may already collide and a unique index would fail the signup
+         instead of joining it.
+         
+         Live rows first. Without the sort the pick was arbitrary, so a new
+         watch could attach to a RETIRED duplicate rather than the one
+         actually sweeping: the watcher would be subscribed to a row with
+         no schedule and get nothing. Descending puts real dates ahead of
+         the nulls that mark a parked row, and createdAt settles ties. */
+      sort: { nextFetchAt: -1, createdAt: 1 } }
   );
   const query = res.value ?? res;
 

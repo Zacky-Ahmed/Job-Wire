@@ -159,7 +159,7 @@ export function buildAlert({ label, jobs }) {
       <td style="padding:13px 0;vertical-align:top;border-top:1px solid ${LINE};">
         <div style="font-weight:600;">${esc(j.title)}</div>
         <div style="color:${MUTED};font-size:14px;margin:3px 0 6px;">
-          ${esc(j.company)}${j.location ? " &middot; " + esc(j.location) : ""}</div>
+          ${esc(j.company)}${j.location ? " &middot; " + esc(j.location) : ""}${j.openings > 1 ? " &middot; " + j.openings + " openings" : ""}</div>
         <a href="${esc(j.url)}" style="color:${LINK};font-size:14px;">Open on ${esc(sourceName(j.jobId))}</a>
       </td>
     </tr>`)
@@ -200,7 +200,7 @@ export function buildAlert({ label, jobs }) {
       jobs
         .map((j) =>
           `[${ageText(j)}] ${j.title}\n` +
-          `${j.company}${j.location ? " · " + j.location : ""}\n${j.url}`)
+          `${j.company}${j.location ? " · " + j.location : ""}${j.openings > 1 ? " · " + j.openings + " openings" : ""}\n${j.url}`)
         .join("\n\n") +
       `\n\nYou set up this watch. Pause or delete it: ${MANAGE}`,
     html: SHELL(inner, jobs.map((j) => `${ageText(j)} · ${j.title}`).join(", ")),

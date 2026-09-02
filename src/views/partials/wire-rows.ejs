@@ -35,7 +35,12 @@
             <span class="why" title="Its title does not mention your keyword. It is here because the employer tagged it this way — which is exactly what the board's own filter goes on, spam included."><%= d.matchedBy %> tag</span>
           <% } %>
         </div>
-        <div class="b"><%= d.company %><%= d.location ? ' · ' + d.location : '' %></div>
+        <%# openings is set only where a source collapsed a run of identical
+            requisitions into one row — MAS raises one per plant, seven of
+            them for a single internship, and they carry no field that tells
+            them apart. Saying how many were folded in keeps the row honest
+            without printing seven of it. %>
+        <div class="b"><%= d.company %><%= d.location ? ' · ' + d.location : '' %><% if (d.openings > 1) { %><span class="why"><%= d.openings %> openings</span><% } %></div>
       </div>
       <span class="muted hide c-watch"><span class="pill vio"><%= d.label %></span></span>
       <span class="muted hide c-age"><%= d.ageText %></span>

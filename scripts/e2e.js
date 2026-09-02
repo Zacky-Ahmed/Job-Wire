@@ -97,8 +97,14 @@ ok((await r.text()).includes("already watch this exact query"), "duplicate rejec
 // was the sole user, and broke the moment a real second account created a
 // watch for another country. Same family of mistake as the cleanup that
 // once ran deleteMany({}).
-const qCount = await collections.queries()
-  .countDocuments({ keywordsKey: canonicalKey(["intern"], ["linkedin"]), geoId: "100446352" });
+// Counted by IDENTITY, not by a spelling. The old assertion looked for
+// the key "intern@@linkedin", which is what upsert used to write; once it
+// began matching on identityKey a new watch landed on the row spelled
+// "intern" and this read 0 — the test was asserting the bug it was
+// written before, not the property it describes.
+const { identityOf } = await import("../src/models/queries.js");
+const wantId = identityOf({ keywords: ["intern"], geoId: "100446352" });
+const qCount = await collections.queries().countDocuments({ identityKey: wantId });
 ok(qCount === 1, `identical searches share ONE query row (found ${qCount})`);
 
 console.log("\n── toggle + delete ──");
@@ -312,6 +318,69 @@ r = await post("/reset", { _csrf: csrf(html), email: EMAIL,
 ok(/not valid/.test(await r.text()), "a reset with no pending request is refused");
 const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
+
+
+// A job is mailed once, however long the board leaves it up.
+//
+// seenJobs forgets after SEEN_JOB_TTL_DAYS, so a posting still listed
+// after that comes back looking new. The old defence was to refuse
+// day-precision jobs printed older than the TTL, which also silently
+// killed real Keells listings — 56 and 672 days printed, both genuinely
+// new to us, both never emailed. The ledger replaces that.
+const Alerted = await import("../src/models/alertedJobs.js");
+const ledgerQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-ledger-${Date.now()}`, keywords: ["x"], geoId: "e2e-l",
+  matchAll: false, createdAt: new Date(), nextFetchAt: null,
+})).insertedId;
+
+let sent = await Alerted.alreadySent(ledgerQ, ["keells:1", "keells:2"]);
+ok(sent.size === 0, "nothing is recorded as sent before anything is sent");
+await Alerted.markSent(ledgerQ, ["keells:1"]);
+sent = await Alerted.alreadySent(ledgerQ, ["keells:1", "keells:2"]);
+ok(sent.has("keells:1") && !sent.has("keells:2"),
+  "only the job that went out is remembered");
+// Two sweeps racing the same job must not produce two emails.
+const again = await Alerted.markSent(ledgerQ, ["keells:1", "keells:2"]);
+ok(again === 1, `re-recording is idempotent — only the new one inserts (got ${again})`);
+const bothNow = await Alerted.alreadySent(ledgerQ, ["keells:1", "keells:2"]);
+ok(bothNow.size === 2, "and the second is remembered after its own send");
+await Alerted.forgetQuery(ledgerQ);
+ok((await Alerted.alreadySent(ledgerQ, ["keells:1"])).size === 0,
+  "deleting a search takes its ledger with it");
+await collections.queries().deleteOne({ _id: ledgerQ });
+
+// MAS raises one requisition per plant. Seven identical rows is seven
+// emails for one job, and the API exposes no field that tells them apart.
+const masMod = await import("../src/services/sources/mas.js");
+const fake = (id, title, date) => ({
+  jobId: "mas:" + id, title, company: "MAS Holdings", location: "Sri Lanka",
+  url: "https://example.invalid/" + id, postedText: date, postedAt: new Date(date),
+});
+const wf = [21083, 21084, 21085, 21086, 21088, 21090, 21110]
+  .map((n) => fake(n, "Intern - Workforce Management", "2026-09-02"));
+const mixed = [
+  ...wf,
+  fake(21095, "Intern - Procurement", "2026-09-02"),
+  // Same title, different day: a fresh batch, and it must stay separate
+  // or tomorrow's postings vanish into today's alert.
+  fake(21300, "Intern - Workforce Management", "2026-09-03"),
+];
+const rolled = masMod.collapse(mixed);
+ok(rolled.length === 3, `nine requisitions collapse to three rows (got ${rolled.length})`);
+const big = rolled.find((j) => j.openings === 7);
+ok(!!big, "the seven identical ones become one row carrying the count");
+ok(rolled.find((j) => j.jobId === "mas:21095" && !j.openings) !== undefined,
+  "a lone requisition keeps its own id and gains no count");
+ok(rolled.filter((j) => /workforce/i.test(j.title)).length === 2,
+  "a later batch of the same title stays a separate alert");
+
+// The id must not be a member's id. Filling the lowest requisition would
+// otherwise shift it to one no sweep has seen, and re-alert the group.
+ok(!/mas:210dd$/.test(big.jobId), `the group id is derived, not borrowed (${big.jobId})`);
+const without = masMod.collapse(mixed.filter((j) => j.jobId !== "mas:21083"));
+ok(without.find((j) => j.openings === 6).jobId === big.jobId,
+  "and it stays the same when a member disappears");
+
 
 
 // One search, however it is spelled.

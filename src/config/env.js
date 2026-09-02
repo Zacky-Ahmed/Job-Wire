@@ -86,6 +86,12 @@ export const env = {
   // How long a job stays in seenJobs before it can be "new" again.
   // Must outlive any realistic posting, or you re-alert on old jobs.
   seenJobTtlDays: num("SEEN_JOB_TTL_DAYS", 14),
+
+  // How long we remember having EMAILED a job. Must comfortably outlive
+  // the longest a board leaves a posting up, because this is now the only
+  // thing stopping a long-lived listing being mailed twice — Keells has
+  // live pages printed 672 days old, so a year is the floor, not the aim.
+  alertTtlDays: num("ALERT_TTL_DAYS", 730),
 };
 
 // True when Gmail SMTP is the transport. Every Gmail-specific check

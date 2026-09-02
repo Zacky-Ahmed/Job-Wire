@@ -11,6 +11,7 @@ import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
+import * as AlertedJobs from "../../models/alertedJobs.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
@@ -327,18 +328,22 @@ export async function sweepQuery(query) {
     // news, whatever date it prints.
     const src = getSource(j.jobId.split(":")[0]);
     if (src && src.timePrecision === "day") {
-      /* Day-precision sources skip the age gate, and that exemption is
-         what makes the dedupe TTL load-bearing. seenJobs expires after
-         SEEN_JOB_TTL_DAYS; a local-board posting still listed after that
-         window is forgotten, rediscovered, and — with no age gate to
-         stop it — emailed a second time as though it were new.
-         postedAt is the only defence left, so use it where the board
-         gave us one: a posting older than the TTL cannot be news. */
-      const posted = j.postedAt ? new Date(j.postedAt) : null;
-      if (posted && Date.now() - posted.getTime() >
-          env.seenJobTtlDays * 24 * 60 * 60000) {
-        return false;
-      }
+      /* Day-precision sources skip the age gate outright.
+         
+         They used to be refused when the printed date was older than
+         SEEN_JOB_TTL_DAYS, because seenJobs forgets a job after that
+         window and a still-listed posting would be rediscovered and
+         mailed twice. That defence cost more than it saved: Keells
+         stamps a listing with the date the vacancy was RAISED and leaves
+         it up for months, so "Intern - Supply Chain" reached us printed
+         56 days old and "Technical Intern" 672 days old. Both were new
+         to us. Both went to the wire. Neither was ever emailed, and
+         nothing said so.
+         
+         Repeat sends are now prevented by remembering what was actually
+         mailed (models/alertedJobs.js) rather than by inferring it from
+         a date, which lets first sight mean what it says: appearing now
+         and absent before is news, whatever the page prints. */
       return true;
     }
 
@@ -390,7 +395,35 @@ export async function sweepQuery(query) {
   }
   if (!fresh.length) return { ok: true, fetched: fetched.length, alerted: 0 };
 
-  const alerted = await fanOut(query, fresh, new Date(started));
+  /* Last gate: has this exact job already been mailed for this search?
+     
+     seenJobs answers "have we shown it", and only for the last
+     SEEN_JOB_TTL_DAYS. A posting a board leaves up longer than that falls
+     out of that memory, comes back as new, and would be mailed again.
+     This ledger is the long memory, and it is what makes dropping the
+     printed-date rule above safe. */
+  const sendable = [];
+  const seenBefore = await AlertedJobs.alreadySent(
+    query._id, fresh.map((j) => j.jobId));
+  for (const j of fresh) if (!seenBefore.has(j.jobId)) sendable.push(j);
+
+  if (seenBefore.size) {
+    log.info("already emailed these before — not sending again", {
+      queryId: String(query._id), suppressed: seenBefore.size,
+    });
+  }
+  if (!sendable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+
+  /* Written BEFORE the send, not after.
+     
+     A crash between mailing and recording would leave the ledger saying
+     the job was never sent, and the next sweep would send it again — the
+     duplicate this exists to prevent. Recording first can at worst lose
+     one alert to a crash, which is the cheaper of the two failures and
+     the same trade emailLog.open()/settle() already makes. */
+  await AlertedJobs.markSent(query._id, sendable.map((j) => j.jobId));
+
+  const alerted = await fanOut(query, sendable, new Date(started));
   return { ok: true, fetched: fetched.length, alerted };
 }
 
