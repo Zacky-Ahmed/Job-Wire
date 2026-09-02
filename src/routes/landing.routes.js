@@ -50,7 +50,15 @@ async function recentJobs() {
            pushed the panel out of the hero. The province and country add
            nothing on a page that already says which country it watches. */
         location: String(j.location || "").split(",")[0].trim(),
-        source: getSource(String(j.jobId).split(":")[0])?.label || "a job board",
+        /* Null when the board IS the employer. Single-employer boards
+           carry the same name in both fields, so the row rendered
+           "MAS Holdings · Sri Lanka via MAS Holdings" — on every MAS row,
+           which is most of them. */
+        source: (() => {
+          const s = getSource(String(j.jobId).split(":")[0])?.label;
+          if (!s) return "a job board";
+          return s.toLowerCase() === String(j.company || "").toLowerCase() ? null : s;
+        })(),
         age: rel(j.firstSeenAt),
       })),
     };

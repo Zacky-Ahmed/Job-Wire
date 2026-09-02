@@ -440,6 +440,15 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
      the last control you want someone catching by accident, or missing
      and jabbing at twice. */
   .row .btn-xs{height:40px;padding:0 14px;font-size:13px;}
+  /* A wire row is three stacked bands on a phone, so the 14px grid gap is
+     paid three times over and every row came to 154px — fifty of them is
+     a page you scroll past rather than read. The bands are already
+     distinct by weight and colour; they do not also need a gutter each. */
+  .r-wire{gap:7px;padding:12px 14px;}
+  /* The last band was "10D OLD" alone at the left and a 62px button alone
+     at the right with 170px of nothing between them. Pulling the window
+     text up beside the age closes it and drops another band. */
+  .r-wire .c-win{align-self:center;}
   .acts{gap:8px;}
   /* The narrow actions column does not exist here — the row collapses to
      two columns and .acts lands in the first, 169px wide, with 214px of

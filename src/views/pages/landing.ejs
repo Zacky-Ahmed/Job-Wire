@@ -68,7 +68,7 @@
           <a class="feed-role" href="/signup">
             <%= j.title %><span class="feed-go" aria-hidden="true">Apply</span></a>
           <span class="feed-co"><%= j.company %><%= j.location ? " · " + j.location : "" %>
-            <span class="feed-src">via <%= j.source %></span></span>
+  <% if (j.source) { %><span class="feed-src">via <%= j.source %></span><% } %></span>
         </li>
       <% }); %>
     </ol>

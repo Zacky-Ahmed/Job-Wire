@@ -303,16 +303,25 @@
   .sweep-grid{grid-template-columns:1fr;gap:32px;}
   .owns{grid-template-columns:1fr;gap:28px;}
   .lanes{grid-template-columns:1fr;gap:16px;}
+  /* The pile is floored at 74px so the two lanes line up side by side.
+     Stacked, that floor is just a hole: the winning lane holds three
+     pips and then sixty pixels of nothing, which reads as a broken
+     render rather than as a small pile. */
+  .pile{min-height:0;}
   .lane-vs{display:none;}
   .radar{display:none;}
 }
 @media (max-width:640px){
   :root{--shell:calc(100% - 32px);}
-  .stage{padding-block:74px;}
+  /* 74px top and bottom put 148px of blank between one section and the
+     next — a third of a phone screen, and the page reads as a series of
+     gaps with text in them. The sections are full-height showpieces on a
+     desktop; on a phone they only need separating. */
+  .stage{padding-block:48px;}
   .hero-stage{padding-block:56px 60px;}
-  .end-stage{padding-block:80px 90px;}
+  .end-stage{padding-block:60px 66px;}
   .mega{font-size:clamp(38px,13vw,64px);}
-  .big{font-size:clamp(28px,7.6vw,40px);margin-bottom:30px;}
+  .big{font-size:clamp(28px,7.6vw,40px);margin-bottom:22px;}
   .acts{gap:10px;}
   .act{padding:13px 20px;font-size:14.5px;flex:1 1 auto;justify-content:center;}
   .lane{padding:24px 20px;}
