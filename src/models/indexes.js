@@ -51,10 +51,15 @@ export async function ensureIndexes() {
       { unique: true, name: "alerted_unique" }
     )
   );
+  /* Named for the field it indexes. The first version of this pointed at
+     sentAt while the ledger had already been changed to write seenAt, so
+     the TTL matched nothing and the collection would have grown for ever
+     without ever expiring a row. Renaming the index alongside the field is
+     what makes that impossible to repeat quietly. */
   created.push(
     await collections.alertedJobs().createIndex(
-      { sentAt: 1 },
-      { expireAfterSeconds: env.alertTtlDays * 86400, name: "alerted_ttl" }
+      { seenAt: 1 },
+      { expireAfterSeconds: env.alertTtlDays * 86400, name: "ledger_ttl" }
     )
   );
 

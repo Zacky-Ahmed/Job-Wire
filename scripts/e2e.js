@@ -322,32 +322,46 @@ ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 // A job is mailed once, however long the board leaves it up.
 //
-// seenJobs forgets after SEEN_JOB_TTL_DAYS, so a posting still listed
-// after that comes back looking new. The old defence was to refuse
-// day-precision jobs printed older than the TTL, which also silently
-// killed real Keells listings — 56 and 672 days printed, both genuinely
-// new to us, both never emailed. The ledger replaces that.
-const Alerted = await import("../src/models/alertedJobs.js");
+// seenJobs expires after SEEN_JOB_TTL_DAYS so the wire stays a feed. Dedupe
+// used to run against it, so a posting a board left up longer than that fell
+// out, came back looking new, and was alerted again. On 2026-09-03 that
+// rediscovered 22 MAS listings in one sweep — 18 over a fortnight old — and
+// mailed each to five people.
+const Ledger = await import("../src/models/alertedJobs.js");
+const { diff } = await import("../src/services/poller/dedupe.js");
 const ledgerQ = (await collections.queries().insertOne({
   keywordsKey: `e2e-ledger-${Date.now()}`, keywords: ["x"], geoId: "e2e-l",
-  matchAll: false, createdAt: new Date(), nextFetchAt: null,
+  matchAll: false, createdAt: new Date(), nextFetchAt: null, primed: true,
 })).insertedId;
 
-let sent = await Alerted.alreadySent(ledgerQ, ["keells:1", "keells:2"]);
-ok(sent.size === 0, "nothing is recorded as sent before anything is sent");
-await Alerted.markSent(ledgerQ, ["keells:1"]);
-sent = await Alerted.alreadySent(ledgerQ, ["keells:1", "keells:2"]);
-ok(sent.has("keells:1") && !sent.has("keells:2"),
-  "only the job that went out is remembered");
-// Two sweeps racing the same job must not produce two emails.
-const again = await Alerted.markSent(ledgerQ, ["keells:1", "keells:2"]);
-ok(again === 1, `re-recording is idempotent — only the new one inserts (got ${again})`);
-const bothNow = await Alerted.alreadySent(ledgerQ, ["keells:1", "keells:2"]);
-ok(bothNow.size === 2, "and the second is remembered after its own send");
-await Alerted.forgetQuery(ledgerQ);
-ok((await Alerted.alreadySent(ledgerQ, ["keells:1"])).size === 0,
+ok((await Ledger.knownIds(ledgerQ, ["keells:1"])).size === 0,
+  "a job this search has never met is unknown");
+const won = await Ledger.remember(ledgerQ, ["keells:1"]);
+ok(won.has("keells:1"), "claiming a new job succeeds");
+const lost = await Ledger.remember(ledgerQ, ["keells:1", "keells:2"]);
+ok(!lost.has("keells:1") && lost.has("keells:2"),
+  "a second claim on the same job loses the race, a new one still wins");
+
+// THE REGRESSION: the wire forgets, the ledger must not.
+const job = { jobId: "mas:e2e-old", title: "Intern - Ancient", company: "MAS",
+  location: "Sri Lanka", url: "https://example.invalid/x",
+  postedText: "2026-01-01", postedAt: new Date("2026-01-01") };
+const first = await diff({ _id: ledgerQ, primed: true }, [job]);
+ok(first.alertable.length === 1, "a genuinely new listing is alertable whatever date it prints");
+
+// Expire it from the wire exactly as the TTL would, leaving the ledger alone.
+await collections.seenJobs().deleteMany({ queryId: ledgerQ, jobId: "mas:e2e-old" });
+const second = await diff({ _id: ledgerQ, primed: true }, [job]);
+ok(second.alertable.length === 0,
+  `a listing the wire has forgotten is NOT alerted again (got ${second.alertable.length})`);
+ok((await Ledger.knownIds(ledgerQ, ["mas:e2e-old"])).size === 1,
+  "because the ledger outlives the wire");
+
+await Ledger.forgetQuery(ledgerQ);
+ok((await Ledger.knownIds(ledgerQ, ["keells:1"])).size === 0,
   "deleting a search takes its ledger with it");
-await collections.queries().deleteOne({ _id: ledgerQ });
+await collections.seenJobs().deleteMany({ queryId: ledgerQ });
+
 
 // MAS raises one requisition per plant. Seven identical rows is seven
 // emails for one job, and the API exposes no field that tells them apart.

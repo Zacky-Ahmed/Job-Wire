@@ -1,32 +1,34 @@
 // alertedJobs.js
 //
-// "Have we ever emailed this job to this search?"
+// Every job this search has EVER been shown, whether or not it was mailed.
 //
-// seenJobs cannot answer that. It is the wire's memory and expires after
-// SEEN_JOB_TTL_DAYS so the feed stays a feed, which means a posting a
-// board leaves up for longer than that window is eventually forgotten,
-// rediscovered, and mailed a second time as though it were news.
+// The name is historical: this began as a record of what had been emailed.
+// That was not enough, and the difference cost real inboxes.
 //
-// The old defence was to refuse day-precision jobs whose printed date was
-// older than the TTL. It worked, and it also silently killed real
-// listings: Keells leaves postings up for months and stamps them with the
-// date they were raised, so "Intern - Supply Chain" arrived printed 56
-// days old and "Technical Intern" 672 days old. Both were genuinely new
-// to us, both went to the wire, and neither was ever emailed — the exact
-// complaint that started this.
+// seenJobs is the wire's memory and expires after SEEN_JOB_TTL_DAYS so the
+// feed stays a feed. Dedupe used to run against it, which meant a posting a
+// board left up for longer than that window silently fell out of the set,
+// came back on the next sweep looking brand new, and was alerted all over
+// again. On 2026-09-03 at 15:30 that rediscovered 22 MAS listings at once —
+// 18 of them more than a fortnight old, one printed 170 days old — and sent
+// each to five people. It was not a one-off either: every long-lived listing
+// would have done it again fourteen days later, for ever.
 //
-// Separating the two questions fixes it. The wire keeps a short memory of
-// what it has SHOWN; this keeps a long memory of what it has SENT. Age
-// then stops being a proxy for novelty, and first sight can mean what the
-// sweep already believed it meant: if it is appearing now and was not
-// there before, it is news, whatever date it prints.
+// Recording only what was SENT could not stop it, because those jobs had
+// never been sent: the old day-precision rule had suppressed them by date,
+// and removing that rule is what let them through.
 //
-// Only alerted jobs land here, so it stays a fraction of seenJobs.
+// So the ledger remembers everything the sweep has laid eyes on. It holds
+// ids and nothing else, so it stays a fraction of seenJobs even over years,
+// and it is the single answer to "is this actually new?" — which is the only
+// question dedupe was ever asking. Age stops standing in for novelty: a
+// listing printed 56 days old that we have genuinely never seen is news, and
+// one printed today that we saw last month is not.
 
 import { collections } from "../config/db.js";
 
-/** Which of these have already been emailed for this search. */
-export async function alreadySent(queryId, jobIds) {
+/** Which of these has this search already met? */
+export async function knownIds(queryId, jobIds) {
   if (!jobIds.length) return new Set();
   const rows = await collections.alertedJobs()
     .find({ queryId, jobId: { $in: jobIds } }, { projection: { jobId: 1 } })
@@ -35,27 +37,26 @@ export async function alreadySent(queryId, jobIds) {
 }
 
 /**
- * Record that these went out.
+ * Claim these ids, and return only the ones this call actually won.
  *
- * Unordered so one duplicate key does not abandon the rest of the batch,
- * and duplicates are expected here: two sweeps can race the same job, and
- * the index is what makes that harmless.
+ * The unique index is the concurrency guard: two sweeps racing the same
+ * job both try to insert, one loses with a duplicate key, and only the
+ * winner is allowed to alert. Unordered so a single collision does not
+ * abandon the rest of the batch.
  */
-export async function markSent(queryId, jobIds) {
-  if (!jobIds.length) return 0;
-  const now = new Date();
+export async function remember(queryId, jobIds) {
+  if (!jobIds.length) return new Set();
+  const at = new Date();
+  const docs = jobIds.map((jobId) => ({ queryId, jobId, seenAt: at }));
   try {
-    const res = await collections.alertedJobs().insertMany(
-      jobIds.map((jobId) => ({ queryId, jobId, sentAt: now })),
-      { ordered: false }
-    );
-    return res.insertedCount;
+    await collections.alertedJobs().insertMany(docs, { ordered: false });
+    return new Set(jobIds);
   } catch (err) {
-    // 11000 is the unique index doing its job. Anything else is real.
-    if (err?.code === 11000 || err?.writeErrors?.every((e) => e.err?.code === 11000)) {
-      return err.result?.insertedCount ?? 0;
-    }
-    throw err;
+    const writeErrors = err?.writeErrors || [];
+    if (err?.code !== 11000 && !writeErrors.length) throw err;
+    if (writeErrors.some((e) => e.err?.code !== 11000)) throw err;
+    const lost = new Set(writeErrors.map((e) => docs[e.index]?.jobId));
+    return new Set(jobIds.filter((id) => !lost.has(id)));
   }
 }
 

@@ -87,11 +87,12 @@ export const env = {
   // Must outlive any realistic posting, or you re-alert on old jobs.
   seenJobTtlDays: num("SEEN_JOB_TTL_DAYS", 14),
 
-  // How long we remember having EMAILED a job. Must comfortably outlive
-  // the longest a board leaves a posting up, because this is now the only
-  // thing stopping a long-lived listing being mailed twice — Keells has
-  // live pages printed 672 days old, so a year is the floor, not the aim.
-  alertTtlDays: num("ALERT_TTL_DAYS", 730),
+  // How long we remember having SEEN a job. This is the only thing
+  // stopping a long-lived listing being rediscovered and mailed again, so
+  // it must outlive the longest a board leaves a posting up: Keells serves
+  // live pages printed 672 days old and MAS 288, which makes two years a
+  // floor rather than an aim. It stores ids only, so length is cheap.
+  alertTtlDays: num("ALERT_TTL_DAYS", 1095),
 };
 
 // True when Gmail SMTP is the transport. Every Gmail-specific check

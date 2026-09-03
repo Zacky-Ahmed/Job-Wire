@@ -11,7 +11,6 @@ import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
-import * as AlertedJobs from "../../models/alertedJobs.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
@@ -395,35 +394,14 @@ export async function sweepQuery(query) {
   }
   if (!fresh.length) return { ok: true, fetched: fetched.length, alerted: 0 };
 
-  /* Last gate: has this exact job already been mailed for this search?
+  /* No "have we mailed this before?" gate here any more.
      
-     seenJobs answers "have we shown it", and only for the last
-     SEEN_JOB_TTL_DAYS. A posting a board leaves up longer than that falls
-     out of that memory, comes back as new, and would be mailed again.
-     This ledger is the long memory, and it is what makes dropping the
-     printed-date rule above safe. */
-  const sendable = [];
-  const seenBefore = await AlertedJobs.alreadySent(
-    query._id, fresh.map((j) => j.jobId));
-  for (const j of fresh) if (!seenBefore.has(j.jobId)) sendable.push(j);
-
-  if (seenBefore.size) {
-    log.info("already emailed these before — not sending again", {
-      queryId: String(query._id), suppressed: seenBefore.size,
-    });
-  }
-  if (!sendable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
-
-  /* Written BEFORE the send, not after.
-     
-     A crash between mailing and recording would leave the ledger saying
-     the job was never sent, and the next sweep would send it again — the
-     duplicate this exists to prevent. Recording first can at worst lose
-     one alert to a crash, which is the cheaper of the two failures and
-     the same trade emailLog.open()/settle() already makes. */
-  await AlertedJobs.markSent(query._id, sendable.map((j) => j.jobId));
-
-  const alerted = await fanOut(query, sendable, new Date(started));
+     There was one, and it was the wrong question asked in the wrong place.
+     Novelty is settled in dedupe.js against a ledger that outlives the
+     wire's own TTL, so anything reaching this line is a job this search has
+     genuinely never met. Asking again after claiming would suppress every
+     alert, because claiming is what dedupe now does first. */
+  const alerted = await fanOut(query, fresh, new Date(started));
   return { ok: true, fetched: fetched.length, alerted };
 }
 

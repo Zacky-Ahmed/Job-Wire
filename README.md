@@ -295,23 +295,32 @@ The actions exist because a real support case needs each of them:
 
 ### Mailed once, however long a board leaves it up
 
-`seenJobs` is the wire's memory and expires after `SEEN_JOB_TTL_DAYS` (14),
-so a posting still listed after that falls out, is rediscovered as new, and
-would be mailed a second time.
+`seenJobs` is the wire's memory and expires after `SEEN_JOB_TTL_DAYS` (14) so
+the feed stays a feed. Dedupe used to run against it, and that is a trap: a
+posting a board leaves up longer than that window falls out of the set, comes
+back on the next sweep looking brand new, and is alerted again.
 
-The old defence was to refuse day-precision jobs whose printed date was older
-than the TTL. It also killed real listings. Keells stamps a vacancy with the
-date it was *raised* and leaves it up for months, so `Intern - Supply Chain`
-reached us printed **56 days** old and `Technical Intern` **672 days** old.
-Both were genuinely new to us, both went to the wire, neither was ever
-emailed, and nothing said so.
+It is not hypothetical. On 2026-09-03 at 15:30 one sweep "discovered" **22 MAS
+listings at once** — 18 of them over a fortnight old, one printed 170 days old
+— and mailed each to five people. Every long-lived listing would have done it
+again fourteen days later, indefinitely.
 
-`alertedJobs` splits the two questions: the wire keeps a short memory of what
-it has **shown**, this keeps a long one (`ALERT_TTL_DAYS`, default 730) of what
-it has **sent**. Age stops standing in for novelty, and first sight means what
-the sweep always claimed it meant — appearing now and absent before is news,
-whatever the page prints. It is written *before* the send, so a crash costs at
-most one alert rather than causing a duplicate.
+An earlier attempt recorded what had been **sent** and gated on that. It could
+not work: those jobs had never been sent. The old day-precision rule had
+suppressed them by date, and removing that rule — which was right, it was
+killing real Keells listings printed 56 and 672 days old — is what let them
+through.
+
+So the ledger records every job a search has ever **seen**, sent or not, with a
+TTL (`ALERT_TTL_DAYS`, default 1095) that comfortably outlives the longest a
+board leaves a posting up. It holds ids and nothing else. Dedupe asks it, not
+`seenJobs`, whether something is new, and claims ids *before* alerting so a
+racing sweep loses on the unique index and a crash costs one alert rather than
+causing a duplicate.
+
+Age then stops standing in for novelty, which is the whole point: a listing
+printed 56 days old that we have genuinely never seen is news; one printed
+today that we met last month is not.
 
 ### One vacancy, many requisitions
 
