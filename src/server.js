@@ -153,8 +153,10 @@ export async function buildApp() {
 }
 
 async function main() {
+  // The session store shares this client, so the connection genuinely has
+  // to come first. It is bounded: serverSelectionTimeoutMS is 8s, so a
+  // dead database fails the deploy quickly rather than hanging it.
   await connectDb();
-  await ensureIndexes();
 
   const app = await buildApp();
 
@@ -183,11 +185,38 @@ async function main() {
       })
     );
 
-  if (env.pollerEnabled) {
+  /* Indexes AFTER the port is bound.
+   *
+   * The rule three comments up — bind first, do the useful but non-essential
+   * work after — was written for the SMTP handshake and never applied to the
+   * database, even though ensureIndexes() is the same shape: it can build
+   * indexes, and it throws outright if one already exists under different
+   * options. Until it returned, nothing answered /healthz, so a deploy could
+   * fail its healthcheck because an index was being tidied.
+   *
+   * The poller does wait for it. Its no-double-alert guarantee is the unique
+   * index on the ledger, so sweeping without one risks the duplicate emails
+   * this whole area exists to prevent — better to serve the wire and skip the
+   * sweep than to sweep unprotected.
+   */
+  let indexed = false;
+  try {
+    await ensureIndexes();
+    indexed = true;
+  } catch (err) {
+    log.error("ensureIndexes failed — serving, but NOT sweeping", {
+      message: err.message,
+      hint: "the poller needs the unique indexes to guarantee one alert per job",
+    });
+  }
+
+  if (!env.pollerEnabled) {
+    log.info("poller disabled by POLLER_ENABLED");
+  } else if (!indexed) {
+    log.error("poller held back because the indexes could not be ensured");
+  } else {
     const { startPoller } = await import("./services/poller/loop.js");
     startPoller();
-  } else {
-    log.info("poller disabled by POLLER_ENABLED");
   }
 
   const shutdown = async (signal) => {

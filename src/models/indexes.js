@@ -14,18 +14,46 @@ import { collections } from "../config/db.js";
 import { env } from "../config/env.js";
 import { log } from "../utils/logger.js";
 
+/* createIndex, but tolerant of one that already exists under the same name
+   with different options.
+ *
+ * Mongo answers that with IndexOptionsConflict (85), or IndexKeySpecsConflict
+ * (86) when the key itself moved — it does not adopt the new options. And
+ * this runs at boot, so a change as ordinary as raising a TTL or renaming a
+ * field turns into a container that throws before it can bind a port, which
+ * reads as "healthcheck failed" and nothing else. Raising ALERT_TTL_DAYS from
+ * 730 to 1095 did exactly that and had to be repaired by hand against the
+ * live database.
+ *
+ * Dropping and recreating is safe for every index here: they are small, they
+ * rebuild in milliseconds, and the alternative is a failed deploy each time
+ * an option changes.
+ */
+async function idx(coll, key, opts) {
+  try {
+    return await coll.createIndex(key, opts);
+  } catch (err) {
+    if (err?.code !== 85 && err?.code !== 86) throw err;
+    log.warn("index definition changed — rebuilding", {
+      name: opts?.name, code: err.code,
+    });
+    await coll.dropIndex(opts.name).catch(() => {});
+    return coll.createIndex(key, opts);
+  }
+}
+
 export async function ensureIndexes() {
   const created = [];
 
   // ── users ────────────────────────────────────────────────────
   created.push(
-    await collections.users().createIndex({ email: 1 }, { unique: true, name: "email_unique" })
+    await idx(collections.users(), { email: 1 }, { unique: true, name: "email_unique" })
   );
 
   // ── queries: canonical searches, shared across users ──────────
   // One fetch serves every subscriber of the same keywords+geo.
   created.push(
-    await collections.queries().createIndex(
+    await idx(collections.queries(), 
       { keywordsKey: 1, geoId: 1 },
       { unique: true, name: "query_canonical_unique" }
     )
@@ -35,18 +63,18 @@ export async function ensureIndexes() {
   // unique index would make every such signup fail with a duplicate-key
   // error instead of joining the row it found. Admin merges the leftovers.
   created.push(
-    await collections.queries().createIndex({ identityKey: 1 }, { name: "query_identity" })
+    await idx(collections.queries(), { identityKey: 1 }, { name: "query_identity" })
   );
   // The poller's hot path: "which queries are due?"
   created.push(
-    await collections.queries().createIndex({ nextFetchAt: 1 }, { name: "due_scan" })
+    await idx(collections.queries(), { nextFetchAt: 1 }, { name: "due_scan" })
   );
 
   // ── alertedJobs: what has been MAILED, not merely shown ───────
   // Unique on the same pair as seenJobs, so a racing double-send is a
   // duplicate-key error rather than a second email.
   created.push(
-    await collections.alertedJobs().createIndex(
+    await idx(collections.alertedJobs(), 
       { queryId: 1, jobId: 1 },
       { unique: true, name: "alerted_unique" }
     )
@@ -57,7 +85,7 @@ export async function ensureIndexes() {
      without ever expiring a row. Renaming the index alongside the field is
      what makes that impossible to repeat quietly. */
   created.push(
-    await collections.alertedJobs().createIndex(
+    await idx(collections.alertedJobs(), 
       { seenAt: 1 },
       { expireAfterSeconds: env.alertTtlDays * 86400, name: "ledger_ttl" }
     )
@@ -65,14 +93,14 @@ export async function ensureIndexes() {
 
   // ── subscriptions: user ↔ query ───────────────────────────────
   created.push(
-    await collections.subscriptions().createIndex(
+    await idx(collections.subscriptions(), 
       { userId: 1, queryId: 1 },
       { unique: true, name: "no_duplicate_subscription" }
     )
   );
   // Fan-out on a catch: "who is subscribed to this query?"
   created.push(
-    await collections.subscriptions().createIndex(
+    await idx(collections.subscriptions(), 
       { queryId: 1, active: 1 },
       { name: "fanout" }
     )
@@ -80,13 +108,13 @@ export async function ensureIndexes() {
 
   // ── seenJobs: the set we subtract against ─────────────────────
   created.push(
-    await collections.seenJobs().createIndex(
+    await idx(collections.seenJobs(), 
       { queryId: 1, jobId: 1 },
       { unique: true, name: "seen_unique" }
     )
   );
   created.push(
-    await collections.seenJobs().createIndex(
+    await idx(collections.seenJobs(), 
       { firstSeenAt: 1 },
       { expireAfterSeconds: env.seenJobTtlDays * 86400, name: "seen_ttl" }
     )
@@ -94,7 +122,7 @@ export async function ensureIndexes() {
 
   // ── emailLog ─────────────────────────────────────────────────
   created.push(
-    await collections.emailLog().createIndex(
+    await idx(collections.emailLog(), 
       { userId: 1, sentAt: -1 },
       { name: "user_recent" }
     )
@@ -113,7 +141,7 @@ export async function ensureIndexes() {
      serve nothing this one does not, and every send would pay to keep
      it. */
   created.push(
-    await collections.emailLog().createIndex(
+    await idx(collections.emailLog(), 
       { status: 1, sentAt: 1 },
       { name: "status_recent" }
     )
