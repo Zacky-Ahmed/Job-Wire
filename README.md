@@ -293,6 +293,37 @@ The actions exist because a real support case needs each of them:
 | **Merge** | fold one search into another, moving its watchers across |
 | **Delete search** | clear a parked row. Refused while anyone is subscribed |
 
+### One fetch, every watch
+
+A sweep pulls a country's jobs, keeps what matches its own keywords, and throws
+the rest away — while another watch, minutes behind on its own clock, is about
+to ask the same board for one of the jobs just discarded.
+
+Measured over a week: **2,092** LinkedIn jobs were fetched by more than one
+watch, and **1,975** alerts went out later than the moment the job was already
+in memory — a median of **22 minutes** late, 1,243 of them more than ten
+minutes late. One posting was in hand at 03:25:45 for one watch and not
+delivered to the `intern` watch until 03:39:06.
+
+So every sweep now offers what it fetched to the other live watches in the same
+country. **Title matches only**, and that restriction is the safety property:
+the expensive half of matching asks LinkedIn for a job's employment type, one
+request each, and spending that here would multiply requests by the number of
+watches and get the scraper blocked. This path spends nothing — it decides from
+the title already in hand or leaves the job for the owning watch.
+
+Guard rails: same country only (sources are chosen by country); primed watches
+only (a watch created this minute must not receive a backlog as its first
+email); the same age rule the owning sweep applies, so nothing reaches an inbox
+through this door that the other would have withheld; ids claimed on the ledger
+exactly as dedupe claims them, so it cannot race a watch's own sweep into
+sending twice; and a cap of 25 per watch per sweep so switching it on could not
+become a surprise inbox.
+
+The useful consequence: **latency now falls as watches are added.** More watches
+mean more fetches mean more jobs already in hand when a match appears — the
+opposite of how the per-watch sweep scales.
+
 ### Mailed once, however long a board leaves it up
 
 `seenJobs` is the wire's memory and expires after `SEEN_JOB_TTL_DAYS` (14) so

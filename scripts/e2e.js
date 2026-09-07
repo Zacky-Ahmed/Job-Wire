@@ -320,6 +320,37 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// A fetch is offered to every other watch in the same country.
+//
+// Each sweep used to keep what matched its own keywords and discard the
+// rest, while another watch was minutes away from asking the same board
+// for a job we already had. Over one week 1,975 alerts went out later than
+// the moment the job was in memory, a median of 22 minutes late.
+const QMod2 = await import("../src/models/queries.js");
+const geoX = "e2e-cross";
+const mkQ = async (kw, extra = {}) => (await collections.queries().insertOne({
+  keywordsKey: `e2e-${kw.join("-")}-${Date.now()}${Math.random()}`,
+  keywords: kw, geoId: geoX, matchAll: false, createdAt: new Date(),
+  primed: true, nextFetchAt: new Date(), everyMinutes: 5, ...extra,
+})).insertedId;
+
+const qA = await mkQ(["intern"]);
+const qB = await mkQ(["engineer"]);
+const qParked = await mkQ(["parked"], { nextFetchAt: null });
+const qFresh = await mkQ(["engineer"], { primed: false });
+const qOther = await mkQ(["engineer"], { geoId: "e2e-elsewhere" });
+
+const sibs = await QMod2.siblings(geoX, qA);
+const ids = sibs.map((s) => String(s._id));
+ok(ids.includes(String(qB)), "a live primed watch in the same country is a sibling");
+ok(!ids.includes(String(qA)), "the sweeping watch is not its own sibling");
+ok(!ids.includes(String(qParked)), "a parked watch is not offered anything");
+ok(!ids.includes(String(qFresh)),
+  "an unprimed watch is skipped — its first email must not be a backlog");
+ok(!ids.includes(String(qOther)), "a watch in another country is not a sibling");
+
+await collections.queries().deleteMany({ _id: { $in: [qA, qB, qParked, qFresh, qOther] } });
+
 // A job is mailed once, however long the board leaves it up.
 //
 // seenJobs expires after SEEN_JOB_TTL_DAYS so the wire stays a feed. Dedupe

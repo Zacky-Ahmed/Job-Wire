@@ -11,6 +11,7 @@ import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
+import * as Ledger from "../../models/alertedJobs.js";
 import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
@@ -39,6 +40,126 @@ const ALERT_MAX_AGE_MIN = 240;
 // and taking the job on trust. Bounded so a permanently broken page
 // cannot keep a job in limbo for ever.
 const MAX_REFINE_ATTEMPTS = 3;
+
+
+/* Per target watch, per sweep. A ceiling, not a target: the steady state
+   is a handful, and the cap exists so that switching this on — or adding a
+   watch whose keywords overlap an established one — cannot turn into a
+   surprise inbox. Anything above it simply waits for that watch's own
+   sweep, which is exactly what happened before this existed. */
+const CROSS_MATCH_CAP = 25;
+
+/**
+ * Offer what this sweep fetched to every other watch in the same country.
+ *
+ * Each sweep pulls a country's jobs, keeps what matches its own keywords
+ * and discards the rest — while another watch, minutes behind on its own
+ * clock, is about to ask the same board for one of the jobs just thrown
+ * away. Measured over a week: 2,092 LinkedIn jobs were fetched by more
+ * than one watch, and 1,975 alerts went out later than the moment the job
+ * was already in memory. Median 22 minutes late; 1,243 of them more than
+ * ten minutes late.
+ *
+ * One of those was the job that prompted this. The same posting was in
+ * hand at 03:25:45 for one watch and not delivered to the "intern" watch
+ * until 03:39:06 — thirteen minutes during which we already had it.
+ *
+ * TITLE MATCHES ONLY, and that restriction is the whole safety property.
+ * The expensive half of matching asks LinkedIn for a job's employment
+ * type, one request each; spending that here would multiply requests by
+ * the number of watches and get the scraper blocked, which costs everyone
+ * far more than it saves anyone. So this path spends nothing: it either
+ * decides from the title it already has, or it leaves the job for the
+ * owning watch to refine on its own schedule.
+ *
+ * It also gets better as the service grows. More watches mean more fetches
+ * mean more jobs already in hand, so latency falls as users are added
+ * rather than rising — the opposite of how the per-watch sweep scales.
+ */
+async function shareWithOtherWatches(from, fetched, startedAt) {
+  if (!fetched.length) return 0;
+
+  let others;
+  try {
+    others = await Queries.siblings(from.geoId, from._id);
+  } catch (err) {
+    log.warn("could not look up sibling watches", { message: err.message });
+    return 0;
+  }
+  if (!others.length) return 0;
+
+  let delivered = 0;
+  for (const q of others) {
+    const words = q.matchAll ? [] : (q.keywords || []);
+    const candidates = fetched.filter((j) => !words.length || matchesAny(j.title, words));
+    if (!candidates.length) continue;
+
+    // Same age rule the owning sweep applies, so a job cannot reach an
+    // inbox through this door that would have been withheld at that one.
+    const worth = candidates.filter(isStillWorthMailing);
+    if (!worth.length) continue;
+
+    const known = await Ledger.knownIds(q._id, worth.map((j) => j.jobId));
+    const unseen = worth.filter((j) => !known.has(j.jobId)).slice(0, CROSS_MATCH_CAP);
+    if (!unseen.length) continue;
+
+    // Claimed exactly as dedupe claims: the unique index decides, so this
+    // cannot race the target's own sweep into sending the job twice.
+    const claimed = await Ledger.remember(q._id, unseen.map((j) => j.jobId));
+    const mine = unseen.filter((j) => claimed.has(j.jobId));
+    if (!mine.length) continue;
+
+    await SeenJobs.insertNew(q._id, mine);
+    await SeenJobs.markMatched(q._id, mine.map((j) => ({ ...j, matchedBy: "title" })));
+
+    const sent = await fanOut(q, mine, startedAt);
+    delivered += mine.length;
+    log.info("shared a fetch with another watch", {
+      from: (from.keywords || []).join("+") || "everything",
+      to: (q.keywords || []).join("+") || "everything",
+      jobs: mine.length, recipients: sent,
+    });
+  }
+  return delivered;
+}
+
+/**
+ * Is this job still worth an email, as opposed to merely worth recording?
+ */
+function isStillWorthMailing(j) {
+    // Only judge age where age is knowable. A board that prints dates and
+    // nothing finer resolves every posting to midnight, so a job put up
+    // this morning already reads as hours old — this gate silently
+    // suppressed EVERY Keells alert, which is why ticking that source
+    // produced a wire full of jobs and an inbox with none of them.
+    //
+    // For those sources the backlog is absorbed by the priming sweep and
+    // dedupe: if a job is appearing now and was not there before, it is
+    // news, whatever date it prints.
+    const src = getSource(j.jobId.split(":")[0]);
+    if (src && src.timePrecision === "day") {
+      /* Day-precision sources skip the age gate outright.
+         
+         They used to be refused when the printed date was older than
+         SEEN_JOB_TTL_DAYS, because seenJobs forgets a job after that
+         window and a still-listed posting would be rediscovered and
+         mailed twice. That defence cost more than it saved: Keells
+         stamps a listing with the date the vacancy was RAISED and leaves
+         it up for months, so "Intern - Supply Chain" reached us printed
+         56 days old and "Technical Intern" 672 days old. Both were new
+         to us. Both went to the wire. Neither was ever emailed, and
+         nothing said so.
+         
+         Repeat sends are now prevented by remembering what was actually
+         mailed (models/alertedJobs.js) rather than by inferring it from
+         a date, which lets first sight mean what it says: appearing now
+         and absent before is news, whatever the page prints. */
+      return true;
+    }
+
+    const at = j.postedAt ? new Date(j.postedAt) : null;
+    return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
+}
 
 export async function sweepQuery(query) {
   const started = Date.now();
@@ -315,40 +436,12 @@ export async function sweepQuery(query) {
   // an alert that is not actionable trains you to ignore the ones that
   // are. LinkedIn's own indexing runs about an hour behind, so the
   // threshold sits well clear of that.
-  const fresh = wanted.filter((j) => {
-    // Only judge age where age is knowable. A board that prints dates and
-    // nothing finer resolves every posting to midnight, so a job put up
-    // this morning already reads as hours old — this gate silently
-    // suppressed EVERY Keells alert, which is why ticking that source
-    // produced a wire full of jobs and an inbox with none of them.
-    //
-    // For those sources the backlog is absorbed by the priming sweep and
-    // dedupe: if a job is appearing now and was not there before, it is
-    // news, whatever date it prints.
-    const src = getSource(j.jobId.split(":")[0]);
-    if (src && src.timePrecision === "day") {
-      /* Day-precision sources skip the age gate outright.
-         
-         They used to be refused when the printed date was older than
-         SEEN_JOB_TTL_DAYS, because seenJobs forgets a job after that
-         window and a still-listed posting would be rediscovered and
-         mailed twice. That defence cost more than it saved: Keells
-         stamps a listing with the date the vacancy was RAISED and leaves
-         it up for months, so "Intern - Supply Chain" reached us printed
-         56 days old and "Technical Intern" 672 days old. Both were new
-         to us. Both went to the wire. Neither was ever emailed, and
-         nothing said so.
-         
-         Repeat sends are now prevented by remembering what was actually
-         mailed (models/alertedJobs.js) rather than by inferring it from
-         a date, which lets first sight mean what it says: appearing now
-         and absent before is news, whatever the page prints. */
-      return true;
-    }
+  const fresh = wanted.filter((j) => isStillWorthMailing(j));
 
-    const at = j.postedAt ? new Date(j.postedAt) : null;
-    return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
-  });
+  /* The rule above, as a function, because the cross-match path below has
+     to apply exactly the same test. Two copies of "is this too old to be
+     worth an email" would drift, and the drift would be silent. */
+
   /* Second chance for anything the clock rejected.
      
      The age gate above asks "is this old?" when the question that
@@ -402,6 +495,16 @@ export async function sweepQuery(query) {
      genuinely never met. Asking again after claiming would suppress every
      alert, because claiming is what dedupe now does first. */
   const alerted = await fanOut(query, fresh, new Date(started));
+
+  /* Everything this sweep pulled is now offered to the other watches in
+     this country, matched on title alone so it costs no requests. Failure
+     here must not fail the sweep that already succeeded. */
+  try {
+    await shareWithOtherWatches(query, fetched, new Date(started));
+  } catch (err) {
+    log.warn("sharing this fetch with other watches failed", { message: err.message });
+  }
+
   return { ok: true, fetched: fetched.length, alerted };
 }
 

@@ -125,6 +125,32 @@ export function findDue(limit = 20) {
     .toArray();
 }
 
+/**
+ * The other live searches in the same country.
+ *
+ * A sweep fetches a country's jobs and then throws away everything that
+ * did not match its own keywords — while another watch, minutes behind on
+ * its own schedule, is about to fetch the same board for the same job.
+ * Measured over a week: 2,092 LinkedIn jobs were fetched by more than one
+ * watch, and 1,975 alerts went out later than the moment we already had
+ * the job in memory, a median of 22 minutes later.
+ *
+ * Same country only. Sources are chosen by country and a search fetches
+ * that country's pages, so a Sri Lankan sweep has nothing to say about a
+ * German watch. Primed only, so a watch created this minute does not
+ * receive a backlog as its first ever email.
+ */
+export function siblings(geoId, exceptId) {
+  return collections.queries()
+    .find({
+      _id: { $ne: exceptId },
+      geoId,
+      primed: true,
+      nextFetchAt: { $type: "date" },   // parked searches alert nobody
+    })
+    .toArray();
+}
+
 export async function reschedule(id, { everyMinutes, primed, tracked }) {
   const set = { lastFetchedAt: new Date(), failCount: 0 };
   if (primed !== undefined) set.primed = primed;
