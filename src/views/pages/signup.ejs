@@ -39,6 +39,15 @@
     <span class="msg" id="pw2Msg"></span>
   </div>
 
+  <%# Said before signing up, not discovered afterwards. A watch appearing
+      on its own is a pleasant surprise only if it was not a surprise —
+      otherwise it reads as something the app decided to do with your
+      address. The wording names the search and the way out of it. %>
+  <% if (locals.starterWatch) { %>
+    <p class="hint">You will start out watching
+      <b><%= starterWatch.keywords %></b> in <b><%= starterWatch.location %></b>.
+      Change or delete it any time, and add as many more as you like.</p>
+  <% } %>
   <button class="btn btn-sig btn-lg btn-full" type="submit">Send verification code</button>
   <p class="alt">Already registered? <a href="/signin">Sign in</a></p>
 </form>

@@ -320,6 +320,48 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// A new account already watches something.
+//
+// Signing up landed on an empty page and a form, and the next sweep was
+// the priming one — which alerts on nothing — so filling the form in
+// correctly earned a second wait. The starter watch joins the shared
+// "intern" row, which is already primed and already warm.
+const { ensureStarterWatch } = await import("../src/services/onboarding/starterWatch.js");
+const { identityOf: idOf } = await import("../src/models/queries.js");
+
+const newbie = (await collections.users().insertOne({
+  email: `e2e-starter-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(),
+})).insertedId;
+
+const made = await ensureStarterWatch(newbie);
+ok(!!made, "a newly verified account is given a watch");
+const starterSubs = await collections.subscriptions().find({ userId: newbie }).toArray();
+ok(starterSubs.length === 1, `exactly one watch, not a pile (got ${starterSubs.length})`);
+
+// The point of the whole thing: it must JOIN the shared search, not spawn
+// a rival spelling of it — the split that once stretched the cycle to 9 min.
+const starterQ = await collections.queries().findOne({ _id: starterSubs[0].queryId });
+ok(starterQ.identityKey === idOf({ keywords: ["intern"], geoId: "100446352" }),
+  "and it joins the shared intern/Sri Lanka search rather than making its own");
+ok(starterQ.primed === true, "which is already primed, so the wire fills on the next sweep");
+
+// Called twice — a re-verification, or anything else — must not duplicate.
+const again = await ensureStarterWatch(newbie);
+ok(again === null, "calling it again does nothing");
+ok((await collections.subscriptions().countDocuments({ userId: newbie })) === 1,
+  "and the account still has exactly one watch");
+
+// Somebody who deleted it has decided; it must not come back.
+await collections.subscriptions().deleteMany({ userId: newbie });
+await collections.subscriptions().insertOne({
+  userId: newbie, queryId: starterQ._id, label: "their own", active: true, createdAt: new Date(),
+});
+const third = await ensureStarterWatch(newbie);
+ok(third === null, "an account that already watches anything is left alone");
+
+await collections.subscriptions().deleteMany({ userId: newbie });
+await collections.users().deleteOne({ _id: newbie });
+
 // Every source keeps the contract the poller relies on.
 //
 // A source that returns [] when it cannot decide is the shape of every

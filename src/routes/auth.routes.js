@@ -7,6 +7,7 @@ import { Router } from "express";
 import { authPage } from "../utils/render.js";
 import { email as cleanEmail, str, oid } from "../utils/sanitize.js";
 import * as Users from "../models/users.js";
+import { ensureStarterWatch, describeStarterWatch } from "../services/onboarding/starterWatch.js";
 import * as pw from "../services/auth/password.js";
 import * as otp from "../services/auth/otp.js";
 import { sendVerification, sendPasswordReset } from "../services/mail/send.js";
@@ -28,11 +29,18 @@ const show = (res, view, extra = {}) =>
     notice: extra.notice || null,
     values: extra.values || {},
     email: extra.email || "",
+    // Whitelisted like everything else here: this helper passes named
+    // fields rather than spreading, so a view can only render what a route
+    // deliberately handed it. Anything not listed is silently absent.
+    starterWatch: extra.starterWatch || null,
   });
 
 // ── signup ───────────────────────────────────────────────────────
 authRoutes.get("/signup", redirectIfAuthed, (req, res) =>
   show(res, "signup", { title: "Create account",
+    // Read from the same config the watch is built from, so the form
+    // cannot promise a search the account does not end up with.
+    starterWatch: describeStarterWatch(),
     notice: req.query.stale ? STALE_NOTICE : undefined })
 );
 
@@ -138,6 +146,19 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
       if (user.pendingPassHash) {
         await Users.promotePendingPassword(user._id, user.pendingPassHash);
       }
+
+      /* First watch, before the first page.
+       *
+       * Here rather than at signup because this is the moment the account
+       * becomes real: an address that never returns with its code should
+       * not leave a subscription behind holding a query open.
+       *
+       * Awaited on purpose. It is one insert against a query row that
+       * already exists, and doing it before the redirect means /wire is
+       * already watching something when it first renders — the whole
+       * point. It cannot throw; a failure leaves the account watching
+       * nothing, which is where every account started before this. */
+      await ensureStarterWatch(user._id);
       // regenerate gives a fresh session id (prevents fixation), and save()
       // must complete BEFORE the redirect: res.redirect ends the response
       // while the store write is still in flight, so a fast client can

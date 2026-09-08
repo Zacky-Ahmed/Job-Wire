@@ -93,6 +93,20 @@ export const env = {
   // live pages printed 672 days old and MAS 288, which makes two years a
   // floor rather than an aim. It stores ids only, so length is cheap.
   alertTtlDays: num("ALERT_TTL_DAYS", 1095),
+
+  /* The watch a new account starts with.
+   *
+   * Signing up used to land on an empty wire and a form, which asks
+   * someone to configure a thing before they have seen it do anything.
+   * The first sweep after that is also the priming one, so the reward for
+   * filling the form in correctly was a second wait.
+   *
+   * Comma-separated, matched on the title like any other watch. Set
+   * STARTER_WATCH_KEYWORDS to an empty string to turn it off; the geo is
+   * a LinkedIn geoId and must be one the app knows, or no watch is made. */
+  starterWatchKeywords: (process.env.STARTER_WATCH_KEYWORDS ?? "intern").trim(),
+  starterWatchGeoId: (process.env.STARTER_WATCH_GEO_ID ?? "100446352").trim(),
+  starterWatchLabel: (process.env.STARTER_WATCH_LABEL ?? "Intern").trim(),
 };
 
 // True when Gmail SMTP is the transport. Every Gmail-specific check

@@ -293,6 +293,35 @@ The actions exist because a real support case needs each of them:
 | **Merge** | fold one search into another, moving its watchers across |
 | **Delete search** | clear a parked row. Refused while anyone is subscribed |
 
+### A new account already watches something
+
+Signing up landed on an empty wire and a form. That asks somebody to configure
+a thing before they have seen it do anything — and the next sweep after that is
+the **priming** one, which stores everything and alerts on nothing, so the
+reward for filling the form in correctly was a second wait with nothing to show.
+
+Verifying now creates the watch, and the shared-query design gives it away free:
+the `intern / Sri Lanka` row already exists and is already primed, so a new
+subscriber joins a search that is **warm**. The wire fills on the next sweep.
+
+```bash
+STARTER_WATCH_KEYWORDS=intern      # empty string turns it off
+STARTER_WATCH_GEO_ID=100446352     # a LinkedIn geoId the app knows
+STARTER_WATCH_LABEL=Intern
+```
+
+It runs at **verification**, not signup: an address that never comes back with
+its code should not leave a subscription holding a query open. It is idempotent
+on *any* existing subscription rather than on this particular one — somebody who
+deleted the starter watch has decided, and verifying again must not put it back.
+It cannot throw; a failure leaves the account watching nothing, which is where
+every account started before this existed.
+
+The signup form says which search you will get and that you can delete it,
+read from the same config the watch is built from so the promise and the row
+cannot drift apart. A watch appearing on its own is a pleasant surprise only if
+it was not a surprise.
+
 ### Seven sources, one clock
 
 | source | how | cost | posting time |
