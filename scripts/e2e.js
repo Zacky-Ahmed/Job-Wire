@@ -320,6 +320,42 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// Every source keeps the contract the poller relies on.
+//
+// A source that returns [] when it cannot decide is the shape of every
+// silent failure this project has had — it is indistinguishable from a
+// quiet day. These are structural checks, not network calls.
+const SRC = await import("../src/services/sources/index.js");
+const wanted = ["linkedin", "keells", "topjobs", "mas", "itpro", "xpress", "rooster"];
+ok(wanted.every((id) => SRC.getSource(id)), "every source is registered");
+
+let contractOk = true, precisionOk = true, prefixOk = true;
+for (const id of wanted) {
+  const s2 = SRC.getSource(id);
+  if (typeof s2.fetchJobs !== "function" || !s2.label || !Array.isArray(s2.hosts) || !s2.hosts.length) contractOk = false;
+  if (s2.timePrecision && !["minute", "day"].includes(s2.timePrecision)) precisionOk = false;
+  if (s2.id !== id) prefixOk = false;
+}
+ok(contractOk, "each one has fetchJobs, a label and a host allowlist");
+ok(precisionOk, "timePrecision is only ever minute or day");
+ok(prefixOk, "each source's id matches the key it is registered under");
+
+const sl = SRC.sourcesForCountry("100446352");
+ok(["itpro", "xpress", "rooster"].every((id) => sl.includes(id)),
+  `the three new boards serve Sri Lanka (${sl.length} sources)`);
+const de = SRC.sourcesForCountry("101282230");
+ok(!de.some((id) => ["itpro", "xpress", "rooster", "keells", "mas"].includes(id)),
+  "and none of the Sri Lankan boards is offered to Germany");
+
+// guardedFetch gained a body for rooster; the allowlist must still bite.
+const { assertAllowed } = await import("../src/services/http/guardedFetch.js");
+let blocked = 0;
+for (const bad of ["https://evil.test/x", "http://itpro.lk/x", "https://itpro.lk.evil.test/x"]) {
+  try { assertAllowed(bad, ["itpro.lk"]); } catch { blocked++; }
+}
+ok(blocked === 3, `the host allowlist still refuses plain http and lookalike hosts (${blocked}/3)`);
+ok(!!assertAllowed("https://itpro.lk/jobs/", ["itpro.lk"]), "and still allows the real one");
+
 // A fetch is offered to every other watch in the same country.
 //
 // Each sweep used to keep what matched its own keywords and discard the

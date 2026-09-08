@@ -90,7 +90,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * @param {string[]} allowHosts  hosts this source is permitted to reach
  * @param {object}   opts        { jitter, accept, charset }
  */
-export async function guardedFetch(rawUrl, allowHosts, { jitter = true, accept, charset } = {}) {
+export async function guardedFetch(
+  rawUrl, allowHosts, { jitter = true, accept, charset, method = "GET", body } = {}
+) {
   let url = assertAllowed(rawUrl, allowHosts);
 
   // Random delay so a schedule does not look like a metronome.
@@ -108,10 +110,18 @@ export async function guardedFetch(rawUrl, allowHosts, { jitter = true, accept, 
       res = await fetch(url, {
         redirect: "manual",
         signal: ac.signal,
+        method,
+        // Only ever set for a source whose search endpoint takes a POST —
+        // rooster.jobs wants its query in a JSON body. The SSRF guard above
+        // does not care about the verb, and the allowlist still decides
+        // which hosts can be reached at all, so this widens the shape of a
+        // request without widening where it can go.
+        ...(body === undefined ? {} : { body }),
         headers: {
           "User-Agent": UA,
           Accept: accept || "text/html,application/xhtml+xml",
           "Accept-Language": "en-US,en;q=0.9",
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
       });
     } finally {
@@ -127,6 +137,13 @@ export async function guardedFetch(rawUrl, allowHosts, { jitter = true, accept, 
       const loc = res.headers.get("location");
       if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
       url = assertAllowed(new URL(loc, url).toString(), allowHosts); // revalidate the hop
+      // A redirected POST is not replayed. Browsers turn 301/302 into a
+      // GET and 307/308 keep the method, and guessing wrong either loses
+      // the query or repeats a write. No source here needs it, so refuse
+      // rather than invent a rule.
+      if (method !== "GET") {
+        throw new Error(`${url.hostname} redirected a ${method}; not replaying it`);
+      }
       continue;
     }
 

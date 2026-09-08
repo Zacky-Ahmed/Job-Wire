@@ -23,15 +23,31 @@
 //   hosts         allowlist for guardedFetch — never widen casually
 //   perCountry    true if the source is country-scoped (LinkedIn), false
 //                 if it is one employer's own site (Keells)
-//   fetchJobs({ keywords, geoId, page })  ->  job[]
+//   fetchJobs({ keywords, geoId, page, matchAll })  ->  job[]
 //                 One page. Return [] when there is nothing more.
+//   timePrecision "minute" if the site publishes a real time, "day" if it
+//                 prints only a date — a date resolves to midnight, so a
+//                 job posted this morning already reads as hours old and
+//                 its age cannot be used to decide whether it is news.
+//                 Day-precision sources skip the age gate entirely.
+//   refine        optional. A second pass that may spend one request per
+//                 job to read what a results page does not carry.
+//   isClosed      optional. Answers "is this posting still open?" so an
+//                 older job can be checked rather than assumed dead.
+//
+// A source that cannot decide must THROW, never return []. An empty array
+// means "nothing today", and every silent failure this project has had
+// looked exactly like a quiet day.
 
 import * as linkedin from "./linkedin.js";
 import * as keells from "./keells.js";
 import * as topjobs from "./topjobs.js";
 import * as mas from "./mas.js";
+import * as itpro from "./itpro.js";
+import * as xpress from "./xpress.js";
+import * as rooster from "./rooster.js";
 
-export const SOURCES = { linkedin, keells, topjobs, mas };
+export const SOURCES = { linkedin, keells, topjobs, mas, itpro, xpress, rooster };
 
 export const DEFAULT_SOURCE = "linkedin";
 

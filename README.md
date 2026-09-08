@@ -293,6 +293,48 @@ The actions exist because a real support case needs each of them:
 | **Merge** | fold one search into another, moving its watchers across |
 | **Delete search** | clear a parked row. Refused while anyone is subscribed |
 
+### Seven sources, one clock
+
+| source | how | cost | posting time |
+|---|---|---|---|
+| LinkedIn | scraped, 3 surfaces | **85s** | relative string |
+| MAS | Oracle Recruiting API | 6.7s | date only |
+| topjobs | scraped | 5.6s | date only |
+| Keells | scraped | 5.4s | date only |
+| **Rooster** | JSON API (POST) | 4.0s | timestamp, no offset |
+| **ITPro.lk** | scraped | 2.2s | **ISO timestamp with offset** |
+| **XpressJobs** | JSON API (GET) | 1.3s | none |
+
+Sources are fetched concurrently, so a sweep costs the **slowest** one, not the
+sum. Adding the three new boards took the wall clock from 85.2s to 85.2s — they
+finish while LinkedIn is still on page three of twenty-four — and added 91
+matching jobs for a single keyword.
+
+Two of the three are JSON APIs the sites' own front ends call, so there is no
+markup to break on a redesign. ITPro is the only source that publishes a real
+timestamp with an offset, which makes it the only local board that can be
+trusted to the minute.
+
+Rooster's country filter is accepted and then ignored — the same response comes
+back holding Malaysia, Qatar and "Worldwide" — so Sri Lanka is enforced in the
+adapter. XpressJobs requires `postedIn`, answering 400 without it, and returns a
+bare array rather than a wrapper. Both were found by trying, and both would have
+been silent failures: a wrapper-shaped parse of an array reads as zero jobs,
+which is indistinguishable from a quiet day.
+
+### Adding a source to watches that already exist
+
+A query's first sweep stores everything and alerts on nothing, or a new watch's
+first email is a wall of month-old postings. Adding a source to an **existing**
+watch has the same shape and none of that protection — the watch is already
+primed, so everything the new board has been carrying all along arrives at once
+and every row of it looks new. Measured here: **376 jobs across four watches.**
+
+`npm run prime-sources -- --sources itpro,xpress,rooster --apply` does what a
+priming sweep does: records what the new sources are carrying right now, into
+the wire so the jobs are visible and into the ledger so they can never be mailed
+as news. Run it **before** the deploy that adds the source.
+
 ### One fetch, every watch
 
 A sweep pulls a country's jobs, keeps what matches its own keywords, and throws
