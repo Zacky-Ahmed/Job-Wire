@@ -351,6 +351,26 @@ bare array rather than a wrapper. Both were found by trying, and both would have
 been silent failures: a wrapper-shaped parse of an array reads as zero jobs,
 which is indistinguishable from a quiet day.
 
+### How old is too old to mail
+
+Two different rules, because two different kinds of clock:
+
+| source | rule |
+|---|---|
+| **minute** precision (LinkedIn, ITPro) | four hours, then a closure check for anything the clock rejected |
+| **day** precision (Keells, topjobs, MAS, Rooster, Xpress) | no freshness gate — a date resolves to midnight — but a ceiling of `STALE_ALERT_DAYS` (90) on the printed age |
+
+The day-precision exemption exists because a board that prints "8 Sep 2026" and
+nothing finer makes a job posted this morning read as hours old. It had **no
+upper bound**, which was a bug: Rooster carries years of listings and mailed
+postings printed **1,024** and **747** days old.
+
+The ceiling is deliberately generous rather than tight. Keells stamps a listing
+with the date the vacancy was *raised* and leaves it up for months, so a
+genuinely new Keells posting can print 56 days old — that case is exactly why
+the old fourteen-day rule was removed, and it must keep arriving. This is a
+sanity bound on absurdity, not a freshness rule. The wire still keeps everything.
+
 ### Adding a source to watches that already exist
 
 A query's first sweep stores everything and alerts on nothing, or a new watch's

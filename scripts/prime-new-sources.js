@@ -30,6 +30,8 @@ import * as Ledger from "../src/models/alertedJobs.js";
 import { matchesAny } from "../src/utils/match.js";
 
 const APPLY = process.argv.includes("--apply");
+// Deep enough to outrun any adapter's own paging cap.
+const MAX_PAGES = 12;
 const arg = process.argv[process.argv.indexOf("--sources") + 1];
 const WANTED = (arg && !arg.startsWith("--") ? arg : "").split(",").map((s) => s.trim()).filter(Boolean);
 if (!WANTED.length) {
@@ -55,12 +57,34 @@ for (const q of queries) {
   const found = [];
   for (const sid of usable) {
     try {
-      const jobs = await SOURCES[sid].fetchJobs({
-        keywords: q.keywords, geoId: q.geoId, matchAll: !!q.matchAll, page: 0,
-      });
-      const mine = jobs.filter((j) => !words.length || matchesAny(j.title, words));
+      /* PAGED, exactly as the sweep pages.
+         
+         The first version of this asked for page 0 and stopped, which
+         absorbed only the first slice of each board. Rooster returns a
+         hundred a page and carries years of them, so the pages this never
+         asked for arrived on the next sweep as brand new — and because
+         Rooster is day-precision it skipped the freshness gate, so a
+         posting printed 1,024 days old went out as an alert. Priming that
+         covers less than the sweep does is not priming. */
+      const seen = new Set();
+      const mine = [];
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const jobs = await SOURCES[sid].fetchJobs({
+          keywords: q.keywords, geoId: q.geoId, matchAll: !!q.matchAll, page,
+        });
+        if (!jobs.length) break;
+        const before = seen.size;
+        for (const j of jobs) {
+          if (seen.has(j.jobId)) continue;
+          seen.add(j.jobId);
+          if (!words.length || matchesAny(j.title, words)) mine.push(j);
+        }
+        // A page that adds no id it has not already returned is the end,
+        // however many rows it claims to hold.
+        if (seen.size === before) break;
+      }
       found.push(...mine);
-      console.log(`  ${String(q.keywordsKey).slice(0, 24).padEnd(26)} ${sid.padEnd(9)} ${String(mine.length).padStart(4)} jobs`);
+      console.log(`  ${String(q.keywordsKey).slice(0, 24).padEnd(26)} ${sid.padEnd(9)} ${String(mine.length).padStart(4)} jobs from ${seen.size} fetched`);
     } catch (err) {
       console.log(`  ${String(q.keywordsKey).slice(0, 24).padEnd(26)} ${sid.padEnd(9)} FAILED: ${err.message.slice(0, 50)}`);
     }

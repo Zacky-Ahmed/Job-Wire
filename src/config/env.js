@@ -94,6 +94,21 @@ export const env = {
   // floor rather than an aim. It stores ids only, so length is cheap.
   alertTtlDays: num("ALERT_TTL_DAYS", 1095),
 
+  /* The oldest a posting can PRINT and still be worth an email.
+   *
+   * Day-precision boards skip the four hour freshness gate, because a date
+   * with no time resolves to midnight and a job put up this morning
+   * already reads as hours old. That exemption had no upper bound, so
+   * Rooster — which carries years of listings — mailed one printed 1,024
+   * days old and another 747.
+   *
+   * Deliberately generous. Keells stamps a listing with the date the
+   * vacancy was RAISED and leaves it up for months, so a genuinely new
+   * Keells posting can print 56 days old and must still arrive; that case
+   * is the whole reason the old fourteen day rule was removed. This is a
+   * sanity ceiling on absurdity, not a freshness rule. */
+  staleAlertDays: num("STALE_ALERT_DAYS", 90),
+
   /* The watch a new account starts with.
    *
    * Signing up used to land on an empty wire and a form, which asks

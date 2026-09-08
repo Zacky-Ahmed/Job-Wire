@@ -320,6 +320,37 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// A board that carries years of listings must not mail them.
+//
+// Day-precision sources skip the four hour freshness gate, because a date
+// with no time resolves to midnight. That exemption had no ceiling, so
+// Rooster mailed postings printed 1,024 and 747 days old. The bound is
+// deliberately generous: a genuinely new Keells listing can print 56 days
+// old because the board stamps the date the vacancy was RAISED, and that
+// case is why the old fourteen day rule was removed.
+const { isStillWorthMailing } = await import("../src/services/poller/sweep.js");
+const { env: swEnv } = await import("../src/config/env.js");
+const daysAgo = (n) => new Date(Date.now() - n * 86400000);
+
+ok(typeof isStillWorthMailing === "function", "the mailing rule is exported and testable");
+ok(isStillWorthMailing({ jobId: "keells:1", postedAt: daysAgo(56) }),
+  "a Keells listing printed 56 days old is still mailed");
+ok(!isStillWorthMailing({ jobId: "rooster:1", postedAt: daysAgo(747) }),
+  "a Rooster listing printed 747 days old is not");
+ok(!isStillWorthMailing({ jobId: "rooster:2", postedAt: daysAgo(1024) }),
+  "nor one printed 1,024 days old");
+ok(isStillWorthMailing({ jobId: "rooster:3", postedAt: daysAgo(36) }),
+  "but one printed 36 days old is");
+ok(isStillWorthMailing({ jobId: "topjobs:1", postedAt: null }),
+  "a day-precision job with no date at all is judged on arrival, not withheld");
+ok(isStillWorthMailing({ jobId: "keells:2", postedAt: daysAgo(swEnv.staleAlertDays - 1) }) &&
+   !isStillWorthMailing({ jobId: "keells:3", postedAt: daysAgo(swEnv.staleAlertDays + 1) }),
+  `the ceiling sits exactly at STALE_ALERT_DAYS (${swEnv.staleAlertDays})`);
+
+// LinkedIn keeps its own, much tighter rule — this must not have loosened it.
+ok(!isStillWorthMailing({ jobId: "linkedin:1", postedAt: daysAgo(1) }),
+  "a minute-precision source still uses the four hour gate, not the ceiling");
+
 // A new account already watches something.
 //
 // Signing up landed on an empty page and a form, and the next sweep was

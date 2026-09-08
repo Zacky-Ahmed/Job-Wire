@@ -126,7 +126,7 @@ async function shareWithOtherWatches(from, fetched, startedAt) {
 /**
  * Is this job still worth an email, as opposed to merely worth recording?
  */
-function isStillWorthMailing(j) {
+export function isStillWorthMailing(j) {
     // Only judge age where age is knowable. A board that prints dates and
     // nothing finer resolves every posting to midnight, so a job put up
     // this morning already reads as hours old — this gate silently
@@ -153,7 +153,19 @@ function isStillWorthMailing(j) {
          Repeat sends are now prevented by remembering what was actually
          mailed (models/alertedJobs.js) rather than by inferring it from
          a date, which lets first sight mean what it says: appearing now
-         and absent before is news, whatever the page prints. */
+         and absent before is news, whatever the page prints.
+         
+         It does need ONE bound, though, and not having it was a bug.
+         Rooster carries years of listings, and with nothing to stop it
+         a first sighting of a posting printed 1,024 days old went out as
+         an alert. Age is no longer a proxy for novelty — the ledger does
+         that — but a job printed three years ago is not something anyone
+         can act on within the hour, which is the only thing an email here
+         claims. The wire still keeps it. */
+      const printed = j.postedAt ? new Date(j.postedAt) : null;
+      if (printed && Date.now() - printed.getTime() > env.staleAlertDays * 86400000) {
+        return false;
+      }
       return true;
     }
 
