@@ -542,7 +542,47 @@ export async function sweepQuery(query) {
      wire's own TTL, so anything reaching this line is a job this search has
      genuinely never met. Asking again after claiming would suppress every
      alert, because claiming is what dedupe now does first. */
-  const alerted = await fanOut(query, fresh, new Date(started));
+  /* LAST LINE OF DEFENCE, and it exists because this has now reached real
+     inboxes twice.
+     
+     Once a shared fetch cached one search's FILTERED result and an intern
+     watch was mailed IT Manager and Senior Executive - IT. Once the shared
+     listing was not filtered at all and the same watch was mailed Burger
+     King Crew Member, Lorry Driver and Chef De Partie. Different bugs, one
+     shape: something upstream changed what reached the matcher, and
+     nothing between the fetch and the send ever re-asked the question the
+     watch actually poses.
+     
+     So ask it here, where it cannot be skipped. A job kept for a reason
+     other than its title is exempt — an employer's "Internship" tag is a
+     real match that the title cannot show, and dropping those would undo a
+     feature. Everything else must match the words, and one that does not
+     is a bug upstream: refuse it, and say so loudly enough to find.
+     
+     This is deliberately not where matching BELONGS. It is a guard, and a
+     guard that fires means something above it is broken. */
+  const TITLE_CLAIMS = new Set(["title", "keyword"]);
+  const sendable = words.length
+    ? fresh.filter((j) => !TITLE_CLAIMS.has(j.matchedBy) || matchesAny(j.title, words))
+    : fresh;
+
+  if (sendable.length !== fresh.length) {
+    const dropped = fresh.filter((j) => !sendable.includes(j));
+    log.error("REFUSED to mail jobs this watch's keywords do not match", {
+      queryId: String(query._id),
+      keywords: words.join("+"),
+      dropped: dropped.length,
+      sample: dropped.slice(0, 5).map((j) => `${j.jobId} ${j.title}`),
+      note: "the matcher upstream let these through; this guard should never fire",
+    });
+    /* Unmatched, not forgotten. Deleting the rows would let the next
+       sweep rediscover the same jobs and reach the same wrong conclusion
+       every five minutes for ever. */
+    await SeenJobs.unmatch(query._id, dropped.map((j) => j.jobId), "keyword-guard");
+  }
+  if (!sendable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+
+  const alerted = await fanOut(query, sendable, new Date(started));
 
   /* Everything this sweep pulled is now offered to the other watches in
      this country, matched on title alone so it costs no requests. Failure

@@ -322,6 +322,35 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// Nothing reaches an inbox that the watch's keywords do not match.
+//
+// This guard exists because the failure has happened twice, from two
+// different upstream bugs: an intern watch was mailed IT Manager, and
+// later Burger King Crew Member and Lorry Driver. Both times the matcher
+// upstream was wrong and nothing between the fetch and the send re-asked
+// the question the watch actually poses.
+const { matchesAny: guardMatch } = await import("../src/utils/match.js");
+const CLAIMS = new Set(["title", "keyword"]);
+const guard = (jobs, words) => words.length
+  ? jobs.filter((j) => !CLAIMS.has(j.matchedBy) || guardMatch(j.title, words))
+  : jobs;
+
+const batch = [
+  { jobId: "xpress:1", title: "Intern - Human Resources", matchedBy: "keyword" },
+  { jobId: "xpress:2", title: "Burger King Crew Member", matchedBy: "keyword" },
+  { jobId: "topjobs:3", title: "IT Manager", matchedBy: "title" },
+  { jobId: "linkedin:4", title: "Junior Executive Human Resources", matchedBy: "Internship" },
+];
+const kept = guard(batch, ["intern"]);
+ok(kept.length === 2, `only the matching jobs survive the guard (got ${kept.length})`);
+ok(kept.some((j) => j.jobId === "xpress:1"), "a real intern job goes out");
+ok(!kept.some((j) => j.jobId === "xpress:2"), "Burger King Crew Member does not");
+ok(!kept.some((j) => j.jobId === "topjobs:3"), "nor IT Manager");
+ok(kept.some((j) => j.jobId === "linkedin:4"),
+  "but an employer-tagged Internship survives, because its title cannot show the match");
+ok(guard(batch, []).length === 4,
+  "a match-all watch has no words, so the guard withholds nothing from it");
+
 // A board is fetched once per country per cycle, not once per search.
 //
 // Five live searches in Sri Lanka meant five full walks of LinkedIn every

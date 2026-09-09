@@ -206,6 +206,23 @@ export function recentForQueries(queryIds, limit = 50) {
 }
 
 /**
+ * Keep the row, drop the match.
+ *
+ * NOT forget(). Deleting the row would let the next sweep rediscover the
+ * job and reach the same wrong conclusion, every five minutes, for ever —
+ * the row is what remembers we already considered this one. The wire
+ * renders matched rows, so unmatching takes it off the page without
+ * making it new again.
+ */
+export function unmatch(queryId, jobIds, why) {
+  if (!jobIds.length) return Promise.resolve();
+  return collections.seenJobs().updateMany(
+    { queryId, jobId: { $in: jobIds } },
+    { $set: { matched: false, unmatchedAt: new Date(), unmatchedBy: why } }
+  );
+}
+
+/**
  * Un-remember jobs. Used when every alert for them failed to send: if we
  * kept them, the next sweep would treat them as already seen and the
  * user would never hear about those jobs at all. Forgetting lets the
