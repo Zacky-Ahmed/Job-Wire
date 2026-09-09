@@ -70,13 +70,25 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     // calling it "Real Estate Sales Agent" — that one shows in a
     // logged-in search for "intern" and no title filter on earth finds
     // it. This is the only setting that catches those.
-    const matchAll = req.body.matchAll === "on" || req.body.matchAll === "1";
+    /* No longer offered, and no longer accepted.
+     *
+     * "Send me every job in the country" was a checkbox on this form. It
+     * confused people — it silently ignored the keywords they had just
+     * typed — and it was expensive in a way nothing on screen admitted:
+     * a match-all watch fetches the country's whole listing, which for
+     * Sri Lanka is around 400 jobs a sweep and roughly seventy emails a
+     * day per subscriber.
+     *
+     * Hardcoded rather than read-and-ignored so a hand-written POST
+     * cannot set it either. Existing match-all rows still work; the code
+     * that serves them is untouched. */
+    const matchAll = false;
     const values = { label, keywords: str(req.body.keywords, { max: 600 }), geoId, every, matchAll };
 
     if (!label)
       return render(req, res, { showNew: true, values, error: "Give it a name so you can tell watches apart." });
-    if (!kw.length && !matchAll)
-      return render(req, res, { showNew: true, values, error: "At least one keyword — or tick “every job in the country” below." });
+    if (!kw.length)
+      return render(req, res, { showNew: true, values, error: "At least one keyword, so we know what to watch for." });
     if (!isKnownGeo(geoId))
       return render(req, res, { showNew: true, values, error: "Pick a country from the list." });
 

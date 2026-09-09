@@ -143,13 +143,29 @@ console.log("\n── catch-everything watch ──");
 // Runs last, on the empty list the delete above leaves behind, so it does
 // not perturb the single-watch assumptions the earlier assertions make.
 token = csrf(html);
+
+/* "Send me every job in the country" is gone, and this test used to CREATE
+   one — against the real database, because that is what this suite does.
+   The production poller then swept it, fetched the country's whole listing,
+   and every other search in that country read it out of the shared cache.
+   An intern watch was mailed Burger King Crew Member. The test was the
+   trigger; the checkbox was the loaded gun.
+
+   So: assert it is not offered, and that a hand-written POST cannot
+   resurrect it either. */
 r = await post("/watches", { _csrf: token, label: "Everything SL", matchAll: "on", geoId: "100446352", every: "5" });
 html = await r.text();
-ok(html.includes("Everything SL"), "keywordless watch accepted when matchAll is on");
-const allQ = await collections.queries().findOne({ matchAll: true });
-ok(!!allQ, "matchAll persisted on the query row");
-ok(!!allQ && /@@all$/.test(allQ.keywordsKey),
-  "matchAll owns a distinct key — it must never share a row with the keyword watch");
+ok(/At least one keyword/.test(html),
+  "a keywordless watch is refused now that match-all is gone");
+ok(!(await collections.queries().findOne({ matchAll: true, geoId: "100446352" })),
+  "and a hand-written matchAll POST creates no match-all query");
+
+html = await (await get("/watches")).text();
+ok(!/every job in the country/i.test(html),
+  "the form no longer offers it");
+ok(!/also finds .{0,8}Trainee/.test(html),
+  "and no longer claims intern finds Trainee, which stopped being true");
+token = csrf(html);
 
 console.log("\n── one account never sees another account’s data ──");
 // Query rows are SHARED. Reading one unscoped handed a new account the
