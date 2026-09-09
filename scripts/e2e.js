@@ -519,6 +519,10 @@ await Ledger.forgetQuery(ledgerQ);
 ok((await Ledger.knownIds(ledgerQ, ["keells:1"])).size === 0,
   "deleting a search takes its ledger with it");
 await collections.seenJobs().deleteMany({ queryId: ledgerQ });
+// The query row too. Leaving it behind put sixteen parked "x" searches on
+// the admin page over a fortnight of test runs, each one flagged Duplicate
+// because they all had the same identity.
+await collections.queries().deleteOne({ _id: ledgerQ });
 
 
 // MAS raises one requisition per plant. Seven identical rows is seven

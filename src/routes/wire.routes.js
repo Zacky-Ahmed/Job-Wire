@@ -8,6 +8,7 @@ import { page } from "../utils/render.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import * as Subs from "../models/subscriptions.js";
 import * as SeenJobs from "../models/seenJobs.js";
+import { getSource } from "../services/sources/index.js";
 import * as EmailLog from "../models/emailLog.js";
 import { rel, minutesSince } from "../utils/time.js";
 import { headerState } from "../utils/header.js";
@@ -36,7 +37,10 @@ function showCount(raw) {
   return Math.min(Math.max(n, PAGE), MAX_SHOW);
 }
 
-async function gather(user, show = PAGE) {
+/** The board a row came from, from its id prefix. */
+const sourceOf = (jobId) => String(jobId).split(":")[0];
+
+async function gather(user, show = PAGE, only = "") {
   const watches = await Subs.listForUser(user._id);
   const labelByQuery = new Map(watches.map((w) => [String(w.queryId), w.label]));
 
@@ -68,8 +72,21 @@ async function gather(user, show = PAGE) {
     // how long we have known about it. Using firstSeenAt made a job we
     // discovered late look freshly posted — a fifteen-hour-old listing
     // reading "~60m left" is the most misleading thing this screen can say.
-    const age = minutesSince(j.postedAt || j.firstSeenAt);
-    const pct = Math.min(100, Math.round((age / WINDOW_MIN) * 100));
+    /* Only a time the BOARD published can size this column.
+       
+       The fallback used to be firstSeenAt, which measured how long we had
+       known about a job rather than how old it was — so XpressJobs, which
+       returns createdDate:null on every record, showed "~26m left" on
+       postings of completely unknown age. That is the same lie the comment
+       above warns about, arrived at from the other direction.
+       
+       And the gauge itself only means something when the clock has minutes
+       in it. A board that prints a date resolves every posting to
+       midnight, so a countdown drawn from it is arithmetic on a guess. */
+    const src = getSource(String(j.jobId).split(":")[0]);
+    const precise = src?.timePrecision === "minute";
+    const age = j.postedAt ? minutesSince(j.postedAt) : null;
+    const pct = age === null ? 0 : Math.min(100, Math.round((age / WINDOW_MIN) * 100));
     // A column that reads the same on every row carries no information.
     // Every one of the 50 rows on this account said "likely closed",
     // because LinkedIn indexes about an hour late and the window is an
@@ -79,9 +96,11 @@ async function gather(user, show = PAGE) {
     // closed; you are simply not first any more. Say how old the posting
     // is, which is true, varies, and still rewards being early.
     const ageText =
-      age <= WINDOW_MIN ? `~${Math.max(0, WINDOW_MIN - age)}m left`
-      : age < 360       ? `${Math.round(age / 60)}h old`
-      : age < 1440      ? "posted today"
+      age === null                    ? "no posting date"
+      : precise && age <= WINDOW_MIN  ? `~${Math.max(0, WINDOW_MIN - age)}m left`
+      : age < 60                      ? "posted today"
+      : age < 360                     ? `${Math.round(age / 60)}h old`
+      : age < 1440                    ? "posted today"
       : `${Math.round(age / 1440)}d old`;
     return {
       ...j,
@@ -95,23 +114,46 @@ async function gather(user, show = PAGE) {
       failed: !emailedIds.has(j.jobId) && failedIds.has(j.jobId),
       windowPct: pct,
       windowText: ageText,
-      windowLeft: Math.max(0, WINDOW_MIN - age),
-      // Only the first hour is a race worth drawing a gauge for.
-      inWindow: age <= WINDOW_MIN,
+      windowLeft: age === null ? 0 : Math.max(0, WINDOW_MIN - age),
+      // Only the first hour is a race worth drawing a gauge for, and only
+      // where the board published a time precise enough to draw one from.
+      inWindow: precise && age !== null && age <= WINDOW_MIN,
+      // Which board it came from, for the filter and the row.
+      source: src?.label || "unknown",
+      sourceId: src?.id || String(j.jobId).split(":")[0],
       windowClass: pct > 75 ? "h" : pct > 45 ? "w" : "",
     };
   });
+
+  /* Counted over everything fetched, then filtered — so the tabs keep
+     their numbers when one is selected. Counting after the filter would
+     make every other board read zero the moment you picked one, which is
+     the one thing a filter must never do to the control that undoes it. */
+  const perSource = new Map();
+  for (const d of dispatches) {
+    const id = d.sourceId || sourceOf(d.jobId);
+    if (!perSource.has(id)) {
+      perSource.set(id, { id, label: getSource(id)?.label || id, n: 0 });
+    }
+    perSource.get(id).n++;
+  }
+  const sources = [...perSource.values()].sort((a, b) => b.n - a.n);
+  const filtered = only ? dispatches.filter((d) => (d.sourceId || sourceOf(d.jobId)) === only) : dispatches;
 
   const caughtCount = await SeenJobs.countMatchedForSubscriptions(scope);
 
   return {
     watches,
     ...headerState(watches, env.pollerEnabled),
-    dispatches,
+    dispatches: filtered,
+    sources,
+    only,
+    // The unfiltered total, so "showing N of M" still describes the feed.
+    shownAll: dispatches.length,
     // The COUNT, not the length of the page we happen to render. These
     // differed by 176 for this user: 226 matches, a 50-row page.
     caughtCount,
-    shown: dispatches.length,
+    shown: filtered.length,
     // Only offer "older" when there is genuinely something behind it, and
     // never offer a page the query would refuse to grow into.
     hasMore: caughtCount > dispatches.length && show < MAX_SHOW,
@@ -130,7 +172,11 @@ async function gather(user, show = PAGE) {
 
 wireRoutes.get("/wire", requireAuth, async (req, res, next) => {
   try {
-    const data = await gather(req.user, showCount(req.query.show));
+    // Validated against the registry rather than trusted: an unknown value
+    // would otherwise filter the feed down to nothing and look like a bug.
+    const asked = String(req.query.source || "").trim();
+    const only = getSource(asked) ? asked : "";
+    const data = await gather(req.user, showCount(req.query.show), only);
     page(res, "pages/wire", { title: "The Wire", nav: "wire", user: req.user, ...data });
   } catch (err) {
     next(err);
@@ -142,8 +188,13 @@ wireRoutes.get("/wire/rows", requireAuth, async (req, res, next) => {
   try {
     // The poll must keep the reader where they are. Without carrying
     // `show` through, expanding to 200 rows and waiting 15 seconds
-    // silently collapsed the list back to 50.
-    const { dispatches, watchCount } = await gather(req.user, showCount(req.query.show));
+    // silently collapsed the list back to 50. The same is true of the
+    // source filter: fifteen seconds after picking one, every other
+    // board's jobs would have reappeared underneath it.
+    const asked = String(req.query.source || "").trim();
+    const { dispatches, watchCount } = await gather(
+      req.user, showCount(req.query.show), getSource(asked) ? asked : ""
+    );
     res.render("partials/wire-rows", { dispatches, watchCount }, (err, html) => {
       if (err) return next(err);
       res.type("text/html").send(html);

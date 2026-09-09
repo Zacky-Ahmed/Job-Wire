@@ -41,6 +41,21 @@
       <span class="sp"></span>
       <span class="lbl">Est. application window</span>
     </div>
+    <%# Which board each job came from.
+        Counts are of the whole feed, not of the current selection, so the
+        tab that undoes a filter still says how much is behind it. Plain
+        links rather than script: the filter survives a reload, is
+        shareable, and works with the 15s poll below because that request
+        carries the same source. %>
+    <% if (sources && sources.length > 1) { %>
+      <div class="srcbar">
+        <a class="srctab<%= only ? '' : ' on' %>" href="/wire?show=<%= show %>">All<span><%= shownAll %></span></a>
+        <% sources.forEach(function (s) { %>
+          <a class="srctab<%= only === s.id ? ' on' : '' %>"
+             href="/wire?show=<%= show %>&amp;source=<%= s.id %>"><%= s.label %><span><%= s.n %></span></a>
+        <% }) %>
+      </div>
+    <% } %>
     <div class="row rhead r-wire">
       <span>#</span><span>Mail</span><span>Role</span>
       <span class="hide">Watch</span><span class="hide">Caught</span>
@@ -53,7 +68,7 @@
       Live updates stopped — the connection dropped. Refreshing the page
       restores them; nothing has been lost.
     </p>
-    <div id="wireRows" hx-get="/wire/rows?show=<%= show %>" hx-trigger="every 15s" hx-swap="innerHTML">
+    <div id="wireRows" hx-get="/wire/rows?show=<%= show %><%= only ? '&source=' + only : '' %>" hx-trigger="every 15s" hx-swap="innerHTML">
       <%- include('../partials/wire-rows', { dispatches }) %>
     </div>
     <%# Outside #wireRows on purpose: the 15s poll replaces that element's
@@ -61,7 +76,7 @@
         under the reader's cursor. %>
     <% if (hasMore) { %>
       <div class="more">
-        <a class="btn" href="/wire?show=<%= nextShow %>">Show older</a>
+        <a class="btn" href="/wire?show=<%= nextShow %><%= only ? '&amp;source=' + only : '' %>">Show older</a>
         <span class="more-note">showing <%= shown %> of <%= caughtCount %></span>
       </div>
     <% } else if (shown < caughtCount) { %>

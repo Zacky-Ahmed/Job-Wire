@@ -352,6 +352,27 @@ bare array rather than a wrapper. Both were found by trying, and both would have
 been silent failures: a wrapper-shaped parse of an array reads as zero jobs,
 which is indistinguishable from a quiet day.
 
+### The application window, and where a job came from
+
+The Window column sized itself from `postedAt || firstSeenAt`. That fallback
+measured how long *we* had known about a job rather than how old it was, so
+XpressJobs — which returns `createdDate: null` on every record — showed
+**"~26m left"** on postings of completely unknown age.
+
+Two rules now, and both refuse to guess:
+
+- no published time at all → **"no posting date"**, no gauge
+- a **day**-precision board → an age in days, no gauge. A date resolves to
+  midnight, so a countdown drawn from it is arithmetic on a rounding error
+- a **minute**-precision board (LinkedIn, ITPro.lk) → the countdown, as before
+
+The feed also has **source tabs** — All, XpressJobs, Rooster, LinkedIn, ITPro.lk,
+MAS — with counts taken over the whole feed rather than the current selection,
+so the tab that undoes a filter still says how much is behind it. They are plain
+links, so the filter survives a reload and is shareable, and both the "show
+older" control and the 15-second HTMX poll carry it — without that, fifteen
+seconds after picking a board every other board's jobs reappeared underneath it.
+
 ### "intern" means intern
 
 The matcher used to treat **trainee** as a synonym for **intern**, on the
