@@ -613,6 +613,16 @@ input[type=range]{width:100%;height:40px;accent-color:var(--sig);}
 .w-one.held{background:var(--bg-2);color:var(--faint);}
 .w-lbl{opacity:.65;}
 .w-none{font-family:var(--mono);font-size:10px;color:var(--faint);}
+/* Its own line under the chips: a select wide enough to read an address
+   in cannot sit inside a wrapping row of them. flex-basis rather than
+   width, because .watchers is a wrap container and 100% would still let
+   a chip squeeze alongside it. */
+.w-add{display:flex;flex-direction:row;gap:4px;align-items:center;
+  flex:0 0 100%;margin-top:2px;}
+.w-add select{font-family:var(--mono);font-size:10px;height:26px;padding:0 4px;
+  max-width:230px;border-radius:5px;border:1px solid var(--line);
+  background:var(--bg-2);color:var(--ink);text-overflow:ellipsis;}
+.w-add .btn-xs{height:26px;padding:0 9px;font-size:11px;}
 .w-one form{display:inline;}
 .w-x{background:none;border:0;padding:0 0 0 2px;cursor:pointer;font:inherit;
   line-height:1;color:currentColor;opacity:.45;}

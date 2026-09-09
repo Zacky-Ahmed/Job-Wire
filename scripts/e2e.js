@@ -256,6 +256,7 @@ const attacks = [
   ["delete a query",         `/admin/queries/${anyQuery._id}/delete`],
   ["remove somebody's watch", `/admin/watches/${anyQuery._id}/delete`],
   ["merge two searches",      `/admin/queries/${anyQuery._id}/merge`],
+  ["add somebody to a search", `/admin/queries/${anyQuery._id}/watchers`],
 ];
 html = await (await get("/wire")).text();
 token = csrf(html);
@@ -319,6 +320,23 @@ ok(/not valid/.test(await r.text()), "a reset with no pending request is refused
 const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
+
+// "intern" means intern.
+//
+// The matcher used to treat trainee as a synonym, on the reasoning that
+// Sri Lankan employers use them interchangeably. Some do; the rest
+// delivered Trainee Barista, Trainee Bar Waiters, CCTV Installation
+// Trainees and Management Trainees to a watch for internships.
+const { matchesAny: mm } = await import("../src/utils/match.js");
+ok(!mm("Trainee Barista", ["intern"]), "an intern watch no longer matches Trainee Barista");
+ok(!mm("Management Trainees", ["intern"]), "nor Management Trainees");
+ok(mm("Software Engineer Intern", ["intern"]), "but it still matches Intern");
+ok(mm("Internship - Supply Chain", ["intern"]), "and Internship");
+ok(mm("Marketing Interns", ["intern"]), "and the plural");
+ok(!mm("our internal processes", ["intern"]) && !mm("international clients", ["intern"]),
+  "and still refuses internal / international");
+ok(mm("Trainee Barista", ["trainee"]),
+  "somebody who actually wants trainee roles asks for them and gets them");
 
 // A board that carries years of listings must not mail them.
 //

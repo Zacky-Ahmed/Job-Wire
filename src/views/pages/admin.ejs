@@ -215,6 +215,22 @@
             <% if (!q.watchers.length) { %>
               <span class="w-none">nobody is watching this</span>
             <% } %>
+            <%# Put somebody on this search. A shared query is one fetch
+                however many people are on it, so this is the cheapest
+                thing on the page — and the answer to "can you just add me
+                to that one" without them re-typing the keywords. %>
+            <% if (q.addable.length) { %>
+              <form class="w-add" method="post" action="/admin/queries/<%= q.id %>/watchers">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <select name="userId" aria-label="Add somebody to this search">
+                  <option value="">Add someone&hellip;</option>
+                  <% q.addable.forEach(function (u) { %>
+                    <option value="<%= u.id %>"><%= u.email %><%= u.verified ? "" : " (unverified)" %></option>
+                  <% }) %>
+                </select>
+                <button class="btn btn-xs" type="submit">Add</button>
+              </form>
+            <% } %>
             <% q.watchers.forEach(function (w) { %>
               <span class="w-one<%= w.active ? '' : ' held' %>"
                 title="<%= w.active ? 'Watching' : 'Paused by them' %>">

@@ -21,38 +21,22 @@
 
 const SUFFIX = "(?:s|es|ship|ships|ing|ed|er|ers)?";
 
-/**
- * Words that mean the same job to the person reading.
+/* NO SYNONYMS.
  *
- * Sri Lankan employers use "trainee" and "intern" interchangeably —
- * topjobs alone lists "Trainee Software Engineers", "Trainee QA Engineer"
- * and "Trainee IT" alongside roles titled "Intern", and they are the same
- * thing. Someone watching one and not being shown the other is missing
- * jobs for a vocabulary reason, not a relevance one.
+ * There were: intern and trainee were treated as the same word, on the
+ * reasoning that Sri Lankan employers use them interchangeably and topjobs
+ * lists "Trainee Software Engineer" beside roles titled "Intern".
  *
- * Kept deliberately small. Every entry here widens what arrives in
- * somebody's inbox, so a pair earns its place by being genuinely the same
- * role, not merely adjacent — "graduate" and "junior" are NOT here,
- * because plenty of those want experience an intern does not have.
+ * That is true of some of them and badly untrue of the rest. Watching
+ * "intern" delivered Trainee Barista, Trainee Commi (Pastry & Bakery),
+ * Trainee Bar Waiters, CCTV Installation Trainees, Trainee Metrologist and
+ * Management Trainees — none of which is an internship, and all of which
+ * arrived in an inbox alongside the ones that were.
+ *
+ * The keyword is now taken to mean the word. Somebody who wants trainee
+ * roles can add "trainee" as a keyword and get exactly that, which is both
+ * more honest and more controllable than a table deciding for them.
  */
-const SYNONYMS = {
-  intern: ["trainee"],
-  trainee: ["intern"],
-  internship: ["trainee", "traineeship"],
-  traineeship: ["intern", "internship"],
-};
-
-/** The word itself plus anything that means the same job. */
-function expand(keywords) {
-  const out = [];
-  for (const w of keywords) {
-    if (!w) continue;
-    out.push(w);
-    const also = SYNONYMS[String(w).trim().toLowerCase()];
-    if (also) out.push(...also);
-  }
-  return [...new Set(out)];
-}
 
 const cache = new Map();
 
@@ -66,19 +50,20 @@ function pattern(word) {
   return re;
 }
 
-/** True if any keyword, or a synonym of one, appears as a word. */
+/** True if any keyword appears as a word. */
 export function matchesAny(text, keywords) {
   if (!text) return false;
-  return expand(keywords).some((w) => pattern(w).test(text));
+  return keywords.filter(Boolean).some((w) => pattern(w).test(text));
 }
 
 /** Which word actually hit, or null. Useful for explaining a match. */
 export function firstMatch(text, keywords) {
   if (!text) return null;
-  return expand(keywords).find((w) => pattern(w).test(text)) || null;
+  return keywords.filter(Boolean).find((w) => pattern(w).test(text)) || null;
 }
 
-/** What a keyword will really be searched for. For showing the reader. */
+/** What a keyword will really be searched for. For showing the reader.
+ *  Now simply the keywords themselves; kept so callers need not care. */
 export function expandedFor(keywords) {
-  return expand(Array.isArray(keywords) ? keywords : [keywords]);
+  return (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
 }

@@ -287,6 +287,7 @@ The actions exist because a real support case needs each of them:
 |---|---|
 | **Verify** | a code landed in spam, so the account is locked out of itself |
 | **Delete account** | a spam signup, or someone asking to be removed |
+| **Add watch** | put somebody on a search that already exists. A shared query is one fetch however many people are on it, so this costs nothing — and it is the answer to "can you just add me to that one" without them re-typing the keywords and risking a second copy of the search |
 | **Remove watch** | one person off one search — a bouncing address, or a request by mail from somebody who cannot sign in. The account and their other watches survive |
 | **Park / Resume** | stop a search nobody needs from spending requests. Refused while anyone is actively watching |
 | **Sweep** | check a source is alive without waiting for the schedule |
@@ -350,6 +351,30 @@ adapter. XpressJobs requires `postedIn`, answering 400 without it, and returns a
 bare array rather than a wrapper. Both were found by trying, and both would have
 been silent failures: a wrapper-shaped parse of an array reads as zero jobs,
 which is indistinguishable from a quiet day.
+
+### "intern" means intern
+
+The matcher used to treat **trainee** as a synonym for **intern**, on the
+reasoning that Sri Lankan employers use them interchangeably — topjobs really
+does list "Trainee Software Engineer" beside roles titled "Intern".
+
+That is true of some of them and badly untrue of the rest. Watching `intern`
+delivered Trainee Barista, Trainee Commi (Pastry & Bakery), Trainee Bar Waiters,
+CCTV Installation Trainees, Trainee Metrologist and Management Trainees — none
+an internship, all in the same inbox as the ones that were.
+
+A keyword now means the word. Anyone who wants trainee roles adds `trainee` and
+gets exactly those, which is more honest than a table deciding on their behalf.
+The word-boundary rule is unchanged, so `intern` still reaches internship,
+interns and interning while refusing internal and international.
+
+`npm run prune-matches -- --apply` re-asks the **current** rule of every row
+already on the wire, so the history is corrected by the same definition rather
+than by a list of words. Two guards earn their place there: a **match-all** watch
+is exempt, because its keywords describe nothing and testing against them
+unmatched 1,594 of one watch's 1,625 correct rows; and a row whose query no
+longer exists is skipped, because there are no keywords to test it against and
+5,559 orphans otherwise failed a test nobody set. Scoped properly it was 109 rows.
 
 ### How old is too old to mail
 

@@ -13,6 +13,9 @@
 //   delete   a spam signup, or someone asking to be removed
 //   park     a query nobody needs, still spending requests
 //   sweep    check a source is alive without waiting for the schedule
+//   watch    put somebody ON a search — the mirror of unwatch, and the
+//            answer to "can you just add me to that one": a shared query
+//            already sweeping costs nothing to add a person to
 //   unwatch  drop ONE person's watch — the support case is a bounced
 //            address or a watch somebody asks to be taken off by mail,
 //            neither of which they can do without signing in
@@ -182,6 +185,16 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
            watcher a region they did not ask for. Within a country it is
            a judgement call, which is the whole reason it is a manual
            button and not something the system does behind the admin. */
+        /* Everybody not already on this search.
+           
+           Built from the People array, which is capped at PEOPLE_LIMIT —
+           so on an instance with more accounts than that the picker shows
+           the newest of them rather than everyone. Stated here because a
+           name missing from a dropdown is otherwise indistinguishable
+           from a name that does not exist. */
+        addable: people
+          .filter((u) => !watchers.some((w) => w.email === u.email))
+          .map((u) => ({ id: u.id, email: u.email, verified: u.verified })),
         mergeTargets: queries
           .filter((o) => String(o._id) !== qid && o.geoId === q.geoId)
           .map((o) => ({
@@ -356,10 +369,13 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         // exactly like a dead button.
         req.query.err === "watched" ? "Someone is actively watching that search, so parking it would stop their alerts. Ask them to pause the watch first." :
         req.query.err === "selfmerge" ? "A search cannot be merged into itself." :
-        req.query.err === "geo" ? "Those two searches are in different countries. Merging them would change which region every watcher is following." : null,
+        req.query.err === "geo" ? "Those two searches are in different countries. Merging them would change which region every watcher is following." :
+        req.query.err === "already" ? "That account already watches this search." :
+        req.query.err === "nosuch" ? "That account or search no longer exists." : null,
       adminNotice:
         req.query.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
         req.query.unwatched ? "Watch removed. If that was the last one on the search, it has stopped sweeping." :
+        req.query.watched ? `${req.query.watched} now watches that search. A shared query is one fetch however many people are on it, so this costs nothing.` :
         // Both halves are worth saying: "moved" is who came across,
         // "dropped" is who was already on the target and would otherwise
         // have been sent two copies of every job.
@@ -671,5 +687,49 @@ adminRoutes.post("/admin/queries/:id/merge", ...guard, async (req, res, next) =>
       location: src.location, moved, dropped,
     });
     res.redirect(`/admin?merged=${moved}&dropped=${dropped}`);
+  } catch (err) { next(err); }
+});
+
+
+/**
+ * Put somebody on a search that already exists.
+ *
+ * The mirror of the unwatch button, and the reason it earns a place: a
+ * shared query is one fetch however many people are on it, so adding
+ * somebody to a search that is already sweeping costs nothing at all. The
+ * support case is "can you just add me to the intern one" from a person
+ * who would otherwise re-type the same keywords and — before identityKey
+ * existed — split the query in two doing it.
+ *
+ * Unverified accounts are allowed on purpose. fanOut refuses to mail an
+ * address that has not confirmed itself, so the watch simply sits there
+ * until they verify, which is better than refusing the request and better
+ * than pretending it was actioned.
+ */
+adminRoutes.post("/admin/queries/:id/watchers", ...guard, async (req, res, next) => {
+  try {
+    const queryId = oid(req.params.id);
+    const userId = oid(req.body.userId);
+    if (!queryId || !userId) return res.redirect("/admin");
+
+    const [q, u] = await Promise.all([
+      collections.queries().findOne({ _id: queryId }),
+      collections.users().findOne({ _id: userId }, { projection: { email: 1, verified: 1 } }),
+    ]);
+    if (!q || !u) return res.redirect("/admin?err=nosuch");
+
+    const label = (q.keywords || []).join(", ") || q.location || "Watch";
+    const sub = await Subs.create({ userId, queryId, label });
+    if (!sub) {
+      // The unique index caught it: they are already on this search.
+      return res.redirect("/admin?err=already");
+    }
+
+    log.warn("ADMIN added somebody to a search", {
+      by: req.user.email, account: u.email,
+      search: (q.keywords || []).join("+") || "everything",
+      location: q.location, unverified: !u.verified || undefined,
+    });
+    res.redirect(`/admin?watched=${encodeURIComponent(u.email)}`);
   } catch (err) { next(err); }
 });
