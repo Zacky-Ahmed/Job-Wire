@@ -352,6 +352,56 @@ bare array rather than a wrapper. Both were found by trying, and both would have
 been silent failures: a wrapper-shaped parse of an array reads as zero jobs,
 which is indistinguishable from a quiet day.
 
+### Email packs — one search, different inboxes
+
+One role has many titles. A Data Science student wants `Intern - Data
+Engineering`, `Machine Learning Engineer Intern` and `Business Intelligence
+Trainee`, and does not want `Intern - Human Resources`. No keyword expresses
+that, because a watch's keywords are **OR**'d: watching `intern, data analyst`
+asks for interns *or* analysts and delivers every one of both.
+
+A **pack** is the AND half. The keyword decides what is a job worth looking at;
+the pack decides whether it is about the right subject.
+
+**Where it lives is the whole design.** A pack belongs to a **subscription**,
+not to a query:
+
+| | decides | shared |
+|---|---|---|
+| query | what is fetched and remembered | one fetch for everyone on it |
+| subscription | what reaches *that* inbox | that person alone |
+
+Put it on the query and the watch becomes a different search — its own row, its
+own sweep, its own priming pass, its own share of a cycle everyone queues
+behind. On the subscription, twenty people on one `intern` search still cost one
+fetch and only the last step differs. It also means there is nothing to migrate
+in either direction: setting a pack changes no history, and clearing it restores
+exactly the behaviour the watch had before.
+
+It narrows **email only**. The wire keeps showing everything the watch caught,
+because the complaint packs exist to fix is inbox noise, not having too much to
+read when you deliberately open the page.
+
+The words are phrases, not bare terms — `data analyst`, not `data` — because
+`data` alone matches *Data Entry Operator Intern*, which is not data science by
+any reading. Editing a pack reaches everyone on it at once, since a subscription
+stores the pack **id** and not a copy of its words.
+
+### Deleting a search people are watching
+
+Delete is refused while anyone is subscribed, and that refusal is not timidity: a
+subscription is joined to its query, so removing the query alone makes each watch
+vanish from its owner's page with no message and no way back — present in the
+database, absent from every screen.
+
+The admin can now override it, and the override **takes the watches with it**.
+That is the honest version: those people lose the watch outright and can create
+it again, rather than holding one that renders nowhere. The button renames itself
+to **Force delete**, the confirmation states how many watches it destroys, and
+the log records which accounts they belonged to. The ledger goes too — it is
+keyed by `(queryId, jobId)` and outlives the wire by years, so leaving it would
+keep ids claimed against a search that no longer exists.
+
 ### The application window, and where a job came from
 
 The Window column sized itself from `postedAt || firstSeenAt`. That fallback

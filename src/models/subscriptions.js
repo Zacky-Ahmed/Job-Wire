@@ -32,6 +32,25 @@ export async function create({ userId, queryId, label }) {
   }
 }
 
+/**
+ * Narrow (or un-narrow) what this ONE subscription is emailed.
+ *
+ * Stored as a pack id rather than a copy of its words, so editing a pack
+ * reaches everyone on it instead of freezing whatever the list said the
+ * day somebody was added. An empty value clears it, and clearing restores
+ * exactly the behaviour the watch had before — there is nothing to
+ * migrate back.
+ */
+export async function setEmailPack(id, packId) {
+  const sub = await collections.subscriptions().findOne({ _id: id });
+  if (!sub) return null;
+  await collections.subscriptions().updateOne(
+    { _id: id },
+    packId ? { $set: { emailPack: packId } } : { $unset: { emailPack: "" } }
+  );
+  return sub;
+}
+
 export async function setActive(userId, id, active) {
   const sub = await collections.subscriptions().findOne({ _id: id, userId });
   if (!sub) return;

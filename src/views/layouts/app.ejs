@@ -18,9 +18,11 @@
       actually binds. %>
   <meta name="robots" content="noindex,nofollow">
   <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
+  <link rel="stylesheet" href="<%= asset('/css/workspace.css') %>">
   <script src="<%= asset('/js/htmx.min.js') %>" defer></script>
 </head>
-<body hx-headers='{"x-csrf-token": "<%= csrfToken %>"}'>
+<body class="workspace" hx-headers='{"x-csrf-token": "<%= csrfToken %>"}'>
+  <a class="skip-link" href="#workspaceMain">Skip to content</a>
   <div class="app">
     <header class="topbar">
       <span class="wordmark">
@@ -59,7 +61,8 @@
       </form>
     </header>
 
-    <nav class="tabs">
+    <nav class="tabs" aria-label="Workspace">
+      <span class="nav-caption">WORKSPACE</span>
       <a href="/wire" <%= nav === 'wire' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0"/>
@@ -80,9 +83,27 @@
       <span class="me"><%= user.email %></span>
     </nav>
 
-    <%- body %>
+    <main id="workspaceMain" tabindex="-1">
+      <section class="workspace-heading">
+        <div><div class="eyebrow">JOB WIRE / <%= nav === 'admin' ? 'OPERATIONS' : 'YOUR WORKSPACE' %></div>
+          <h1><%= nav === 'wire' ? 'Your next move starts here.' : nav === 'watches' ? 'Always on the lookout.' : title %></h1>
+          <p><%= nav === 'wire' ? 'Fresh opportunities. Less searching. More possibility.' : nav === 'watches' ? 'Your searches, working quietly in the background.' : 'A clear view of your people, sources, and delivery.' %></p>
+        </div>
+        <button class="btn command-trigger" id="commandOpen" type="button" hidden>Quick jump <kbd>Ctrl K</kbd></button>
+      </section>
+      <%- body %>
+    </main>
   </div>
+  <dialog class="command-dialog" id="commandDialog" aria-labelledby="commandTitle">
+    <div class="command-head"><h2 id="commandTitle">Quick jump</h2><button class="btn btn-xs" id="commandClose" type="button">Close</button></div>
+    <p>Go straight to your workspace.</p>
+    <a href="/wire">↗ The Wire <span>Explore opportunities</span></a>
+    <a href="/watches">◎ Watches <span>Manage your searches</span></a>
+    <a href="/watches?new=1">＋ New watch <span>Find your next role</span></a>
+    <% if (typeof isAdmin !== 'undefined' && isAdmin) { %><a href="/admin">◇ Admin <span>Open operations</span></a><% } %>
+  </dialog>
   <script src="<%= asset('/js/theme.js') %>"></script>
   <script src="<%= asset('/js/ticker.js') %>"></script>
+  <script src="<%= asset('/js/workspace.js') %>"></script>
 </body>
 </html>

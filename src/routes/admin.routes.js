@@ -20,6 +20,8 @@
 //            address or a watch somebody asks to be taken off by mail,
 //            neither of which they can do without signing in
 //   merge    fold one search into another, moving its watchers across
+//   filter   narrow what ONE watcher is emailed, without changing what
+//            the search fetches or what anybody else receives
 //
 // What it deliberately cannot do: change anyone's password, read anyone's
 // mail, or promote an admin. Admin comes from the environment, so this
@@ -42,6 +44,8 @@ import { headerState } from "../utils/header.js";
 import * as Subs from "../models/subscriptions.js";
 import * as EmailLog from "../models/emailLog.js";
 import { rel } from "../utils/time.js";
+import { listPacks, getPack } from "../services/packs.js";
+import * as Ledger from "../models/alertedJobs.js";
 import { dailyCap, providerLabel } from "../services/mail/transport.js";
 import { env } from "../config/env.js";
 
@@ -111,6 +115,9 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       if (!subsByQuery.has(k)) subsByQuery.set(k, []);
       subsByQuery.get(k).push({
         id: String(s._id),
+        // Which narrowing this person has, if any. Query-level state is
+        // shared; this is the one thing on the row that is theirs alone.
+        pack: s.emailPack || "",
         email: emailById.get(String(s.userId)) || "(deleted account)",
         label: s.label,
         active: s.active !== false,
@@ -355,6 +362,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       ...headerState(myWatches, env.pollerEnabled),
       people,
       queryRows,
+      packs: listPacks(),
       delivery,
       poller,
       sourceHealth,
@@ -376,6 +384,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         req.query.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
         req.query.unwatched ? "Watch removed. If that was the last one on the search, it has stopped sweeping." :
         req.query.watched ? `${req.query.watched} now watches that search. A shared query is one fetch however many people are on it, so this costs nothing.` :
+        req.query.filtered ? `Email filter set to ${req.query.filtered}. Their wire still shows everything the watch catches — only the email is narrowed.` :
         // Both halves are worth saying: "moved" is who came across,
         // "dropped" is who was already on the target and would otherwise
         // have been sent two copies of every job.
@@ -554,14 +563,48 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
     if (!q) return res.redirect("/admin");
 
     const subs = await collections.subscriptions().countDocuments({ queryId: id });
-    if (subs > 0) {
+    const force = req.body.force === "1";
+
+    if (subs > 0 && !force) {
       log.warn("ADMIN tried to delete a query someone still watches",
         { by: req.user.email, location: q.location, subscribers: subs });
       return res.redirect("/admin?err=inuse");
     }
 
+    /* Forced deletion takes the watches WITH it, and that is the whole
+       reason the refusal existed rather than timidity: a subscription is
+       joined to its query, so removing the query and leaving the rows
+       behind makes each watch disappear from its owner's page with no
+       message and no way to restore it — present in the database, absent
+       from every screen. Deleting them is at least honest, and the person
+       can create the watch again.
+       
+       The button is only offered with a confirmation naming how many
+       watches it destroys, because nothing else on this page can take
+       something away from somebody who did not ask. */
+    if (subs > 0) {
+      const rows = await collections.subscriptions().find({ queryId: id }).toArray();
+      const who = [];
+      for (const r of rows) {
+        const u = await collections.users().findOne(
+          { _id: r.userId }, { projection: { email: 1 } });
+        if (u) who.push(u.email);
+      }
+      await collections.subscriptions().deleteMany({ queryId: id });
+      log.warn("ADMIN force-deleted a search that people were watching", {
+        by: req.user.email, location: q.location,
+        keywords: (q.keywords || []).join("+") || "everything",
+        watchesDestroyed: rows.length, accounts: who.join(", "),
+      });
+    }
+
     const jobs = await collections.seenJobs().countDocuments({ queryId: id });
     await collections.seenJobs().deleteMany({ queryId: id });
+    // The ledger as well. It is keyed by (queryId, jobId) and outlives the
+    // wire by years, so leaving it behind would keep ids claimed against a
+    // search that no longer exists — invisible, and never expiring on any
+    // clock a reader can see.
+    await Ledger.forgetQuery(id);
     await collections.queries().deleteOne({ _id: id });
     log.warn("ADMIN deleted a query", {
       by: req.user.email, location: q.location,
@@ -731,5 +774,39 @@ adminRoutes.post("/admin/queries/:id/watchers", ...guard, async (req, res, next)
       location: q.location, unverified: !u.verified || undefined,
     });
     res.redirect(`/admin?watched=${encodeURIComponent(u.email)}`);
+  } catch (err) { next(err); }
+});
+
+
+/**
+ * Narrow what one watcher is emailed.
+ *
+ * The search is untouched: same query, same sweep, same jobs remembered,
+ * and everyone else on it keeps receiving everything. Only the last step
+ * — which of the batch is handed to this person — changes, which is why a
+ * pack can be set and cleared freely with nothing to migrate either way.
+ *
+ * Their wire is deliberately NOT filtered. The point is a quieter inbox,
+ * not a shorter page.
+ */
+adminRoutes.post("/admin/watches/:id/pack", ...guard, async (req, res, next) => {
+  try {
+    const id = oid(req.params.id);
+    if (!id) return res.redirect("/admin");
+    const asked = String(req.body.pack || "").trim();
+    // Validated against the registry: an unknown id would sit in the
+    // database looking like a filter and silently do nothing.
+    const packId = getPack(asked) ? asked : "";
+
+    const sub = await Subs.setEmailPack(id, packId);
+    if (!sub) return res.redirect("/admin?err=nosuch");
+    const u = await collections.users().findOne(
+      { _id: sub.userId }, { projection: { email: 1 } });
+
+    log.warn("ADMIN changed a watcher's email filter", {
+      by: req.user.email, account: u?.email || String(sub.userId),
+      pack: packId || "(none)",
+    });
+    res.redirect(`/admin?filtered=${encodeURIComponent(packId ? getPack(packId).label : "off")}`);
   } catch (err) { next(err); }
 });

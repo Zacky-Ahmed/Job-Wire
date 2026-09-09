@@ -257,6 +257,7 @@ const attacks = [
   ["remove somebody's watch", `/admin/watches/${anyQuery._id}/delete`],
   ["merge two searches",      `/admin/queries/${anyQuery._id}/merge`],
   ["add somebody to a search", `/admin/queries/${anyQuery._id}/watchers`],
+  ["change somebody's filter",  `/admin/watches/${anyQuery._id}/pack`],
 ];
 html = await (await get("/wire")).text();
 token = csrf(html);
@@ -320,6 +321,53 @@ ok(/not valid/.test(await r.text()), "a reset with no pending request is refused
 const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
+
+// An email filter belongs to ONE subscription, not to the search.
+//
+// Two people can sit on the same "intern" query and one of them be mailed
+// only the data ones. That is the whole reason it lives here: twenty
+// watchers still cost one fetch, and only the last step differs.
+const { passesPack, listPacks, getPack } = await import("../src/services/packs.js");
+const Subs2 = await import("../src/models/subscriptions.js");
+
+ok(listPacks().some((p) => p.id === "data-science"), "the Data Science pack exists");
+ok(passesPack("Intern - Data Engineering", "data-science"), "it passes a data internship");
+ok(passesPack("Machine Learning Engineer Intern", "data-science"), "and an ML one");
+ok(passesPack("Intern - Software Engineering", "data-science"), "and software engineering");
+ok(!passesPack("Intern - Human Resources", "data-science"), "and blocks an HR one");
+ok(!passesPack("Data Entry Operator Intern", "data-science"),
+  "and blocks Data Entry, which is why the words are phrases and not just \"data\"");
+ok(passesPack("Intern - Human Resources", ""), "no pack set narrows nothing");
+ok(passesPack("Intern - Human Resources", "no-such-pack"),
+  "and a pack that no longer exists must not silently mute somebody");
+
+// Setting and clearing it touches the subscription and nothing else.
+const packUser = (await collections.users().insertOne({
+  email: `e2e-pack-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(),
+})).insertedId;
+const packQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-pack-q-${Date.now()}`, keywords: ["intern"], geoId: "e2e-p",
+  matchAll: false, createdAt: new Date(), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+const packSub = (await collections.subscriptions().insertOne({
+  userId: packUser, queryId: packQ, label: "Intern", active: true, createdAt: new Date(),
+})).insertedId;
+
+await Subs2.setEmailPack(packSub, "data-science");
+let after = await collections.subscriptions().findOne({ _id: packSub });
+ok(after.emailPack === "data-science", "the pack is stored on the subscription");
+const qAfter = await collections.queries().findOne({ _id: packQ });
+ok(qAfter.keywords.join() === "intern" && !qAfter.emailPack,
+  "and the search itself is untouched — same keywords, no filter on the query");
+
+await Subs2.setEmailPack(packSub, "");
+after = await collections.subscriptions().findOne({ _id: packSub });
+ok(after.emailPack === undefined,
+  "clearing it removes the field entirely, so there is nothing to migrate back");
+
+await collections.subscriptions().deleteOne({ _id: packSub });
+await collections.queries().deleteOne({ _id: packQ });
+await collections.users().deleteOne({ _id: packUser });
 
 // "intern" means intern.
 //

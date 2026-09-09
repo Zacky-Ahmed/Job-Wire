@@ -242,6 +242,19 @@
                     the JS literal early, so confirm() never ran and the
                     form submitted straight through. Same trap as the
                     account delete above. %>
+                <%# Their email filter. One button per pack, because with a
+                    single pack a tick is the whole interaction; a second
+                    pack would make this a dropdown. The search is untouched
+                    — this narrows only what THIS person is mailed, and
+                    their wire still shows everything the watch catches. %>
+                <% (locals.packs || []).forEach(function (pk) { %>
+                  <form method="post" action="/admin/watches/<%= w.id %>/pack">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="hidden" name="pack" value="<%= w.pack === pk.id ? '' : pk.id %>">
+                    <button class="w-pack<%= w.pack === pk.id ? ' on' : '' %>" type="submit"
+                      title="<%= w.pack === pk.id ? 'Emailed only ' + pk.label + ' jobs. Click to send everything again' : pk.note + '. Click to email this person only those' %>"><%= w.pack === pk.id ? "✓ " : "" %><%= pk.label %></button>
+                  </form>
+                <% }) %>
                 <form method="post" action="/admin/watches/<%= w.id %>/delete"
                   data-who="<%= w.email %>"
                   onsubmit="return confirm('Remove ' + this.dataset.who + ' from this search? Their account and their other watches are untouched.')">
@@ -286,12 +299,35 @@
               <button class="btn btn-xs" type="submit"<%= q.retired ? ' disabled' : '' %>
                 title="<%= q.retired ? 'Parked searches are not swept — resume it first' : 'Fetch now instead of waiting for the schedule' %>">Sweep</button>
             </form>
-            <form method="post" action="/admin/queries/<%= q.id %>/delete"
-              onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="btn btn-xs btn-bad" type="submit"<%= q.deletable ? '' : ' disabled' %>
-                title="<%= q.deletable ? 'Nobody is subscribed, so this is safe to remove' : q.subscribers + ' watch this. Their watch is joined to the search, so deleting it would make their watch vanish with no way back — remove the watches first, or merge it.' %>">Delete</button>
-            </form>
+            <%# One slot, two meanings, written as two forms rather than one
+                with a conditional confirm — the quoting of a JS string
+                inside an attribute inside a template is exactly the kind of
+                cleverness that breaks silently.
+
+                Unwatched, this is an ordinary delete. Watched, it is the
+                only control on this page that takes something away from
+                people who did not ask, so it changes its name, states the
+                number, and destroys the watches along with the search.
+                Leaving those behind would be worse: a subscription is
+                joined to its query, so each one would vanish from its
+                owner's page with no message and no way back — present in
+                the database and absent from every screen. %>
+            <% if (q.deletable) { %>
+              <form method="post" action="/admin/queries/<%= q.id %>/delete"
+                onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn-xs btn-bad" type="submit"
+                  title="Nobody is subscribed, so this is safe to remove">Delete</button>
+              </form>
+            <% } else { %>
+              <form method="post" action="/admin/queries/<%= q.id %>/delete"
+                onsubmit="return confirm('Delete this search AND the <%= q.subscribers %> watch(es) on it? Those people lose the watch entirely and are not told. This cannot be undone.')">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="force" value="1">
+                <button class="btn btn-xs btn-bad" type="submit"
+                  title="<%= q.subscribers %> person/people watch this. Deleting takes their watch with it.">Force delete</button>
+              </form>
+            <% } %>
           </div>
           <% if (q.mergeTargets.length) { %>
             <%# Manual on purpose. upsert() already stops NEW duplicates

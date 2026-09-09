@@ -16,6 +16,7 @@ import * as Subs from "../../models/subscriptions.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
 import { matchesAny } from "../../utils/match.js";
+import { passesPack } from "../packs.js";
 import { sendAlert } from "../mail/send.js";
 import { dailyCap } from "../mail/transport.js";
 import { env } from "../../config/env.js";
@@ -521,9 +522,10 @@ export async function sweepQuery(query) {
 }
 
 /** One email per subscriber per sweep, carrying every new job at once. */
-async function fanOut(query, jobs, startedAt) {
+async function fanOut(query, all, startedAt) {
   const subs = await Subs.activeSubscribers(query._id);
   if (!subs.length) return 0;
+  if (!all.length) return 0;
 
   /* Counted ONCE before the loop, this was a ceiling in name only: with
      279 of 280 used and a hundred watchers on a shared query, the check
@@ -564,6 +566,28 @@ async function fanOut(query, jobs, startedAt) {
       continue;
     }
     eligible++;
+
+    /* The subscriber's own narrowing, applied here and nowhere else.
+       
+       A pack is the AND half of a watch: the keyword decides what is a job
+       worth looking at, the pack decides whether it is about the right
+       subject. Two people can sit on the same "intern" search and one of
+       them be mailed only the data ones — which is the entire reason it
+       lives on the subscription rather than the query. Twenty watchers
+       still cost one fetch; only the last step differs.
+       
+       EMAIL ONLY. The wire keeps showing everything the watch caught,
+       because the complaint packs exist to fix is inbox noise, not having
+       too much to read when you deliberately open the page. */
+    const jobs = sub.emailPack
+      ? all.filter((j) => passesPack(j.title, sub.emailPack))
+      : all;
+    if (!jobs.length) {
+      log.info("nothing in this batch matched the watcher's filter", {
+        queryId: String(query._id), pack: sub.emailPack, considered: all.length,
+      });
+      continue;
+    }
 
     if (sentToday >= cap) {
       log.warn("daily mail ceiling reached mid fan-out — remaining watchers skipped", {
