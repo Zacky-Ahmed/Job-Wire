@@ -322,6 +322,51 @@ const untouched = await collections.users().findOne({ email: EMAIL });
 ok(await pw.verify(PASS, untouched.passHash), "and the password is unchanged");
 
 
+// A board is fetched once per country per cycle, not once per search.
+//
+// Five live searches in Sri Lanka meant five full walks of LinkedIn every
+// cycle, and it started refusing us: "data analyst" saw 1 job against a
+// peak of 207, "data scientist" 2 of 202. Measured the same day, four
+// separate fetches returned 259 distinct jobs where the largest single one
+// returned 217 — four requests for 42 extra jobs, at the cost of the
+// throttling that was erasing 99% of two searches.
+const FC = await import("../src/services/poller/fetchCache.js");
+
+ok(FC.isShared("linkedin") && FC.isShared("mas") && FC.isShared("topjobs"),
+  "boards whose fetch does not vary by keyword are shared");
+ok(!FC.isShared("keells") && !FC.isShared("rooster"),
+  "and the two that genuinely filter server-side are not — sharing those would lose jobs");
+
+const rota = [["intern"], ["data analyst"], ["business analyst"], ["it"]];
+FC.clearFetchCache();
+let hits = 0;
+const count = () => { hits++; return Promise.resolve([{ jobId: "linkedin:1", title: "x" }]); };
+for (const kw of rota) await FC.sharedFetch("linkedin", "LK", { keywords: kw, rotation: rota }, count);
+ok(hits === 1, `four searches in one country cost ONE LinkedIn fetch (got ${hits})`);
+
+hits = 0;
+for (const kw of rota) await FC.sharedFetch("keells", "LK", { keywords: kw, rotation: rota }, count);
+ok(hits === 4, `a keyword-filtered board still fetches per search (got ${hits})`);
+
+// Different countries must never share a result.
+FC.clearFetchCache();
+hits = 0;
+await FC.sharedFetch("linkedin", "LK", { keywords: ["intern"], rotation: rota }, count);
+await FC.sharedFetch("linkedin", "DE", { keywords: ["intern"], rotation: rota }, count);
+ok(hits === 2, "two countries are two fetches, never one shared between them");
+
+// Rotation is what repays the ~16% a single shared fetch gives up.
+FC.clearFetchCache();
+const drivenBy = [];
+const spy = (kw) => { drivenBy.push((kw || []).join("+")); return Promise.resolve([]); };
+for (let cycle = 0; cycle < rota.length; cycle++) {
+  // What the TTL does: retires the cached result, not the rotation counter.
+  FC.clearFetchCache({ keepRotation: true });
+  await FC.sharedFetch("linkedin", "LK", { keywords: ["intern"], rotation: rota }, spy);
+}
+ok(new Set(drivenBy).size === rota.length,
+  `over ${rota.length} cycles every search's own words drive the shared fetch once (${new Set(drivenBy).size})`);
+
 // An email filter belongs to ONE subscription, not to the search.
 //
 // Two people can sit on the same "intern" query and one of them be mailed

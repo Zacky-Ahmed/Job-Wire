@@ -480,6 +480,56 @@ priming sweep does: records what the new sources are carrying right now, into
 the wire so the jobs are visible and into the ledger so they can never be mailed
 as news. Run it **before** the deploy that adds the source.
 
+### One fetch per board, per country, per cycle
+
+Load used to scale with **searches**. It should only ever have scaled with
+**countries**, and on 2026-09-09 the difference stopped being theoretical:
+
+```
+intern            saw 365/429
+data analyst      saw   1/207   <- collapsed
+business analyst  saw 233/233
+data scientist    saw   2/202   <- collapsed
+it                saw 300/300
+```
+
+Two searches were returning nothing. Not a quiet morning — five searches in one
+country meant five full walks of LinkedIn every cycle, and it began refusing us.
+
+Those five walks were fetching the same jobs. Measured the same hour:
+
+| | |
+|---|---|
+| `intern` / `data analyst` / `business analyst` / `it` | 209 / 191 / 203 / 217 jobs |
+| pairwise overlap | **79–86%** |
+| four fetches, distinct jobs | **259** |
+| the largest single fetch alone | **217** |
+
+Four requests bought **42 extra jobs** and cost the throttling that was erasing
+99% of two searches. A bad trade at five searches; an impossible one at fifty.
+
+So a board is now fetched **once per country per cycle** and every search in that
+country matches the same result locally, which is free. Rerun over the five live
+searches: `data analyst` **1 → 208**, `data scientist` **2 → 209**, board
+fetches **35 → 15** per cycle.
+
+Sources fall into three groups, and the distinction is the safety argument:
+
+- **topjobs, MAS, XpressJobs, ITPro.lk** ignore the keyword entirely — they fetch
+  a listing and filter inside the adapter. Sharing is not an approximation, it is
+  the identical bytes.
+- **LinkedIn** does take a keyword and returns a 79–86% identical set whatever it
+  is. Sharing gives up the edges, so the keyword driving the shared fetch
+  **rotates** between cycles: over a few passes every search's own words get their
+  turn. Nothing is lost for good, because the ledger means a job found a cycle
+  later is still mailed once, and never twice.
+- **Keells and Rooster** genuinely filter server-side, and are cheap (5s and 1s).
+  They are left alone — sharing those *would* lose jobs.
+
+The next bottleneck is those two: at fifty searches they are fifty fetches each.
+Fixing it means fetching them unfiltered once and filtering in the sweep rather
+than in the adapter, which is a bigger change than this one.
+
 ### One fetch, every watch
 
 A sweep pulls a country's jobs, keeps what matches its own keywords, and throws

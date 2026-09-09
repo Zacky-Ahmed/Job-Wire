@@ -9,6 +9,7 @@
 import { getSource, sourcesForCountry, DEFAULT_SOURCE } from "../sources/index.js";
 import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
+import { sharedFetch } from "./fetchCache.js";
 import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
 import * as Ledger from "../../models/alertedJobs.js";
@@ -201,6 +202,18 @@ export async function sweepQuery(query) {
      these end to end, and four searches at that rate drift to a nine
      minute cycle against a five minute schedule. The queue was the
      largest part of the delay this system adds on top of LinkedIn's own. */
+  /* What the shared LinkedIn fetch rotates through: the keywords of every
+     search live in this country, this one first so its own words are used
+     when it is the only search. Read once per sweep, not per source. */
+  let rotation = [query.keywords];
+  try {
+    const siblings = await Queries.siblings(query.geoId, query._id);
+    rotation = [query.keywords, ...siblings.filter((q) => !q.matchAll).map((q) => q.keywords)]
+      .filter((k) => Array.isArray(k) && k.length);
+  } catch (err) {
+    log.warn("could not read sibling keywords for the shared fetch", { message: err.message });
+  }
+
   await Promise.all(sourceIds.map(async (sourceId) => {
     const source = getSource(sourceId);
     if (!source) {
@@ -212,23 +225,41 @@ export async function sweepQuery(query) {
     // nothing new. Capped, because a broken "next page" that repeats
     // itself would otherwise loop until the request budget is gone.
     const MAX_PAGES = 4;
-    try {
+    const walkEveryPage = async (keywords) => {
+      const out = new Map();
       for (let p = 0; p < MAX_PAGES; p++) {
         const jobs = await source.fetchJobs({
-          keywords: query.keywords,
+          keywords,
           geoId: query.geoId,
           matchAll: !!query.matchAll,
           page: p,
         });
         if (!jobs.length) break;
-
-        // Map writes are not interleaved: each adapter awaits its own
-        // network calls, and JS resumes one continuation at a time, so
-        // there is no torn read here even with four running.
-        const before = fetchedMap.size;
-        jobs.forEach((j) => fetchedMap.set(j.jobId, j));
-        if (fetchedMap.size === before) break;
+        const before = out.size;
+        jobs.forEach((j) => out.set(j.jobId, j));
+        if (out.size === before) break;
       }
+      return [...out.values()];
+    };
+
+    try {
+      /* One fetch per board per country per cycle, shared by every search
+         in it — see fetchCache.js for why, and for the measurement that
+         made it necessary. A board that ignores keywords hands back the
+         identical result; LinkedIn hands back a set driven by a rotating
+         keyword, which is how the edges still get covered.
+
+         The adapter still filters by THIS search's keywords afterwards,
+         below, so a shared fetch never widens what a watch matches. */
+      const jobs = await sharedFetch(sourceId, query.geoId, {
+        keywords: query.keywords,
+        rotation,
+      }, walkEveryPage);
+
+      // Map writes are not interleaved: each adapter awaits its own
+      // network calls, and JS resumes one continuation at a time, so
+      // there is no torn read here even with several running.
+      jobs.forEach((j) => fetchedMap.set(j.jobId, j));
     } catch (err) {
       failures.push({ sourceId, err });
       log.warn("source failed", {
