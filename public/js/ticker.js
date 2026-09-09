@@ -4,18 +4,23 @@
 // down every second so the page does not sit frozen between sweeps.
 // Server stays the source of truth — this only formats.
 (function () {
+  var clocks = [];
+  var head = document.getElementById("nextSweep");
+  function collectClocks() { clocks = Array.from(document.querySelectorAll("[data-next]")); }
+  function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
   function mmss(s) {
     s = Math.max(0, Math.round(s));
     return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
   }
 
   function tick() {
+    if (document.hidden) return;
     var soonest = null;
-    document.querySelectorAll("[data-next]").forEach(function (el) {
+    clocks.forEach(function (el) {
       var at = Number(el.dataset.next);
-      if (!at) { el.textContent = "held"; return; }
+      if (!at) { setText(el, "held"); return; }
       var left = (at - Date.now()) / 1000;
-      el.textContent = left <= 0 ? "due now" : "T-" + mmss(left);
+      setText(el, left <= 0 ? "due now" : "T-" + mmss(left));
       if (soonest === null || at < soonest) soonest = at;
     });
 
@@ -23,12 +28,11 @@
     // rows only if it did not supply one. Deriving it purely from
     // [data-next] meant it worked on /watches and nowhere else, so the
     // wire — the page people actually leave open — read "—" forever.
-    var head = document.getElementById("nextSweep");
     if (head) {
       var at = Number(head.dataset.nextSweep) || soonest;
-      head.textContent =
+      setText(head,
         !at ? "—" :
-        at - Date.now() <= 0 ? "due" : mmss((at - Date.now()) / 1000);
+        at - Date.now() <= 0 ? "due" : mmss((at - Date.now()) / 1000));
     }
   }
 
@@ -49,11 +53,14 @@
     }
   }
 
+  collectClocks();
   tick();
   dedupeFlash();
   setInterval(tick, 1000);
+  document.addEventListener("visibilitychange", tick);
   // htmx swaps in fresh rows; re-bind to whatever just arrived
   document.body.addEventListener("htmx:afterSwap", function () {
+    collectClocks();
     tick();
     dedupeFlash();
   });

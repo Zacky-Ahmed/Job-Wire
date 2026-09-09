@@ -63,18 +63,18 @@
 
     <nav class="tabs" aria-label="Workspace">
       <span class="nav-caption">WORKSPACE</span>
-      <a href="/wire" <%= nav === 'wire' ? 'aria-current="page"' : '' %>>
+      <a href="/wire" <%- nav === 'wire' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0"/>
           <circle cx="12" cy="8" r="1.5" fill="currentColor"/></svg> The Wire</a>
-      <a href="/watches" <%= nav === 'watches' ? 'aria-current="page"' : '' %>>
+      <a href="/watches" <%- nav === 'watches' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
         Watches <span class="n"><%= watchCount %></span></a>
       <%# Shown only to admins. The route guards itself regardless — a
           hidden link is not access control, it is just tidiness. %>
       <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
-        <a href="/admin" <%= nav === 'admin' ? 'aria-current="page"' : '' %>>
+        <a href="/admin" <%- nav === 'admin' ? 'aria-current="page"' : '' %>>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round"><path d="M12 3l7 3v5c0 4.4-2.9 8.3-7 10-4.1-1.7-7-5.6-7-10V6l7-3Z"/></svg>
           Admin</a>
@@ -86,7 +86,7 @@
     <main id="workspaceMain" tabindex="-1">
       <section class="workspace-heading">
         <div><div class="eyebrow">JOB WIRE / <%= nav === 'admin' ? 'OPERATIONS' : 'YOUR WORKSPACE' %></div>
-          <h1><%= nav === 'wire' ? 'Your next move starts here.' : nav === 'watches' ? 'Always on the lookout.' : title %></h1>
+          <h1><%= nav === 'wire' ? 'Your next move starts here.' : nav === 'watches' ? 'Always on the lookout.' : nav === 'admin' ? 'Operations, at a glance.' : title %></h1>
           <p><%= nav === 'wire' ? 'Fresh opportunities. Less searching. More possibility.' : nav === 'watches' ? 'Your searches, working quietly in the background.' : 'A clear view of your people, sources, and delivery.' %></p>
         </div>
         <button class="btn command-trigger" id="commandOpen" type="button" hidden>Quick jump <kbd>Ctrl K</kbd></button>
