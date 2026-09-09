@@ -78,7 +78,18 @@ export const env = {
 
   pollTickSeconds: num("POLL_TICK_SECONDS", 30),
   defaultSweepMinutes: num("DEFAULT_SWEEP_MINUTES", 5),
-  minSweepMinutes: num("MIN_SWEEP_MINUTES", 2),
+  /* The floor on how often a watch may be swept, and the slider's left
+     end. Five, not two.
+     
+     Below five it is a promise the boards will not keep: LinkedIn's own
+     public index runs a measured median of 19 minutes behind, so a two
+     minute sweep asks seven and a half times as often to see the same
+     jobs. It is also how searches get throttled — five searches in one
+     country was already enough for LinkedIn to start refusing us, and a
+     shorter interval multiplies that directly. Offering 1-4 on the slider
+     invited people to pick a number that costs everyone coverage and buys
+     them nothing. */
+  minSweepMinutes: num("MIN_SWEEP_MINUTES", 5),
   fetchJitterMs: num("FETCH_JITTER_MS", 4000),
   maxFailCount: num("MAX_FAIL_COUNT", 6),
   pollerEnabled: bool("POLLER_ENABLED", true),
@@ -192,6 +203,12 @@ if (env.brevoApiKey && FREEMAIL.test(fromAddress)) {
 
 if (env.minSweepMinutes < 1) {
   throw new Error("MIN_SWEEP_MINUTES must be at least 1 — sub-minute polling will get you blocked.");
+}
+if (env.defaultSweepMinutes < env.minSweepMinutes) {
+  throw new Error(
+    `DEFAULT_SWEEP_MINUTES (${env.defaultSweepMinutes}) is below MIN_SWEEP_MINUTES ` +
+    `(${env.minSweepMinutes}) — the default must be a value the slider can reach.`
+  );
 }
 if (env.isProd && env.sessionSecret.length < 32) {
   throw new Error("SESSION_SECRET is too short for production. Use 32+ random characters.");

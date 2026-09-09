@@ -38,7 +38,7 @@ async function render(req, res, extra = {}) {
     // (Argentina), which is nobody's intent. DEFAULT_GEO is the home
     // market; a real product would infer it from the request's locale.
     defaultGeo: DEFAULT_GEO,
-    minSweep: env.minSweepMinutes,
+    minSweep: sliderFloor(),
     showNew: extra.showNew ?? false,
     error: extra.error || null,
     notice: extra.notice || null,
@@ -47,6 +47,23 @@ async function render(req, res, extra = {}) {
     sourceLabel: (id) => getSource(id)?.label || id,
   });
 }
+
+/* What the slider offers, which is not the same as what the app will
+ * tolerate.
+ *
+ * MIN_SWEEP_MINUTES is a safety floor an operator can lower; this is a
+ * product decision and does not move. Below five minutes the interval is
+ * a promise the boards will not keep — LinkedIn's public index runs a
+ * measured median of 19 minutes behind, so a two minute sweep asks seven
+ * times as often to see the same jobs — and it is how searches get
+ * throttled, which costs everyone coverage. Offering 1-4 invited people
+ * to pick a number that helps nobody.
+ *
+ * Math.max, not a constant, so raising MIN_SWEEP_MINUTES above five still
+ * raises the slider with it.
+ */
+const SLIDER_MIN_MINUTES = 5;
+const sliderFloor = () => Math.max(SLIDER_MIN_MINUTES, env.minSweepMinutes);
 
 watchesRoutes.get("/watches", requireAuth, (req, res, next) =>
   render(req, res, { showNew: req.query.new === "1" }).catch(next)
@@ -64,7 +81,11 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     // German watch when the country is the only thing that decides.
     const sources = sourcesForCountry(geoId);
     if (!sources.length) sources.push(DEFAULT_SOURCE);
-    const every = int(req.body.every, { min: env.minSweepMinutes, max: 60, fallback: 5 });
+    // Clamped to the same floor the slider shows, so a hand-written POST
+    // cannot ask for the interval the form deliberately stopped offering.
+    const every = int(req.body.every, {
+      min: sliderFloor(), max: 60, fallback: env.defaultSweepMinutes,
+    });
     // Deliberately opt-in. A keyword can only ever be matched against a
     // job TITLE, and employers routinely tag a job "Internship" while
     // calling it "Real Estate Sales Agent" — that one shows in a

@@ -66,6 +66,38 @@ ok(html.includes("No watches"), "empty state");
 r = await get("/watches?new=1");
 html = await r.text();
 ok(html.includes("New watch"), "new-watch dialog opens");
+
+/* The sweep interval starts at five minutes.
+ *
+ * Below five it is a promise the boards do not keep — LinkedIn's public
+ * index runs a measured median of 19 minutes behind — and it is how
+ * searches get throttled, which costs everyone coverage. The slider used
+ * to start at MIN_SWEEP_MINUTES, which is 2 in this environment, so the
+ * floor is deliberately the form's own and not the operator's.
+ *
+ * These assertions live HERE, in the signed-in section. Written after
+ * sign-out they passed while proving nothing: the requests 302'd to
+ * /signin, the slider was simply absent, and the clamp check read an
+ * unrelated query row that already said 5. */
+const slider = html.match(/id="every"[^>]*min="(\d+)"[^>]*max="(\d+)"/);
+ok(!!slider, "the interval slider renders");
+ok(slider && Number(slider[1]) === 5, `it starts at 5 minutes (got ${slider?.[1]})`);
+ok(slider && Number(slider[2]) === 60, `and runs to 60 (got ${slider?.[2]})`);
+
+// A hand-written POST must not get under the floor the form stopped offering.
+r = await post("/watches", {
+  _csrf: csrf(html), label: "Too fast e2e", keywords: "e2e-fastwatch",
+  geoId: "100446352", every: "1",
+});
+await r.text();
+const fastQ = await collections.queries().findOne({ keywordsKey: "e2e-fastwatch" });
+ok(!!fastQ && fastQ.everyMinutes >= 5,
+  `a POST asking for 1 minute is clamped to the floor (row says ${fastQ?.everyMinutes})`);
+if (fastQ) {
+  await collections.subscriptions().deleteMany({ queryId: fastQ._id });
+  await collections.queries().deleteOne({ _id: fastQ._id });
+}
+html = await (await get("/watches?new=1")).text();
 let token = csrf(html);
 
 console.log("\n── create ──");
