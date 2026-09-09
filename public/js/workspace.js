@@ -1,4 +1,33 @@
 (function () {
+  /* Sidebar collapse.
+   *
+   * The SERVER already rendered the collapsed class from the jw.sidebar
+   * cookie, exactly as it does the theme, so there is nothing to apply on
+   * load and no flash. This only flips it and writes the cookie back —
+   * localStorage would be invisible to the server and the page would jump
+   * 140px sideways on every navigation. */
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  if (sidebarToggle) {
+    const root = document.documentElement;
+    const describe = () => {
+      const collapsed = root.classList.contains('sidebar-collapsed');
+      sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+      const what = collapsed ? 'Expand sidebar' : 'Minimize sidebar';
+      sidebarToggle.setAttribute('aria-label', what);
+      sidebarToggle.title = what;
+    };
+    // Revealed only now: a control that does nothing without script has
+    // no business being offered to a browser that will not run it.
+    sidebarToggle.hidden = false;
+    describe();
+    sidebarToggle.addEventListener('click', () => {
+      const collapsed = root.classList.toggle('sidebar-collapsed');
+      describe();
+      document.cookie = 'jw.sidebar=' + (collapsed ? '1' : '0') +
+        ';path=/;max-age=31536000;samesite=lax' +
+        (location.protocol === 'https:' ? ';secure' : '');
+    });
+  }
   const dialog = document.getElementById('commandDialog');
   const open = document.getElementById('commandOpen');
   open.hidden = false;

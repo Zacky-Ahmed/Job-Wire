@@ -19,6 +19,15 @@ export function theme(req, res, next) {
   const raw = req.headers.cookie || "";
   const match = raw.match(/(?:^|;\s*)jw\.theme=(light|dark)/);
   res.locals.theme = match ? match[1] : "light";
+
+  /* The collapsed sidebar rides along, for exactly the same reason.
+     
+     It was first written to localStorage and applied by a deferred
+     script, which cannot work here: the rail is 216px wide and the
+     content is padded to clear it, so the page painted full width and
+     then jumped 140px sideways on every navigation. localStorage is not
+     readable before the first byte; a cookie is. */
+  res.locals.sidebarCollapsed = /(?:^|;\s*)jw\.sidebar=1/.test(raw);
   next();
 }
 

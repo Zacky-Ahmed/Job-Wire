@@ -1,7 +1,7 @@
 /* Loaded only by the authenticated layout. Public and auth pages keep app.css. */
 .workspace{--display:"Segoe UI",system-ui,sans-serif;--bg:#f5f6f2;--bg-2:#edf0e8;--card:#fff;--sunk:#f8f9f5;--line:#e2e6dc;--line-2:#cbd2c1;--ink:#20291f;--ink-2:#596452;--faint:#697461;--vio:#46632a;--vio-soft:#eaf2df;--sig:#365924;--sig-ink:#365924;--sig-soft:#eaf2df;--grad-sig:linear-gradient(135deg,#426e2d,#284b1c);--sh-sig:none;--r:18px;font-size:14px;transition:none}
 [data-theme="dark"] .workspace{--bg:#111712;--bg-2:#202b20;--card:#19221b;--sunk:#1d281f;--line:#303d30;--line-2:#4c6047;--ink:#eff4e8;--ink-2:#b1beaa;--faint:#a0b094;--vio:#c3e895;--vio-soft:#2c3e22;--sig:#c3e895;--sig-ink:#c3e895;--sig-soft:#293b22;--on-sig:#15200f;--grad-sig:linear-gradient(135deg,#d2efac,#acd97e);--grad-head:none}
-.workspace .app{padding-left:216px}.workspace .topbar{height:76px;padding:0 32px;background:var(--bg);box-shadow:none;gap:12px}.workspace .wordmark{position:fixed;left:24px;top:23px;font-size:20px;z-index:32}.workspace .glyph{background:#3d602d;border-radius:12px;box-shadow:none}.workspace .wordmark b span{color:var(--ink)}
+.workspace .app{padding-left:216px}.workspace .topbar{height:76px;padding:0 32px;background:var(--bg);box-shadow:none;gap:12px}.workspace .wordmark{position:fixed;left:24px;top:23px;font-size:20px;z-index:32}.workspace .glyph{background:linear-gradient(135deg,#f76532,#d93813);border-radius:12px;box-shadow:none}.workspace .wordmark b span{color:#d94722}
 .workspace .tabs{position:fixed;left:0;top:0;bottom:0;width:216px;height:100dvh;flex-direction:column;align-items:stretch;padding:116px 16px 24px;border-right:1px solid var(--line);border-bottom:0;background:var(--card);gap:8px;overflow:hidden}
 .nav-caption{font-size:10px;letter-spacing:.18em;color:var(--faint);padding:0 14px 12px}.workspace .tabs a{height:46px;border-radius:11px;padding:0 14px;font-size:13px;gap:12px}.workspace .tabs a[aria-current="page"]{background:#ddedc9;color:#304d20}.workspace .tabs a[aria-current="page"]::after{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;margin-left:auto}.workspace .tabs .me{font:11px var(--display);overflow-wrap:anywhere;white-space:normal;border-top:1px solid var(--line);padding:18px 12px 0}.workspace .chip{background:transparent;padding:6px 8px}.workspace .chip:first-child{background:var(--vio-soft)}
 .workspace main{min-width:0}.workspace-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:38px 32px 8px;max-width:1600px;margin:auto}.eyebrow{font:10px var(--mono);letter-spacing:.15em;color:var(--faint);margin-bottom:13px}.workspace-heading h1{font-size:clamp(26px,2.5vw,38px);font-weight:600;letter-spacing:-.045em;line-height:1.16}.workspace-heading p{color:var(--ink-2);margin-top:12px;font-size:13px}.workspace .wrap{padding:26px 32px 40px;gap:24px;max-width:1600px;width:100%;margin:auto}
@@ -18,3 +18,47 @@
 @media(max-width:640px){.workspace .r-wire{grid-template-columns:auto auto minmax(0,1fr)}.workspace .r-wire .role{grid-column:1/-1}.workspace .wordmark b span{display:inline}}
 .workspace-heading{animation:rise .35s var(--ease) both}.command-dialog[open]{animation:rise .18s var(--ease) both}
 @media(prefers-reduced-motion:reduce){.workspace-heading,.command-dialog[open]{animation:none}}
+
+/* The mark stays orange in both themes. It was briefly green with an
+   orange override appended after it — two rules disagreeing about the
+   brand, where the answer depended on which one loaded last. The colour
+   now lives in one place; only the dark-theme lift is a second rule,
+   because #d94722 is too dark to read on the dark ground. */
+[data-theme="dark"] .workspace .wordmark b span { color:#ff8058; }
+.sidebar-toggle { flex:none; }
+.sidebar-toggle svg { transition:transform .18s ease; }
+@media(min-width:701px) {
+  html.sidebar-collapsed .workspace .app { padding-left:76px; }
+  html.sidebar-collapsed .workspace .tabs { width:76px;padding-left:12px;padding-right:12px; }
+  html.sidebar-collapsed .workspace .wordmark { left:20px; }
+  html.sidebar-collapsed .workspace .wordmark b,
+  html.sidebar-collapsed .workspace .nav-label,
+  html.sidebar-collapsed .workspace .tabs .n,
+  html.sidebar-collapsed .workspace .tabs .me { display:none; }
+  html.sidebar-collapsed .workspace .nav-caption { visibility:hidden;height:37px;padding:0; }
+  html.sidebar-collapsed .workspace .tabs a { justify-content:center;padding:0; }
+  html.sidebar-collapsed .workspace .tabs a[aria-current="page"]::after { position:absolute;right:5px;width:4px;height:4px; }
+  html.sidebar-collapsed .sidebar-toggle svg { transform:rotate(180deg); }
+}
+@media(max-width:700px) { .workspace .sidebar-toggle { display:none; } }
+
+/* Give query controls real room and keep destructive labels on one line. */
+.workspace .r-admin .btn { white-space:nowrap;flex-shrink:0; }
+.workspace .r-admin .acts-r { display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px; }
+.workspace .r-admin .acts-r form { flex:none; }
+.workspace .r-admin .merge { width:100%;gap:6px; }
+.workspace .r-admin .merge select { flex:1;min-width:0;width:0;max-width:none;height:34px;font:11px var(--display);padding:0 10px; }
+.workspace .watchers { margin-top:12px;gap:8px; }
+.workspace .w-add { gap:6px; }
+.workspace .w-add select { height:32px;min-width:0;max-width:min(260px,100%);font:11px var(--display);padding:0 9px;border-radius:8px; }
+.workspace .w-add .btn-xs { height:32px; }
+.workspace .w-one { flex-wrap:wrap;align-items:center;max-width:100%;overflow-wrap:anywhere;padding:7px 10px;gap:8px;border:1px solid var(--line);border-radius:9px;font:11px var(--display); }
+.workspace .w-lbl { opacity:1;color:var(--ink-2); }
+.workspace .w-pack { margin-left:0; }
+.workspace .w-x { min-width:24px;min-height:24px;opacity:.8; }
+@media(min-width:981px) { .workspace .r-admin { grid-template-columns:minmax(0,1fr) 100px 80px 250px;gap:18px; } }
+@media(max-width:980px) {
+  .workspace .r-admin .acts { grid-column:1/-1;align-items:flex-start; }
+  .workspace .r-admin .acts-r { justify-content:flex-start; }
+  .workspace .r-admin .merge { max-width:320px; }
+}
