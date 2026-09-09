@@ -76,8 +76,17 @@ for (const r of rows) {
      They are invisible anyway: nothing renders a row whose query is gone. */
   if (!words.has(key)) continue;
 
+  /* "title" and "keyword" both ASSERT that the words matched. If the title
+     does not match today, the label is a lie and the row does not belong.
+     
+     "Internship" and the other tag labels are different and must survive:
+     they mean the EMPLOYER classified the job, which is how a Junior
+     Executive Human Resources posting legitimately reaches a watch for
+     interns without the word appearing in its title. The check above
+     already keeps those, by asking whether the label itself matches. */
   if (!everything.has(key) &&
-      r.matchedBy === "title" && !matchesAny(r.title, words.get(key) || [])) {
+      (r.matchedBy === "title" || r.matchedBy === "keyword") &&
+      !matchesAny(r.title, words.get(key) || [])) {
     doomed.push([r, "title no longer matches"]);
     continue;
   }

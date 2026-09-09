@@ -53,17 +53,31 @@ import { log } from "../../utils/logger.js";
    own next turn. */
 const TTL_MS = 4 * 60_000;
 
-/** Boards whose fetch does not depend on the keyword at all. */
-const IGNORES_KEYWORDS = new Set(["topjobs", "mas", "xpress", "itpro"]);
+/* Boards that fetch a whole listing and then filter it in the adapter.
+ *
+ * These are shared by asking for the listing UNFILTERED and letting the
+ * sweep apply each search's own words afterwards. That distinction is not
+ * a detail: the first version cached the adapter's FILTERED result, so
+ * whichever search drove the fetch decided what every other search in the
+ * country saw. A watch for "intern" was handed the "IT" search's results
+ * and filled with IT Manager, IT Technician and Senior Executive - IT.
+ */
+const SHARE_UNFILTERED = new Set(["topjobs", "mas", "xpress", "itpro"]);
 
-/** Boards where sharing costs a little coverage, repaid by rotating. */
-const ROTATES = new Set(["linkedin"]);
+/* LinkedIn is NOT shared.
+ *
+ * Its keyword is not a filter over one listing: the adapter unions a
+ * keyword query with the country feed, and keeps jobs whose TITLE never
+ * matches because the employer tagged them Internship. There is no
+ * unfiltered result to share that preserves that, so sharing it either
+ * loses the tag matches or hands one search another's. Its cost is real
+ * and the fix is to share only the country-feed half of what it fetches,
+ * which is a change inside the adapter rather than a cache around it. */
 
-const cache = new Map();   // "source:geo" -> { at, jobs, keyword }
-const turn = new Map();    // "source:geo" -> how many times we have rotated
+const cache = new Map();   // "source:geo" -> { at, jobs }
 
 export function isShared(sourceId) {
-  return IGNORES_KEYWORDS.has(sourceId) || ROTATES.has(sourceId);
+  return SHARE_UNFILTERED.has(sourceId);
 }
 
 /**
@@ -71,10 +85,11 @@ export function isShared(sourceId) {
  *
  * `fetchPages` does the actual paging; this only decides whether to call
  * it. Kept as a callback so the paging rules stay in sweep.js where they
- * are already explained.
+ * are already explained — and so the caller decides, per source, whether
+ * it is asking for a whole listing or for its own filtered set.
  */
-export async function sharedFetch(sourceId, geoId, want, fetchPages) {
-  if (!isShared(sourceId)) return fetchPages(want.keywords);
+export async function sharedFetch(sourceId, geoId, fetchPages) {
+  if (!isShared(sourceId)) return fetchPages();
 
   const key = `${sourceId}:${geoId}`;
   const hit = cache.get(key);
@@ -85,38 +100,18 @@ export async function sharedFetch(sourceId, geoId, want, fetchPages) {
     return hit.jobs;
   }
 
-  /* Whose words drive the shared fetch.
-     
-     For a board that ignores keywords this is irrelevant and we pass the
-     caller's. For LinkedIn it rotates, so that over successive cycles the
-     set is driven by different searches and the edges each get covered. */
-  let keywords = want.keywords;
-  if (ROTATES.has(sourceId) && want.rotation?.length) {
-    const n = (turn.get(key) || 0) % want.rotation.length;
-    turn.set(key, n + 1);
-    keywords = want.rotation[n];
-  }
-
-  const jobs = await fetchPages(keywords);
-  cache.set(key, { at: Date.now(), jobs, keyword: (keywords || []).join("+") });
+  /* Fetched with NO keyword, so the cached listing belongs to the country
+     rather than to whichever search happened to ask first. The caller
+     filters it. */
+  const jobs = await fetchPages();
+  cache.set(key, { at: Date.now(), jobs });
   log.info("fetched a board once for the whole country", {
     source: sourceId, geoId, jobs: jobs.length,
-    drivenBy: (keywords || []).join("+") || "everything",
   });
   return jobs;
 }
 
-/**
- * Drop cached results.
- *
- * `keepRotation` exists because the two maps expire on different clocks in
- * production and a test that resets both is testing something the system
- * never does: the TTL retires a cached RESULT after four minutes, while
- * the rotation counter lives for the life of the process — that is the
- * only reason successive cycles are driven by different keywords. Clearing
- * both made rotation look broken when it was the test that was wrong.
- */
-export function clearFetchCache({ keepRotation = false } = {}) {
+/** Drop cached results. */
+export function clearFetchCache() {
   cache.clear();
-  if (!keepRotation) turn.clear();
 }

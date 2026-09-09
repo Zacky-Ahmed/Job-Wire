@@ -9,7 +9,7 @@
 import { getSource, sourcesForCountry, DEFAULT_SOURCE } from "../sources/index.js";
 import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
-import { sharedFetch } from "./fetchCache.js";
+import { sharedFetch, isShared } from "./fetchCache.js";
 import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
 import * as Ledger from "../../models/alertedJobs.js";
@@ -202,17 +202,9 @@ export async function sweepQuery(query) {
      these end to end, and four searches at that rate drift to a nine
      minute cycle against a five minute schedule. The queue was the
      largest part of the delay this system adds on top of LinkedIn's own. */
-  /* What the shared LinkedIn fetch rotates through: the keywords of every
-     search live in this country, this one first so its own words are used
-     when it is the only search. Read once per sweep, not per source. */
-  let rotation = [query.keywords];
-  try {
-    const siblings = await Queries.siblings(query.geoId, query._id);
-    rotation = [query.keywords, ...siblings.filter((q) => !q.matchAll).map((q) => q.keywords)]
-      .filter((k) => Array.isArray(k) && k.length);
-  } catch (err) {
-    log.warn("could not read sibling keywords for the shared fetch", { message: err.message });
-  }
+  /* This watch's words, resolved once. A match-all watch has none by
+     design — sweep.js passes [] everywhere for exactly that reason. */
+  const words = query.matchAll ? [] : (query.keywords || []);
 
   await Promise.all(sourceIds.map(async (sourceId) => {
     const source = getSource(sourceId);
@@ -225,13 +217,18 @@ export async function sweepQuery(query) {
     // nothing new. Capped, because a broken "next page" that repeats
     // itself would otherwise loop until the request budget is gone.
     const MAX_PAGES = 4;
-    const walkEveryPage = async (keywords) => {
+    const shared = isShared(sourceId);
+    const walkEveryPage = async () => {
       const out = new Map();
       for (let p = 0; p < MAX_PAGES; p++) {
         const jobs = await source.fetchJobs({
-          keywords,
+          // A shared fetch asks for the WHOLE listing. matchAll is how
+          // every one of these adapters is told to skip its own keyword
+          // filter, and skipping it is the point: the cached result has to
+          // belong to the country, not to whichever search asked first.
+          keywords: shared ? [] : query.keywords,
           geoId: query.geoId,
-          matchAll: !!query.matchAll,
+          matchAll: shared ? true : !!query.matchAll,
           page: p,
         });
         if (!jobs.length) break;
@@ -243,23 +240,30 @@ export async function sweepQuery(query) {
     };
 
     try {
-      /* One fetch per board per country per cycle, shared by every search
-         in it — see fetchCache.js for why, and for the measurement that
-         made it necessary. A board that ignores keywords hands back the
-         identical result; LinkedIn hands back a set driven by a rotating
-         keyword, which is how the edges still get covered.
+      /* One fetch per board per country per cycle — see fetchCache.js for
+         the measurement that made it necessary. */
+      const jobs = await sharedFetch(sourceId, query.geoId, walkEveryPage);
 
-         The adapter still filters by THIS search's keywords afterwards,
-         below, so a shared fetch never widens what a watch matches. */
-      const jobs = await sharedFetch(sourceId, query.geoId, {
-        keywords: query.keywords,
-        rotation,
-      }, walkEveryPage);
+      /* THE FILTER THAT WAS MISSING.
+         
+         A shared listing is the country's, not this watch's, so this
+         watch's words are applied here. Leaving it out is what put IT
+         Manager, IT Technician and Senior Executive - IT on an "intern"
+         wire: the cached result had already been filtered by whichever
+         search drove the fetch, and every other search inherited it.
+         
+         Only for shared sources. A per-query fetch was filtered by its own
+         adapter, and LinkedIn's filtering is not a plain title match — it
+         keeps jobs the employer tagged Internship whose titles never say
+         so, and a title filter here would throw exactly those away. */
+      const mine = shared && words.length
+        ? jobs.filter((j) => matchesAny(j.title, words))
+        : jobs;
 
       // Map writes are not interleaved: each adapter awaits its own
       // network calls, and JS resumes one continuation at a time, so
       // there is no torn read here even with several running.
-      jobs.forEach((j) => fetchedMap.set(j.jobId, j));
+      mine.forEach((j) => fetchedMap.set(j.jobId, j));
     } catch (err) {
       failures.push({ sourceId, err });
       log.warn("source failed", {
