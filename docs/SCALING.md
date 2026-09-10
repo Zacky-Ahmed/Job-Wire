@@ -100,10 +100,39 @@ source is 1-15 seconds.
 
 Let **N** be the number of distinct searches in one country.
 
+**Two different units, and conflating them is a mistake this document made
+in its first version.** An *adapter call* is one call to `fetchJobs()`. A
+*surface walk* is one paginated crawl of one endpoint. LinkedIn is one adapter
+call and **three** surface walks, so the two counts diverge badly.
+
+Adapter calls:
+
 ```
-before any sharing:   7N   board fetches per cycle
-today:            4 + 3N   board fetches per cycle
+before any sharing:   7N
+today:            4 + 3N
 ```
+
+Surface walks, which is what the network and the rate limiter actually see:
+
+| component | per country | per search |
+|---|---:|---:|
+| topjobs, MAS, XpressJobs, ITPro | 4 | 0 |
+| LinkedIn country feed | 0 | 1 |
+| LinkedIn guest keyword query | 0 | 1 |
+| LinkedIn JSERP keyword query | 0 | 1 |
+| Keells | 0 | 1 |
+| Rooster | 0 | 1 |
+| **total** | **4** | **5N** |
+
+```
+before any sharing:   7N   adapter calls  =  7N   surface walks
+today:            4 + 3N   adapter calls  =  4 + 5N surface walks
+```
+
+Sharing LinkedIn's country feed — the step described in §6 — moves the
+LinkedIn part from `3N` walks to `1 + 2N`, and the whole system to
+`5 + 4N` walks. It does **not** produce `5 + 2N`; that figure came from
+mixing the two units.
 
 Four sources (topjobs, MAS, XpressJobs, ITPro) fetch a whole listing and then
 filter it in the adapter. Those are now fetched **once per country per cycle,
@@ -258,8 +287,16 @@ historical peak.
 LinkedIn three surfaces are not equal. The **unfiltered country feed** is
 identical for every search in a country and is one of the three walks. Sharing
 only that half, while each search keeps its own keyword query, is lossless and
-would take the model from 4 + 3N to roughly 5 + 2N — and roughly halve
-LinkedIn request rate, which is what throttling responds to.
+takes LinkedIn from 3N surface walks to 1 + 2N.
+
+**The size of the request saving is not yet known.** If P_f is the number of
+page requests the country feed costs, the saving is exactly (N-1) x P_f — and
+nothing measured so far says what fraction of LinkedIn traffic P_f is. An
+earlier version of this document claimed it would "roughly halve" LinkedIn
+requests. That was unsupported. On the stated worst-case limits (40 pages per
+surface, 45 detail requests) the ceiling is 165 requests per search, so at
+N=50 the reduction would be about 24%, not 50%. Instrument per-surface request
+counts before quoting any figure.
 
 Not yet implemented. It requires linkedin.js to accept an injected feed rather
 than fetching its own: a change inside the adapter, not a cache around it.
@@ -334,3 +371,94 @@ Each of those carries comments explaining why it is shaped as it is, usually
 naming the failure that shaped it. Read those before changing anything: most
 obvious improvements have already been tried and reverted, and the comments
 say which.
+
+---
+
+## 10. The impossibility result, stated plainly
+
+Worth putting near the front of anyone's thinking, because it stops a lot of
+wasted effort:
+
+> **There is no lossless O(1) solution against LinkedIn's observed interfaces.**
+> Query-specific searches expose jobs that are absent from the
+> query-independent feed, so guaranteed coverage for arbitrary distinct
+> keywords requires query-dependent observations. The scalable product has to
+> optimise the number and scheduling of those observations rather than pretend
+> they can be eliminated.
+
+The proof is §5.2. For the keyword `intern`: the feed found 9 title matches,
+the keyword query found 12, the union was 15, and one posting 36 minutes old
+was inside the feed's own window and simply not returned. Neither endpoint
+dominates the other. If job J is only ever exposed by query Q, a crawler that
+never runs anything equivalent to Q cannot know J exists.
+
+This is an information-acquisition problem, not a compute problem. Caching,
+a faster server, a better scheduler and a bigger database all leave it exactly
+where it was.
+
+---
+
+## 11. Two structural changes worth making regardless
+
+### 11.1 A global job corpus
+
+`seenJobs` is keyed `(query, job)`, so the same posting is stored once per
+search that saw it. Measured over the existing data:
+
+```
+distinct LinkedIn jobs ever stored : 6,724
+(job, query) rows                  : 8,528
+jobs appearing under >1 query      :   887  (13%)
+rows a global corpus would collapse: 1,804  (21%)
+```
+
+At five searches, 21% of the rows are duplication. The share grows with N.
+The fix is a global `jobs` table plus a `queryMatches` join, so a job is one
+object and the query relationship lives downstream.
+
+### 11.2 A global fact cache for employment type
+
+The per-job detail request that reads employment type is already **lazy** — a
+job whose title matches the keywords skips it entirely. What is missing is
+that the result is not shared: if the same job fails the title test for three
+searches, its detail is fetched three times.
+
+Employment type is a property of the **job**, not the watch. Caching it by
+LinkedIn job id turns `O(searches x duplicate jobs)` detail requests into
+`O(distinct jobs needing enrichment)`. Lossless.
+
+### 11.3 Immutable snapshots
+
+Both outages in §5.1 happened because one cached object was allowed to mean
+two different things: "the raw listing" and "the results for query X".
+Making that structurally impossible is better than a comment asking people not
+to do it:
+
+```
+CountrySnapshot { cycleId, country, source, fetchedAt, jobs }   immutable
+QueryProjection { snapshotId, queryId, matchedJobIds }          derived
+```
+
+No matcher may modify a snapshot; matching produces a new object.
+
+---
+
+## 12. The measurement that should come next
+
+Not latency. **Marginal recall per surface.**
+
+Every discovered LinkedIn job should carry a provenance mask recording which
+of the three surfaces saw it: country feed, guest keyword query, JSERP page.
+After a few days that answers a question nothing here has answered yet:
+
+> How many *actionable* jobs does the JSERP page find that the feed and the
+> guest query would both have missed?
+
+Existing log lines hint that it is small — the page has been observed adding
+1 to 8 jobs on top of roughly 200 to 250 — but that is raw jobs, not title
+matches, and it is not enough to decide on.
+
+If JSERP's unique contribution is negligible, deleting it takes LinkedIn from
+`3N` walks to `2N` immediately, and to `1 + N` once the feed is shared. That
+is a larger and cheaper win than any caching scheme, and it needs one
+instrumentation change rather than an architecture.
