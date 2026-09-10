@@ -54,6 +54,35 @@ export function record({ userId, queryId, jobIds, status, providerId, error }) {
   });
 }
 
+/**
+ * A message that is not an alert, recorded so the quota knows about it.
+ *
+ * Verification codes and password resets go out through the same
+ * provider and against the same daily allowance as alerts, and until now
+ * they were invisible to it: countToday() only ever saw rows written by
+ * the alert path. On a 280-a-day Brevo tier a busy signup afternoon
+ * could quietly eat the budget the poller believed it still had, and the
+ * first symptom would be alerts failing for no reason the admin page
+ * could explain.
+ *
+ * kind is what keeps them apart afterwards. The wire and the per-user
+ * count are about alerts, so they filter on it; the ceiling is about the
+ * provider, so it does not.
+ */
+export function recordSystem({ userId = null, kind, ok, providerId, error }) {
+  return collections.emailLog().insertOne({
+    userId,
+    queryId: null,
+    jobIds: [],
+    kind,
+    status: ok ? "sent" : "failed",
+    providerId: providerId || null,
+    error: error || null,
+    attempts: 0,
+    sentAt: new Date(),
+  });
+}
+
 export function recentForUser(userId, limit = 30) {
   return collections.emailLog()
     .find({ userId }).sort({ sentAt: -1 }).limit(limit).toArray();
@@ -93,15 +122,24 @@ function startOfDay() {
   return d;
 }
 
+/* ALERTS only — this is the number on somebody's wire, and a
+   verification code is not an alert about a job. */
 export function countTodayForUser(userId) {
   return collections.emailLog()
-    .countDocuments({ userId, sentAt: { $gte: startOfDay() }, status: "sent" });
+    .countDocuments({
+      userId, sentAt: { $gte: startOfDay() }, status: "sent",
+      kind: { $exists: false },
+    });
 }
 
 /**
  * Emails sent today by the whole instance — the figure that matters for
  * the provider's daily ceiling, because that ceiling is shared. Used by
  * the poller and the admin page, never as a personal statistic.
+ *
+ * Deliberately unfiltered by kind. The provider counts a verification
+ * code against the same allowance as an alert, so anything that does not
+ * count it here is telling the poller it has more budget than it has.
  */
 export function countToday() {
   return collections.emailLog()

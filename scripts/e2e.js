@@ -436,6 +436,7 @@ const Ledger1 = await import("../src/models/alertedJobs.js");
 const Outbox = await import("../src/models/outbox.js");
 const { fanOut: fanOut1 } = await import("../src/services/poller/sweep.js");
 const { drainOutbox } = await import("../src/services/mail/outboxWorker.js");
+const Provider = await import("../src/services/mail/providerHealth.js");
 
 const capUser = (await collections.users().insertOne({
   email: `e2e-cap-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
@@ -584,6 +585,26 @@ ok(cfgRow.status === "dead",
   `a credential failure parks the message instead of retrying it (got ${cfgRow.status})`);
 ok(String(cfgRow.lastError).includes("535"), "with the provider's own words kept");
 
+/* And the PROVIDER is paused, not just that one message.
+
+   This is the difference between the old retry queue and this one. A
+   rejected credential rejects every message identically, so continuing
+   to call it proves nothing and costs a real network round trip each
+   time — which is how the same handful of jobs produced 43 attempts in
+   one evening. Nothing is claimed while it is paused, so the whole
+   backlog is still owed and goes out the moment somebody fixes it. */
+ok(Provider.health().state === "PAUSED_CONFIG",
+  `the provider itself is paused, not merely that message (got ${Provider.health().state})`);
+const whilePaused = await drainOutbox({
+  send: async () => { throw new Error("must not be called while paused"); }, cap: 10_000,
+});
+ok(whilePaused.sent === 0 && whilePaused.provider === "PAUSED_CONFIG",
+  "so a paused provider is not called at all");
+
+// A person fixes the credential. Nothing else has to be cleared.
+Provider.reset();
+ok(Provider.health().state === "READY", "and resetting it is all that is needed to resume");
+
 /* 8. A WORKER THAT WENT AWAY. A row left SENDING is not a resting state:
  *    without reclaiming it, a process killed mid-send loses the alert in
  *    exactly the way the outbox exists to prevent.
@@ -602,6 +623,56 @@ await drainOutbox({ send: async (m) => { orphanSpy.push(m); return { ok: true, i
 ok(orphanSpy.length >= 1, "a row abandoned mid-send is picked back up");
 ok((await collections.outbox().findOne({ jobId: "linkedin:e2e-orphan-1" })).status === "sent",
   "and delivered rather than stranded");
+
+/* 8b. THE IDEMPOTENCY KEY BELONGS TO THE OBLIGATION, NOT THE ATTEMPT.
+ *
+ *     Brevo refuses to deliver the same message twice when it sees the
+ *     same key. That only works if a RETRY carries the key the FIRST
+ *     attempt used — a fresh key per attempt is a fresh message and the
+ *     mechanism does nothing. It is what makes a timeout safe to retry:
+ *     an accepted-then-lost response is indistinguishable from a
+ *     refusal, and without a stable key the safe reading of a timeout
+ *     would have to be "give up".
+ */
+const keyJobs = [{
+  jobId: "linkedin:e2e-key-1", title: "Intern - Idempotent", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
+await fanOut1({ _id: capQ, keywords: ["intern"] }, keyJobs, new Date());
+/* Scoped to ONE watcher. capQ picked up three more subscribers during
+   the midway-ceiling test above, so this job is owed to four people and
+   an unscoped count would see four messages per pass rather than one. */
+const keyRow1 = await collections.outbox().findOne({ jobId: "linkedin:e2e-key-1", subscriptionId: capSub });
+ok(/^[0-9a-f-]{36}$/.test(String(keyRow1.idempotencyKey)),
+  "an obligation is born with an idempotency key");
+
+// Re-enqueue, exactly as a sweep that died before claiming would.
+await fanOut1({ _id: capQ, keywords: ["intern"] }, keyJobs, new Date());
+const keyRow2 = await collections.outbox().findOne({ jobId: "linkedin:e2e-key-1", subscriptionId: capSub });
+ok(keyRow2.idempotencyKey === keyRow1.idempotencyKey,
+  "re-enqueueing does not mint a new one — $setOnInsert is what guarantees that");
+
+// Fail it once, then let the retry come round, and watch the key.
+const keysSeen = [];
+await drainOutbox({
+  send: async (m) => { if (m.to === keyRow1.email && m.jobs.some((j) => j.jobId === "linkedin:e2e-key-1")) keysSeen.push(m.idempotencyKey); return { ok: false, error: "timed out" }; },
+  cap: 10_000,
+});
+await collections.outbox().updateOne(
+  { jobId: "linkedin:e2e-key-1", subscriptionId: capSub }, { $set: { nextAttemptAt: new Date(0) } }
+);
+await drainOutbox({
+  send: async (m) => { if (m.to === keyRow1.email && m.jobs.some((j) => j.jobId === "linkedin:e2e-key-1")) keysSeen.push(m.idempotencyKey); return { ok: true, id: "p" }; },
+  cap: 10_000,
+});
+ok(keysSeen.length === 2, `the message was attempted twice (got ${keysSeen.length})`);
+ok(keysSeen[0] && keysSeen[0] === keysSeen[1],
+  "and the retry carried the SAME key — a new one would be a new message to the provider");
+ok(keysSeen[0] === keyRow1.idempotencyKey, "the one stored on the obligation");
+
+const keySent = await collections.outbox().findOne({ jobId: "linkedin:e2e-key-1", subscriptionId: capSub });
+ok(keySent.providerMessageId === "p",
+  "and the provider's own message id is kept, so a delivery can be traced back");
 
 /* 9. THE LEDGER CLAIM NO LONGER GATES DELIVERY. A job claimed but never
  *    enqueued used to be gone for good. Nothing claims until the

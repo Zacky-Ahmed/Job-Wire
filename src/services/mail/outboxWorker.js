@@ -22,6 +22,7 @@ import * as Outbox from "../../models/outbox.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { sendAlert } from "./send.js";
 import { dailyCap } from "./transport.js";
+import * as Provider from "./providerHealth.js";
 import { log } from "../../utils/logger.js";
 
 /* How many rows to look at in one pass. Not a send limit — the cap
@@ -68,6 +69,20 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
      step later and much harder to notice. */
   const reclaimed = await Outbox.reclaimStale({ now });
   if (reclaimed) log.warn("outbox rows reclaimed from a worker that went away", { rows: reclaimed });
+
+  /* Do not call a provider that is known to be refusing.
+
+     A wrong password rejects every message identically, and trying the
+     next one proves nothing except that the credential is still wrong.
+     Obligations stay pending and nothing is claimed, so the moment
+     somebody fixes the configuration the whole backlog goes out. */
+  const provider = Provider.canSend(now);
+  if (!provider.ok) {
+    log.warn("mail provider is not accepting — obligations left pending", {
+      state: provider.state, reason: provider.reason, until: provider.until,
+    });
+    return { sent: 0, failed: 0, deferred: true, provider: provider.state };
+  }
 
   const ceiling = cap ?? dailyCap();
   const spent = await EmailLog.countToday();
@@ -124,31 +139,43 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
 
     let res;
     try {
-      res = await send({ to: first.email, label: first.label, jobs });
+      res = await send({
+        to: first.email, label: first.label, jobs,
+        idempotencyKey: first.idempotencyKey,
+      });
     } catch (err) {
       res = { ok: false, error: err.message };
     }
     await EmailLog.settle(logId, { ok: res.ok, providerId: res.id, error: res.error });
 
     if (res.ok) {
+      Provider.noteSuccess();
       await Outbox.settleSent(ids, { providerMessageId: res.id ?? null, now });
       sent++;
       continue;
     }
 
     failed++;
+    /* Tell the provider health what kind of failure this was, and stop
+       the pass if it turns out to be the kind that will reject every
+       remaining message identically. Working through two hundred rows to
+       collect two hundred copies of the same authentication error is how
+       the 43-attempt evening happened, only slower. */
+    const verdict = Provider.noteFailure(res.error);
+    const fatal = verdict !== Provider.READY;
     /* A configuration error is not a transient one. Retrying a wrong
        password on a schedule produced 43 attempts in one evening for the
        same handful of jobs; the row is parked until somebody fixes the
        credentials, and the reason is written on it. */
     const attempts = first.attempts || 1;
-    if (EmailLog.isConfigError(res.error) || attempts >= MAX_ATTEMPTS) {
+    if (Provider.isConfigFailure(res.error) || attempts >= MAX_ATTEMPTS) {
       await Outbox.settleDead(ids, { error: res.error, now });
       log.error("outbox message given up on", {
         userId: String(first.userId), attempts,
-        reason: EmailLog.isConfigError(res.error) ? "mail configuration" : "out of attempts",
+        reason: Provider.isConfigFailure(res.error) ? "mail configuration" : "out of attempts",
         error: String(res.error || "").slice(0, 160),
       });
+      if (fatal) break;
       continue;
     }
     const wait = BACKOFF_MINUTES[Math.min(attempts, BACKOFF_MINUTES.length) - 1];
@@ -157,6 +184,7 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
       nextAttemptAt: new Date(now.getTime() + wait * 60_000),
       now,
     });
+    if (fatal) break;
   }
 
   if (sent || failed) {

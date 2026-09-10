@@ -24,6 +24,8 @@
 // transactional provider with SPF, DKIM and DMARC set up. See README.
 
 import { sendMail } from "./transport.js";
+import * as EmailLog from "../../models/emailLog.js";
+import { log } from "../../utils/logger.js";
 import { getSource } from "../sources/index.js";
 import { env } from "../../config/env.js";
 
@@ -207,14 +209,41 @@ export function buildAlert({ label, jobs }) {
   };
 }
 
-export function sendVerification({ to, code }) {
-  return sendMail({ to, ...buildVerification({ code }) });
+/* Recorded against the quota, because the provider records it against
+   the quota. Verification codes and resets used to be invisible to
+   countToday(), so on a 280-a-day tier a busy signup afternoon could eat
+   the budget the poller believed it still had — and the first symptom
+   would be alerts failing for a reason the admin page could not explain.
+   The write is awaited but never allowed to fail the send: an
+   unrecorded message is a wrong number, a refused signup is a lost user. */
+async function recordSystemSend(kind, userId, result) {
+  try {
+    await EmailLog.recordSystem({
+      userId, kind, ok: result.ok, providerId: result.id, error: result.error,
+    });
+  } catch (err) {
+    log.warn("could not record a system email against the quota", {
+      kind, message: err.message,
+    });
+  }
+  return result;
 }
 
-export function sendAlert({ to, label, jobs }) {
-  return sendMail({ to, ...buildAlert({ label, jobs }) });
+export async function sendVerification({ to, code, userId = null }) {
+  const result = await sendMail({ to, ...buildVerification({ code }) });
+  return recordSystemSend("verification", userId, result);
 }
 
-export function sendPasswordReset({ to, code }) {
-  return sendMail({ to, ...buildPasswordReset({ code }) });
+/* idempotencyKey belongs to the OBLIGATION, not to this call. It is
+   generated once when the outbox row is created and passed in on every
+   attempt, including retries, so a provider that supports it will not
+   deliver the same jobs twice after a timeout we misread as a failure.
+   See the note in transport.js about what SMTP cannot promise here. */
+export function sendAlert({ to, label, jobs, idempotencyKey }) {
+  return sendMail({ to, ...buildAlert({ label, jobs }), idempotencyKey });
+}
+
+export async function sendPasswordReset({ to, code, userId = null }) {
+  const result = await sendMail({ to, ...buildPasswordReset({ code }) });
+  return recordSystemSend("reset", userId, result);
 }

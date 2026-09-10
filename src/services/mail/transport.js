@@ -96,7 +96,19 @@ function autoMailHeaders() {
 }
 
 // ── Brevo HTTP ───────────────────────────────────────────────────
-async function sendViaBrevo({ to, subject, html, text }) {
+/**
+ * @param idempotencyKey  Brevo deduplicates transactional sends by this
+ *   header, so the SAME key on a retry means the message is not sent
+ *   twice even when our first attempt succeeded and we never learned
+ *   that it had — a timeout after the provider accepted the message is
+ *   otherwise indistinguishable from a refusal, and retrying it mails
+ *   somebody the same jobs again.
+ *
+ *   It is generated once, when the obligation is created, and stored on
+ *   the row. Generating it here would defeat the entire mechanism: every
+ *   retry would carry a new key and Brevo would see a new message.
+ */
+async function sendViaBrevo({ to, subject, html, text, idempotencyKey }) {
   const from = parseFrom(env.mailFrom || env.gmailUser);
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 20000);
@@ -108,6 +120,7 @@ async function sendViaBrevo({ to, subject, html, text }) {
         "api-key": env.brevoApiKey,
         "content-type": "application/json",
         accept: "application/json",
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       },
       body: JSON.stringify({
         sender: from,
@@ -137,14 +150,22 @@ async function sendViaBrevo({ to, subject, html, text }) {
  * Send one message. `to` is always a single verified address — never
  * accept a recipient list from user input.
  */
-export async function sendMail({ to, subject, html, text }) {
+export async function sendMail({ to, subject, html, text, idempotencyKey }) {
   // Strip CR/LF: a newline in a subject lets an attacker inject extra
   // headers (Bcc:) into the message.
   const cleanSubject = String(subject).replace(/[\r\n]+/g, " ").slice(0, 200);
   const started = Date.now();
 
+  /* GMAIL SMTP CANNOT DO THIS, and pretending otherwise would be worse
+     than not trying. SMTP has no idempotency concept: once the message
+     is handed to the server it is sent, and a connection that drops
+     before the acknowledgement leaves us genuinely unable to tell
+     whether it went. On the Gmail path a retry after a timeout can
+     deliver a second copy. The key is still generated and still stored,
+     so switching to Brevo makes existing rows idempotent without a
+     migration — it simply has nowhere to go until then. */
   const result = env.brevoApiKey
-    ? await sendViaBrevo({ to, subject: cleanSubject, html, text })
+    ? await sendViaBrevo({ to, subject: cleanSubject, html, text, idempotencyKey })
     : await getSmtp()
         .sendMail({
           from: env.mailFrom,

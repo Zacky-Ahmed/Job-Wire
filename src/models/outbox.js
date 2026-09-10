@@ -42,6 +42,7 @@
 // is written from the first day so that switching later is an index
 // change rather than a redesign.
 
+import { randomUUID } from "node:crypto";
 import { collections } from "../config/db.js";
 
 /** Not yet delivered, and still owed. */
@@ -97,6 +98,18 @@ export async function enqueue(items) {
           label: it.label,
           email: it.email,
           matchedSubscriptionIds: it.matchedSubscriptionIds || [it.subscriptionId],
+          /* Generated once, here, and never again.
+
+             A provider that supports idempotency keys refuses to deliver
+             the same message twice when it sees the same key. That only
+             works if a RETRY carries the key the first attempt used — a
+             fresh key per attempt is a fresh message, and the mechanism
+             does nothing at all. So it belongs to the obligation, and
+             $setOnInsert is what guarantees a re-enqueue cannot replace
+             it. It is what makes a timeout safe to retry: we cannot tell
+             an accepted-then-lost response from a refusal, and without
+             this the safe reading of a timeout would be "give up". */
+          idempotencyKey: randomUUID(),
           status: PENDING,
           attempts: 0,
           nextAttemptAt: now,
