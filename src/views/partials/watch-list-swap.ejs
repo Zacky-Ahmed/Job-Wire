@@ -1,0 +1,17 @@
+<%# watch-list-swap.ejs
+     What comes back when you hold, resume or delete a watch.
+
+     Holding a watch used to reload the page: a POST, a redirect, a fresh
+     document, three stylesheets and every query behind the topbar, to
+     change one word on one button. This sends the list, and the three
+     things elsewhere on the page that the change actually invalidates.
+
+     The rows replace the target. The three shell readouts ride out of
+     band, which is the only honest way to do it: they are real
+     consequences of the mutation, not decoration. Left stale they show
+     "2/2 watches, sweeping" over a list where one is plainly held, and
+     a sidebar tally of 1 over an empty list. %>
+<%- include('./watch-rows', { watches, csrfToken, tprFor, rel, sourceLabel }) %>
+<span class="dot <%= activeCount ? 'live' : 'off' %>" id="watchPanelDot" hx-swap-oob="true"></span>
+<%- include('./readouts', { oob: true, sweeping, watchCount, activeCount, nextSweepAt }) %>
+<%- include('./nav-count', { oob: true, watchCount }) %>

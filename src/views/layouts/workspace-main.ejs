@@ -15,5 +15,6 @@
 <%- include('../partials/readouts', {
       oob: true, sweeping, watchCount, activeCount,
       nextSweepAt: typeof nextSweepAt !== 'undefined' ? nextSweepAt : null }) %>
+<%- include('../partials/nav-count', { oob: true, watchCount }) %>
 <%- include('../partials/workspace-heading') %>
 <%- body %>

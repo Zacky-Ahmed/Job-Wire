@@ -1,0 +1,8 @@
+<%# nav-count.ejs
+     The watch tally on the sidebar tab.
+
+     It sits in the shell, so like the topbar readouts it stops being
+     re-derived once navigation only replaces <main>. Deleting your last
+     watch emptied the list, emptied the chips, and left the sidebar
+     insisting you still had one. %>
+<span class="n" id="navWatchCount"<%- oob ? ' hx-swap-oob="true"' : '' %>><%= watchCount %></span>

@@ -10,7 +10,9 @@
 
   <div class="panel">
     <div class="panel-h">
-      <span class="dot <%= activeCount ? 'live' : 'off' %>"></span>
+      <%# Named because holding a watch changes it, and the mutation
+          sends it back out of band rather than reloading the page. %>
+      <span class="dot <%= activeCount ? 'live' : 'off' %>" id="watchPanelDot"></span>
       <h3>Watches</h3>
       <span class="sp"></span>
       <span class="lbl">One search · its own schedule</span>
@@ -19,7 +21,9 @@
       <span></span><span>Watch</span><span class="hide">Keywords</span>
       <span class="hide">Next check</span><span style="text-align:right">Controls</span>
     </div>
-    <%- include('../partials/watch-rows', { watches, csrfToken, tprFor, rel }) %>
+    <div id="watchList">
+      <%- include('../partials/watch-rows', { watches, csrfToken, tprFor, rel }) %>
+    </div>
   </div>
 
   <div><a class="btn btn-sig btn-lg" href="/watches?new=1">

@@ -66,6 +66,36 @@ async function render(req, res, extra = {}) {
 const SLIDER_MIN_MINUTES = 5;
 const sliderFloor = () => Math.max(SLIDER_MIN_MINUTES, env.minSweepMinutes);
 
+/**
+ * Answer a hold, resume or delete.
+ *
+ * Two answers to the same request, chosen by what asked. A form posted
+ * by the browser gets the redirect it has always got — no script, no
+ * htmx, still works, still lands on a correct page. A form posted by
+ * htmx gets the list back, plus the two things elsewhere on the page
+ * that this mutation genuinely invalidated: the panel's live dot and the
+ * topbar readouts.
+ *
+ * The list is re-read rather than patched in place. Holding a watch can
+ * change the next sweep time of a query shared with other people, and
+ * guessing what that became would be a lie told confidently.
+ */
+async function respondList(req, res) {
+  if (req.get("hx-target") !== "watchList") return res.redirect("/watches");
+  const watches = await Subs.listForUser(req.user._id);
+  res.vary("HX-Target");
+  return res.render("partials/watch-list-swap", {
+    watches,
+    ...headerState(watches, env.pollerEnabled),
+    csrfToken: res.locals.csrfToken,
+    tprFor, rel,
+    sourceLabel: (id) => getSource(id)?.label || id,
+  }, (err, html) => {
+    if (err) return req.next(err);
+    res.type("text/html").send(html);
+  });
+}
+
 watchesRoutes.get("/watches", requireAuth, (req, res, next) =>
   render(req, res, { showNew: req.query.new === "1" }).catch(next)
 );
@@ -145,11 +175,11 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
 watchesRoutes.post("/watches/:id/toggle", requireAuth, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/watches");
+    if (!id) return respondList(req, res);
     const list = await Subs.listForUser(req.user._id);
     const current = list.find((s) => String(s._id) === String(id));
     if (current) await Subs.setActive(req.user._id, id, !current.active);
-    res.redirect("/watches");
+    return respondList(req, res);
   } catch (err) {
     next(err);
   }
@@ -159,7 +189,7 @@ watchesRoutes.post("/watches/:id/delete", requireAuth, async (req, res, next) =>
   try {
     const id = oid(req.params.id);
     if (id) await Subs.remove(req.user._id, id);
-    res.redirect("/watches");
+    return respondList(req, res);
   } catch (err) {
     next(err);
   }

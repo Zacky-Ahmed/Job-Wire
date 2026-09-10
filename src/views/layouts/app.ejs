@@ -96,7 +96,7 @@
       <a href="/watches" aria-label="Watches" title="Watches" <%- nav === 'watches' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
-        <span class="nav-label">Watches</span> <span class="n"><%= watchCount %></span></a>
+        <span class="nav-label">Watches</span> <%- include('../partials/nav-count', { oob: false, watchCount }) %></a>
       <%# Shown only to admins. The route guards itself regardless — a
           hidden link is not access control, it is just tidiness. %>
       <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>

@@ -34,12 +34,21 @@
         <div class="lbl" style="margin-top:3px">last <%= rel(q.lastFetchedAt) %></div>
       </div>
       <div class="acts w-acts">
-        <form method="post" action="/watches/<%= s._id %>/toggle">
+        <%# method and action are the no-script path and still work on
+            their own: POST, redirect, whole page. hx-post is the same
+            request with somewhere smaller to put the answer. %>
+        <form method="post" action="/watches/<%= s._id %>/toggle"
+          hx-post="/watches/<%= s._id %>/toggle" hx-target="#watchList" hx-swap="innerHTML">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn-xs" type="submit"><%= s.active ? 'Hold' : 'Resume' %></button>
         </form>
+        <%# hx-confirm rather than onsubmit: with htmx handling the submit,
+            an inline handler returning false cancels only the native one,
+            so both would run and the reader would be asked twice. It is
+            no loss without script — onsubmit was JavaScript too. %>
         <form method="post" action="/watches/<%= s._id %>/delete"
-          onsubmit="return confirm('Delete this watch? Its alert history stays.')">
+          hx-post="/watches/<%= s._id %>/delete" hx-target="#watchList" hx-swap="innerHTML"
+          hx-confirm="Delete this watch? Its alert history stays.">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn-xs btn-bad" type="submit" aria-label="Delete watch">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
