@@ -37,11 +37,15 @@
 //     result is not an approximation, it is the identical bytes.
 //
 //   · LinkedIn does take a keyword, and returns a 79-86% identical set
-//     whatever it is. Sharing loses the ~16% at the edges, so the keyword
-//     driving the shared fetch ROTATES between cycles. Over a few passes
-//     every search's own words get their turn, and nothing is lost for
-//     good — the ledger means a job found later is still mailed once, and
-//     never twice.
+//     whatever it is. Sharing it would therefore lose the ~16% at the
+//     edges. An earlier version tried to buy that back by ROTATING which
+//     search's keyword drove the shared fetch, on the argument that over
+//     a few passes everyone gets their turn. That is not in the code and
+//     should not be read back into it: LinkedIn is excluded outright
+//     twenty lines below, and the two paragraphs disagreeing about it is
+//     how a reader ends up debugging a mechanism that does not exist.
+//     If sharing LinkedIn ever returns, it belongs INSIDE the adapter as
+//     a country-feed injection, not in this cache.
 //
 //   · Keells and Rooster genuinely filter server-side and are cheap
 //     (5s and 1s), so they are left alone. Sharing those WOULD lose jobs.

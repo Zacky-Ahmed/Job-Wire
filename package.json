@@ -25,7 +25,9 @@
     "backfill-alerts": "node scripts/backfill-alert-ledger.js",
     "prime-sources": "node scripts/prime-new-sources.js",
     "measure-routes": "node scripts/measure-routes.js",
-    "check-shell": "node scripts/check-shell.js"
+    "check-shell": "node scripts/check-shell.js",
+    "test-sources": "node scripts/test-sources.js",
+    "probe-rooster": "node scripts/probe-rooster-locations.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

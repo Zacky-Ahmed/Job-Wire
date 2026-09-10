@@ -20,8 +20,15 @@
 // So we fetch BOTH and union them:
 //   · the keyword query, because LinkedIn matches descriptions and job
 //     type there, catching things a title never would
-//   · the unfiltered country feed, because it is the only response that
-//     is reliably complete
+//   · the unfiltered country feed, because it is the broadest single
+//     response and the only one not shaped by a keyword filter we have
+//     three times caught being silently incomplete
+//
+// It is NOT a superset, and calling it "reliably complete" — as this
+// comment did — is the reason the union exists at all. Measured: the
+// keyword surface returns jobs the country feed does not, which is
+// exactly why dropping either one is a decision that has to be made
+// against numbers rather than against a sentence in a comment.
 //
 // then keep anything the keyword search returned, plus anything whose
 // title matches. A watch can also ask for the country feed untouched,
