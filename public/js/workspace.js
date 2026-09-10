@@ -168,6 +168,45 @@
     collect();
   }
 
+  /* ---- what just happened ---- */
+
+  /* An action that answers 204 has no page to print its result on.
+
+     Admin mutations used to redirect with a flag in the query string and
+     the next render turned it into a sentence. There is no next render
+     any more — the panels fetch themselves — so the server sends the
+     sentence as an event instead and this puts it somewhere.
+
+     It lives in the shell rather than in a panel on purpose: half of
+     these messages are refusals, and a refusal rendered inside the panel
+     it refused to change would be removed by the next thing that panel
+     did. */
+  var flash = document.getElementById('flash');
+  var flashTimer = null;
+  document.body.addEventListener('jw:flash', function (e) {
+    if (!flash) return;
+    var d = e.detail || {};
+    if (!d.text) return;
+    var text;
+    // Percent-encoded on the way out; see the note in admin.routes.js.
+    try { text = decodeURIComponent(d.text); } catch (_) { text = d.text; }
+    flash.innerHTML = '';
+    var b = document.createElement('div');
+    b.className = 'banner ' + (d.bad ? 'err' : 'go');
+    b.textContent = text;            // server text, but never as markup
+    flash.appendChild(b);
+    /* Refusals stay. A confirmation has done its job once it has been
+       read, and leaving it up makes the next action ambiguous — you
+       cannot tell whether the banner is about what you just did or what
+       you did a minute ago. */
+    if (flashTimer) clearTimeout(flashTimer);
+    if (!d.bad) flashTimer = setTimeout(function () { flash.innerHTML = ''; }, 9000);
+  });
+  // A tab change is a new subject; whatever the last action said is done.
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    if (flash && main && e.detail && e.detail.target === main) flash.innerHTML = '';
+  });
+
   /* ---- the progress rail ---- */
 
   /* Nothing at all for a fast navigation.

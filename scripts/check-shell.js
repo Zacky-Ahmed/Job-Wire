@@ -144,6 +144,33 @@ const vary = (await get("/wire", NAV)).headers.get("vary") || "";
 check("the two answers are not cacheable as one",
   /hx-request/i.test(vary) && /hx-target/i.test(vary), vary);
 
+console.log("\n=== admin panels ===");
+/* The admin page is five panels that go stale for different reasons.
+   Each has to be renderable on its own, and the section name has to be
+   checked against a list rather than passed straight to a view path. */
+for (const sec of ["overview", "health", "delivery", "people", "queries"]) {
+  const res = await get("/admin/fragments/" + sec, { "hx-request": "true" });
+  const b = await res.text();
+  check(sec + " renders alone", res.status === 200
+    && b.trimStart().startsWith('<div id="admin-' + sec + '"')
+    && !b.includes("topbar"),
+    Math.round(b.length / 1024) + "KB");
+}
+check("an unknown section is refused",
+  (await get("/admin/fragments/nope", { "hx-request": "true" })).status === 404);
+check("and so is a path pointed somewhere else",
+  (await get("/admin/fragments/../../server", { "hx-request": "true" })).status === 404);
+
+const adminPage = await (await get("/admin")).text();
+/* "a, b from:body" applies the modifier to b alone. The rest are then
+   listened for on the panel itself, which only fires when the mutation
+   happened to originate inside it — so parking a query refreshed the
+   Queries panel and left Overview showing the old totals. */
+check("every panel trigger is scoped to the body, not just the last one",
+  (adminPage.match(/hx-trigger="([^"]*)"/g) || [])
+    .filter((t) => t.includes("admin:"))
+    .every((t) => t.split(",").every((one) => one.includes("from:body"))));
+
 console.log("\n=== signed out ===");
 jar.clear();
 const bounced = await get("/wire", NAV, false);

@@ -1,0 +1,46 @@
+<%# admin/overview.ejs
+     Notices, refusals, and the four headline counts.
+
+     Split out of pages/admin.ejs so it can be re-rendered on its own.
+     The wrapper carries the id the fragment route replaces and the
+     events that tell it to: a mutation announces what it changed, and
+     only the panels that care come and fetch it. Nothing polls. %>
+<div id="admin-overview" hx-get="/admin/fragments/overview"
+  hx-trigger="admin:peopleChanged from:body, admin:queriesChanged from:body, admin:deliveryChanged from:body" hx-target="this" hx-swap="outerHTML">
+  <% if (typeof adminError !== 'undefined' && adminError) { %>
+    <div class="banner err"><%= adminError %></div>
+  <% } %>
+  <% if (typeof adminNotice !== 'undefined' && adminNotice) { %>
+    <div class="banner go"><%= adminNotice %></div>
+  <% } %>
+  <div class="stats stagger">
+    <div class="stat vio">
+      <div class="k">People</div>
+      <div class="v"><%= totals.users %></div>
+      <div class="d"><%= totals.verified %> verified · <%= totals.unverified %> pending</div>
+    </div>
+    <div class="stat sig">
+      <div class="k">Watches</div>
+      <div class="v"><%= totals.watches %></div>
+      <div class="d"><%= totals.queries %> shared queries behind them</div>
+    </div>
+    <%# Today, not a rolling 24 hours. The denominator is the provider's
+        daily ceiling and the poller enforces it per calendar day, so a
+        rolling numerator made this ratio unreadable: it could show 260 of
+        280 spent while the poller had counted 40. %>
+    <div class="stat <%= totals.failedToday ? 'amber' : 'go' %>">
+      <div class="k">Mail · today</div>
+      <div class="v"><%= totals.mailToday %> <span class="u">/<%= totals.mailCap %></span></div>
+      <div class="d"><%= totals.failedToday %> failed · <%= totals.mailProvider %></div>
+    </div>
+    <%# Measured, not configured. This read POLLER_ENABLED, so it could
+        print "Running" directly above a panel that said "Not ticking" on
+        the same page load. Both now render one verdict from the
+        heartbeat the loop writes itself. %>
+    <div class="stat <%= poller.tone %>">
+      <div class="k">Poller</div>
+      <div class="v" style="font-size:26px"><%= poller.label %></div>
+      <div class="d"><%= poller.detail %></div>
+    </div>
+  </div>
+</div>

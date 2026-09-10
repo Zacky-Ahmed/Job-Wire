@@ -115,6 +115,10 @@
         would tear down and rebuild the header and the sidebar to show a
         page whose header and sidebar had not changed — undoing the whole
         point of swapping only the middle. %>
+    <%# Where an action reports itself when there is no page load left to
+        carry the news. Outside <main> so a swap cannot wipe the sentence
+        explaining the swap. %>
+    <div class="flash-slot" id="flash" role="status" aria-live="polite"></div>
     <main id="workspaceMain" tabindex="-1" hx-history-elt>
       <%- include('../partials/workspace-heading') %>
       <%- body %>

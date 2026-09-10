@@ -79,3 +79,10 @@
 .nav-rail::after{content:"";display:block;height:100%;width:38%;border-radius:0 2px 2px 0;background:var(--sig);animation:railRun 1.1s var(--ease,ease-in-out) infinite}
 @keyframes railRun{0%{transform:translateX(-100%)}60%{transform:translateX(180%)}100%{transform:translateX(280%)}}
 @media(prefers-reduced-motion:reduce){.nav-rail::after{width:100%;opacity:.7}}
+
+/* Where a mutation says what it did. Empty most of the time and takes no
+   room when it is; it is in the shell so that a swap cannot remove the
+   sentence explaining the swap. */
+.flash-slot:empty{display:none}
+.flash-slot{padding:0 32px;margin-top:12px;max-width:1600px;width:100%;margin-left:auto;margin-right:auto}
+@media(max-width:700px){.flash-slot{padding:0 12px}}

@@ -51,8 +51,89 @@ import { env } from "../config/env.js";
 
 export const adminRoutes = Router();
 
-adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
-  try {
+/**
+ * What the page says about the action you just took.
+ *
+ * Refusals and confirmations travel as query flags rather than session
+ * state, so a redirect can explain itself instead of silently doing
+ * nothing. Lifted out of the page render because a mutation answered
+ * over htmx never gets to that redirect — it has to produce the same
+ * sentence itself, and two copies of these sentences would drift.
+ */
+function adminFlash(q = {}) {
+  return {
+    adminError: q.err === "self"  ? "You cannot delete the account you are signed in with." :
+        q.err === "admin" ? "That account is an admin. Remove it from ADMIN_EMAILS first." :
+        q.err === "inuse" ? "Someone still watches that search. Remove their watch first, or park it instead." :
+        // Emitted by the park guard since the day it was added, and
+        // mapped nowhere — so the refusal it exists to explain looked
+        // exactly like a dead button.
+        q.err === "watched" ? "Someone is actively watching that search, so parking it would stop their alerts. Ask them to pause the watch first." :
+        q.err === "selfmerge" ? "A search cannot be merged into itself." :
+        q.err === "geo" ? "Those two searches are in different countries. Merging them would change which region every watcher is following." :
+        q.err === "already" ? "That account already watches this search." :
+        q.err === "nosuch" ? "That account or search no longer exists." : null,
+    adminNotice: q.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
+        q.unwatched ? "Watch removed. If that was the last one on the search, it has stopped sweeping." :
+        q.watched ? `${q.watched} now watches that search. A shared query is one fetch however many people are on it, so this costs nothing.` :
+        q.filtered ? `Email filter set to ${q.filtered}. Their wire still shows everything the watch catches — only the email is narrowed.` :
+        // Both halves are worth saying: "moved" is who came across,
+        // "dropped" is who was already on the target and would otherwise
+        // have been sent two copies of every job.
+        q.merged !== undefined
+          ? `Merged. ${q.merged} watch(es) moved across` +
+            (Number(q.dropped) ? `, ${q.dropped} duplicate watch(es) removed` : "") +
+            ". The old search is parked — delete it when the move looks right."
+          : null,
+  };
+}
+
+/**
+ * Answer a mutation.
+ *
+ * Without script this is the redirect it has always been. Over htmx it
+ * is 204 and a list of what changed: the panels that care are listening
+ * for those names and fetch themselves, so parking a query re-renders
+ * two panels instead of the whole page, and the four other panels — plus
+ * the shell — are not touched.
+ *
+ * The flash rides along as an event rather than a query flag, because
+ * there is no navigation left to carry a query flag on.
+ */
+function answer(req, res, to, events = []) {
+  if (req.get("hx-request") !== "true") return res.redirect(to);
+  const flash = adminFlash(Object.fromEntries(new URLSearchParams(to.split("?")[1] || "")));
+  const trigger = {};
+  for (const e of events) trigger[e] = true;
+  if (flash.adminError || flash.adminNotice) {
+    /* Percent-encoded, because an HTTP header is bytes and these
+       sentences are not. The first one tried carried an em dash and the
+       response died with "Invalid character in header content" — which
+       reads as a server fault rather than as a punctuation mark. */
+    trigger["jw:flash"] = {
+      text: encodeURIComponent(flash.adminError || flash.adminNotice),
+      bad: !!flash.adminError,
+    };
+  }
+  res.set("HX-Trigger", JSON.stringify(trigger));
+  return res.status(204).end();
+}
+
+/**
+ * Everything the admin page shows, gathered once.
+ *
+ * Pulled out of the route so a single section can be re-rendered on its
+ * own. The alternative — a handler per panel, each with its own reads —
+ * is four more places for the People cap, the "today" boundary or the
+ * poller verdict to be computed slightly differently, and those
+ * disagreements are exactly the bugs this page keeps having.
+ *
+ * It over-fetches for a fragment: asking for the Delivery panel still
+ * counts users. That is deliberate. The reads are one parallel round
+ * trip and the page is for one operator, so paying for the whole set
+ * buys the guarantee that no two panels can ever disagree.
+ */
+async function adminData(req, res) {
     /* The People list is capped, and the cap is a DISPLAY limit only.
        Every total is counted in the database instead of measured off the
        array, because deriving them from a truncated list means the
@@ -377,7 +458,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       .map((r) => ({ ...r, seen: r.at ? rel(r.at) : "never" }));
     res.locals.t?.mark("shape-health");
 
-    page(res, "pages/admin", {
+    return {
       title: "Admin",
       nav: "admin",
       user: req.user,
@@ -389,33 +470,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       delivery,
       poller,
       sourceHealth,
-      // Refusals come back as a query flag so the redirect can explain
-      // itself rather than silently doing nothing.
-      adminError:
-        req.query.err === "self"  ? "You cannot delete the account you are signed in with." :
-        req.query.err === "admin" ? "That account is an admin. Remove it from ADMIN_EMAILS first." :
-        req.query.err === "inuse" ? "Someone still watches that search. Remove their watch first, or park it instead." :
-        // Emitted by the park guard since the day it was added, and
-        // mapped nowhere — so the refusal it exists to explain looked
-        // exactly like a dead button.
-        req.query.err === "watched" ? "Someone is actively watching that search, so parking it would stop their alerts. Ask them to pause the watch first." :
-        req.query.err === "selfmerge" ? "A search cannot be merged into itself." :
-        req.query.err === "geo" ? "Those two searches are in different countries. Merging them would change which region every watcher is following." :
-        req.query.err === "already" ? "That account already watches this search." :
-        req.query.err === "nosuch" ? "That account or search no longer exists." : null,
-      adminNotice:
-        req.query.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
-        req.query.unwatched ? "Watch removed. If that was the last one on the search, it has stopped sweeping." :
-        req.query.watched ? `${req.query.watched} now watches that search. A shared query is one fetch however many people are on it, so this costs nothing.` :
-        req.query.filtered ? `Email filter set to ${req.query.filtered}. Their wire still shows everything the watch catches — only the email is narrowed.` :
-        // Both halves are worth saying: "moved" is who came across,
-        // "dropped" is who was already on the target and would otherwise
-        // have been sent two copies of every job.
-        req.query.merged !== undefined
-          ? `Merged. ${req.query.merged} watch(es) moved across` +
-            (Number(req.query.dropped) ? `, ${req.query.dropped} duplicate watch(es) removed` : "") +
-            ". The old search is parked — delete it when the move looks right."
-          : null,
+      ...adminFlash(req.query),
       totals: {
         users: userCount,
         verified: verifiedCount,
@@ -429,6 +484,40 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         mailCap: dailyCap(),
         mailProvider: providerLabel(),
       },
+    };
+}
+
+adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    page(res, "pages/admin", await adminData(req, res));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * One panel, on its own.
+ *
+ * Admin mutations used to answer with a redirect, which after the shell
+ * became persistent meant the most write-heavy page in the app was also
+ * the only one still rebuilding itself from scratch on every click. Now
+ * a mutation says WHAT changed and the panels that care come and get it.
+ *
+ * The section name is checked against a fixed list rather than passed
+ * through to a template path — a route that renders whatever view name
+ * arrives in the URL is a file read waiting to be pointed somewhere
+ * else.
+ */
+const ADMIN_SECTIONS = new Set(["overview", "health", "delivery", "people", "queries"]);
+
+adminRoutes.get("/admin/fragments/:section", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const section = String(req.params.section || "");
+    if (!ADMIN_SECTIONS.has(section)) return res.status(404).type("text/plain").send("Not found");
+    const data = await adminData(req, res);
+    res.render("partials/admin/" + section, data, (err, html) => {
+      if (err) return next(err);
+      res.type("text/html").send(html);
     });
   } catch (err) {
     next(err);
@@ -445,7 +534,7 @@ const guard = [requireAuth, requireAdmin];
 adminRoutes.post("/admin/users/:id/verify", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:peopleChanged"]);
     const u = await collections.users().findOne({ _id: id }, { projection: { email: 1, verified: 1 } });
     if (u && !u.verified) {
       await collections.users().updateOne(
@@ -455,7 +544,7 @@ adminRoutes.post("/admin/users/:id/verify", ...guard, async (req, res, next) => 
       );
       log.warn("ADMIN verified an account by hand", { by: req.user.email, account: u.email });
     }
-    res.redirect("/admin");
+    return answer(req, res, "/admin", ["admin:peopleChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -471,18 +560,18 @@ adminRoutes.post("/admin/users/:id/verify", ...guard, async (req, res, next) => 
 adminRoutes.post("/admin/users/:id/delete", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:peopleChanged", "admin:queriesChanged"]);
     const u = await collections.users().findOne({ _id: id }, { projection: { email: 1 } });
-    if (!u) return res.redirect("/admin");
+    if (!u) return answer(req, res, "/admin", ["admin:peopleChanged", "admin:queriesChanged"]);
 
     // Two refusals, both about not being able to undo it from here.
     if (String(id) === String(req.user._id)) {
       log.warn("ADMIN tried to delete their own account", { by: req.user.email });
-      return res.redirect("/admin?err=self");
+      return answer(req, res, "/admin?err=self", ["admin:peopleChanged", "admin:queriesChanged"]);
     }
     if (isAdmin(u)) {
       log.warn("ADMIN tried to delete another admin", { by: req.user.email, account: u.email });
-      return res.redirect("/admin?err=admin");
+      return answer(req, res, "/admin?err=admin", ["admin:peopleChanged", "admin:queriesChanged"]);
     }
 
     const subs = await collections.subscriptions().find({ userId: id }).toArray();
@@ -499,7 +588,7 @@ adminRoutes.post("/admin/users/:id/delete", ...guard, async (req, res, next) => 
     for (const s of subs) touched.set(String(s.queryId), s.queryId);
     await Promise.all([...touched.values()].map((qid) => Subs.syncSchedule(qid)));
     log.warn("ADMIN deleted an account", { by: req.user.email, account: u.email, watches: subs.length });
-    res.redirect("/admin");
+    return answer(req, res, "/admin", ["admin:peopleChanged", "admin:queriesChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -507,7 +596,7 @@ adminRoutes.post("/admin/users/:id/delete", ...guard, async (req, res, next) => 
 adminRoutes.post("/admin/queries/:id/toggle", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:queriesChanged", "admin:pollerChanged"]);
     const q = await collections.queries().findOne({ _id: id }, { projection: { nextFetchAt: 1, location: 1 } });
     if (q) {
       /* Parking is only ever safe for a query nobody is listening to.
@@ -524,14 +613,14 @@ adminRoutes.post("/admin/queries/:id/toggle", ...guard, async (req, res, next) =
           log.warn("ADMIN tried to park a query people are watching", {
             by: req.user.email, location: q.location, activeWatchers: live,
           });
-          return res.redirect("/admin?err=watched");
+          return answer(req, res, "/admin?err=watched", ["admin:queriesChanged", "admin:pollerChanged"]);
         }
       }
       await Queries.setSweeping(id, q.nextFetchAt == null);
       log.warn("ADMIN " + (q.nextFetchAt == null ? "resumed" : "parked") + " a query",
         { by: req.user.email, location: q.location });
     }
-    res.redirect("/admin");
+    return answer(req, res, "/admin", ["admin:queriesChanged", "admin:pollerChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -545,7 +634,7 @@ adminRoutes.post("/admin/queries/:id/toggle", ...guard, async (req, res, next) =
 adminRoutes.post("/admin/queries/:id/sweep", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:pollerChanged", "admin:deliveryChanged"]);
     const q = await collections.queries().findOne({ _id: id });
     if (q) {
       /* Make the poller pick it up rather than sweeping it here. Calling
@@ -571,7 +660,7 @@ adminRoutes.post("/admin/queries/:id/sweep", ...guard, async (req, res, next) =>
         { $set: { nextFetchAt: new Date(), failCount: 0 } }
       );
     }
-    res.redirect("/admin?swept=1");
+    return answer(req, res, "/admin?swept=1", ["admin:pollerChanged", "admin:deliveryChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -587,9 +676,9 @@ adminRoutes.post("/admin/queries/:id/sweep", ...guard, async (req, res, next) =>
 adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:queriesChanged"]);
     const q = await collections.queries().findOne({ _id: id });
-    if (!q) return res.redirect("/admin");
+    if (!q) return answer(req, res, "/admin", ["admin:queriesChanged"]);
 
     const subs = await collections.subscriptions().countDocuments({ queryId: id });
     const force = req.body.force === "1";
@@ -597,7 +686,7 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
     if (subs > 0 && !force) {
       log.warn("ADMIN tried to delete a query someone still watches",
         { by: req.user.email, location: q.location, subscribers: subs });
-      return res.redirect("/admin?err=inuse");
+      return answer(req, res, "/admin?err=inuse", ["admin:queriesChanged"]);
     }
 
     /* Forced deletion takes the watches WITH it, and that is the whole
@@ -645,7 +734,7 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
       by: req.user.email, location: q.location,
       keywords: (q.keywords || []).join("+") || "everything", jobsDropped: jobs,
     });
-    res.redirect("/admin");
+    return answer(req, res, "/admin", ["admin:queriesChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -667,9 +756,9 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
 adminRoutes.post("/admin/watches/:id/delete", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:queriesChanged"]);
     const sub = await collections.subscriptions().findOne({ _id: id });
-    if (!sub) return res.redirect("/admin");
+    if (!sub) return answer(req, res, "/admin", ["admin:queriesChanged"]);
     const u = await collections.users().findOne(
       { _id: sub.userId }, { projection: { email: 1 } });
 
@@ -679,7 +768,7 @@ adminRoutes.post("/admin/watches/:id/delete", ...guard, async (req, res, next) =
     log.warn("ADMIN removed somebody's watch", {
       by: req.user.email, account: u?.email || String(sub.userId), watch: sub.label,
     });
-    res.redirect("/admin?unwatched=1");
+    return answer(req, res, "/admin?unwatched=1", ["admin:queriesChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -713,14 +802,14 @@ adminRoutes.post("/admin/queries/:id/merge", ...guard, async (req, res, next) =>
   try {
     const from = oid(req.params.id);
     const into = oid(req.body.into);
-    if (!from || !into) return res.redirect("/admin");
-    if (String(from) === String(into)) return res.redirect("/admin?err=selfmerge");
+    if (!from || !into) return answer(req, res, "/admin", ["admin:queriesChanged"]);
+    if (String(from) === String(into)) return answer(req, res, "/admin?err=selfmerge", ["admin:queriesChanged"]);
 
     const [src, dst] = await Promise.all([
       collections.queries().findOne({ _id: from }),
       collections.queries().findOne({ _id: into }),
     ]);
-    if (!src || !dst) return res.redirect("/admin");
+    if (!src || !dst) return answer(req, res, "/admin", ["admin:queriesChanged"]);
 
     /* Refused across countries, and this is not caution for its own
        sake: sources are chosen by country and each search fetches that
@@ -730,7 +819,7 @@ adminRoutes.post("/admin/queries/:id/merge", ...guard, async (req, res, next) =>
       log.warn("ADMIN tried to merge across countries", {
         by: req.user.email, from: src.location, into: dst.location,
       });
-      return res.redirect("/admin?err=geo");
+      return answer(req, res, "/admin?err=geo", ["admin:queriesChanged"]);
     }
 
     const subs = await collections.subscriptions().find({ queryId: from }).toArray();
@@ -764,7 +853,7 @@ adminRoutes.post("/admin/queries/:id/merge", ...guard, async (req, res, next) =>
       into: (dst.keywords || []).join("+") || "everything",
       location: src.location, moved, dropped,
     });
-    res.redirect(`/admin?merged=${moved}&dropped=${dropped}`);
+    return answer(req, res, `/admin?merged=${moved}&dropped=${dropped}`, ["admin:queriesChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -788,19 +877,19 @@ adminRoutes.post("/admin/queries/:id/watchers", ...guard, async (req, res, next)
   try {
     const queryId = oid(req.params.id);
     const userId = oid(req.body.userId);
-    if (!queryId || !userId) return res.redirect("/admin");
+    if (!queryId || !userId) return answer(req, res, "/admin", ["admin:queriesChanged"]);
 
     const [q, u] = await Promise.all([
       collections.queries().findOne({ _id: queryId }),
       collections.users().findOne({ _id: userId }, { projection: { email: 1, verified: 1 } }),
     ]);
-    if (!q || !u) return res.redirect("/admin?err=nosuch");
+    if (!q || !u) return answer(req, res, "/admin?err=nosuch", ["admin:queriesChanged"]);
 
     const label = (q.keywords || []).join(", ") || q.location || "Watch";
     const sub = await Subs.create({ userId, queryId, label });
     if (!sub) {
       // The unique index caught it: they are already on this search.
-      return res.redirect("/admin?err=already");
+      return answer(req, res, "/admin?err=already", ["admin:queriesChanged"]);
     }
 
     log.warn("ADMIN added somebody to a search", {
@@ -808,7 +897,7 @@ adminRoutes.post("/admin/queries/:id/watchers", ...guard, async (req, res, next)
       search: (q.keywords || []).join("+") || "everything",
       location: q.location, unverified: !u.verified || undefined,
     });
-    res.redirect(`/admin?watched=${encodeURIComponent(u.email)}`);
+    return answer(req, res, `/admin?watched=${encodeURIComponent(u.email)}`, ["admin:queriesChanged"]);
   } catch (err) { next(err); }
 });
 
@@ -827,14 +916,14 @@ adminRoutes.post("/admin/queries/:id/watchers", ...guard, async (req, res, next)
 adminRoutes.post("/admin/watches/:id/pack", ...guard, async (req, res, next) => {
   try {
     const id = oid(req.params.id);
-    if (!id) return res.redirect("/admin");
+    if (!id) return answer(req, res, "/admin", ["admin:queriesChanged"]);
     const asked = String(req.body.pack || "").trim();
     // Validated against the registry: an unknown id would sit in the
     // database looking like a filter and silently do nothing.
     const packId = getPack(asked) ? asked : "";
 
     const sub = await Subs.setEmailPack(id, packId);
-    if (!sub) return res.redirect("/admin?err=nosuch");
+    if (!sub) return answer(req, res, "/admin?err=nosuch", ["admin:queriesChanged"]);
     const u = await collections.users().findOne(
       { _id: sub.userId }, { projection: { email: 1 } });
 
@@ -842,6 +931,6 @@ adminRoutes.post("/admin/watches/:id/pack", ...guard, async (req, res, next) => 
       by: req.user.email, account: u?.email || String(sub.userId),
       pack: packId || "(none)",
     });
-    res.redirect(`/admin?filtered=${encodeURIComponent(packId ? getPack(packId).label : "off")}`);
+    return answer(req, res, `/admin?filtered=${encodeURIComponent(packId ? getPack(packId).label : "off")}`, ["admin:queriesChanged"]);
   } catch (err) { next(err); }
 });

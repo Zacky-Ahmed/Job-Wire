@@ -1,0 +1,176 @@
+<%# admin/queries.ejs
+     The shared searches, who is on them, and the controls.
+
+     Split out of pages/admin.ejs so it can be re-rendered on its own.
+     The wrapper carries the id the fragment route replaces and the
+     events that tell it to: a mutation announces what it changed, and
+     only the panels that care come and fetch it. Nothing polls. %>
+<div id="admin-queries" hx-get="/admin/fragments/queries"
+  hx-trigger="admin:queriesChanged from:body, admin:peopleChanged from:body" hx-target="this" hx-swap="outerHTML">
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot <%= queryRows.some(q => q.orphaned || q.stalled) ? 'off' : 'live' %>"></span>
+      <h3>Queries</h3>
+      <span class="sp"></span>
+      <span class="lbl">what the poller is actually doing</span>
+    </div>
+    <div class="row rhead r-admin">
+      <span>Search</span><span>State</span><span class="hide">Seen</span><span style="text-align:right">Actions</span>
+    </div>
+    <% if (!queryRows.length) { %>
+      <div class="empty"><b>No queries</b><span>Nothing is being swept.</span></div>
+    <% } %>
+    <% queryRows.forEach(function (q) { %>
+      <div class="row r-admin">
+        <div class="role">
+          <div class="a"><%= q.label %><% if (q.matchAll) { %><span class="why">everything</span><% } %></div>
+          <div class="b"><%= q.location %> · <%= q.sources %> · every <%= q.every %> min</div>
+          <%# Who is on it. A count answers the wrong question: before
+              parking or deleting a search you want to know whose it is. %>
+          <div class="watchers">
+            <% if (!q.watchers.length) { %>
+              <span class="w-none">nobody is watching this</span>
+            <% } %>
+            <%# Put somebody on this search. A shared query is one fetch
+                however many people are on it, so this is the cheapest
+                thing on the page — and the answer to "can you just add me
+                to that one" without them re-typing the keywords. %>
+            <% if (q.addable.length) { %>
+              <form class="w-add" method="post" action="/admin/queries/<%= q.id %>/watchers">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <select name="userId" aria-label="Add somebody to this search">
+                  <option value="">Add someone&hellip;</option>
+                  <% q.addable.forEach(function (u) { %>
+                    <option value="<%= u.id %>"><%= u.email %><%= u.verified ? "" : " (unverified)" %></option>
+                  <% }) %>
+                </select>
+                <button class="btn btn-xs" type="submit">Add</button>
+              </form>
+            <% } %>
+            <% q.watchers.forEach(function (w) { %>
+              <span class="w-one<%= w.active ? '' : ' held' %>"
+                title="<%= w.active ? 'Watching' : 'Paused by them' %>">
+                <%= w.email %><span class="w-lbl"><%= w.label %></span>
+                <%# The address goes in a data attribute, not into the
+                    onsubmit string: o'brien@x.com is a valid address and
+                    EJS escapes the quote to &#39;, which the browser
+                    decodes back to ' while parsing the attribute — ending
+                    the JS literal early, so confirm() never ran and the
+                    form submitted straight through. Same trap as the
+                    account delete above. %>
+                <%# Their email filter. One button per pack, because with a
+                    single pack a tick is the whole interaction; a second
+                    pack would make this a dropdown. The search is untouched
+                    — this narrows only what THIS person is mailed, and
+                    their wire still shows everything the watch catches. %>
+                <% (locals.packs || []).forEach(function (pk) { %>
+                  <form method="post" action="/admin/watches/<%= w.id %>/pack">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="hidden" name="pack" value="<%= w.pack === pk.id ? '' : pk.id %>">
+                    <button class="w-pack<%= w.pack === pk.id ? ' on' : '' %>" type="submit"
+                      title="<%= w.pack === pk.id ? 'Emailed only ' + pk.label + ' jobs. Click to send everything again' : pk.note + '. Click to email this person only those' %>"><%= w.pack === pk.id ? "✓ " : "" %><%= pk.label %></button>
+                  </form>
+                <% }) %>
+                <form method="post" action="/admin/watches/<%= w.id %>/delete"
+                  data-who="<%= w.email %>"
+                  onsubmit="return confirm('Remove ' + this.dataset.who + ' from this search? Their account and their other watches are untouched.')">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="w-x" type="submit" title="Remove this watch"
+                    aria-label="Remove <%= w.email %> from this search">&times;</button>
+                </form>
+              </span>
+            <% }) %>
+          </div>
+        </div>
+        <span>
+          <% if (q.retired) { %><span class="pill off" title="Nobody watches this any more, so it has stopped sweeping">Parked</span>
+          <% } else if (q.orphaned) { %><span class="pill sig" title="No subscribers, but still sweeping — this is wasted budget">Orphaned</span>
+          <% } else if (q.stalled) { %><span class="pill sig" title="Overdue by <%= q.overdueMin %> min">Stalled</span>
+          <% } else if (q.failCount) { %><span class="pill amber"><%= q.failCount %> fails</span>
+          <% } else { %><span class="pill go">Healthy</span><% } %>
+          <%# Orthogonal to the state above: a duplicate can be perfectly
+              healthy and still be a second identical fetch in a cycle
+              everybody else is queued behind. %>
+          <% if (q.duplicate) { %><span class="pill amber"
+            title="Another search fetches exactly the same thing — merge them">Duplicate</span><% } %>
+        </span>
+        <span class="muted hide tnum" title="last sweep / best ever">
+          <%= q.tracked %><span class="lbl">/<%= q.peak %></span>
+        </span>
+        <%# Every row draws the SAME controls in the same places. They used
+            to be added and removed per row — no Sweep on a parked search,
+            no Delete while anyone watched — so each row was a different
+            width and the column looked shuffled. A control that does not
+            apply is now disabled and says why on hover, which is also the
+            only version that answers "why does this row have no Delete". %>
+        <div class="acts">
+          <div class="acts-r">
+            <form method="post" action="/admin/queries/<%= q.id %>/toggle">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs" type="submit"
+                title="<%= q.retired ? 'Start sweeping this search again' : 'Stop sweeping it' %>"><%= q.retired ? 'Resume' : 'Park' %></button>
+            </form>
+            <form method="post" action="/admin/queries/<%= q.id %>/sweep">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs" type="submit"<%= q.retired ? ' disabled' : '' %>
+                title="<%= q.retired ? 'Parked searches are not swept — resume it first' : 'Fetch now instead of waiting for the schedule' %>">Sweep</button>
+            </form>
+            <%# One slot, two meanings, written as two forms rather than one
+                with a conditional confirm — the quoting of a JS string
+                inside an attribute inside a template is exactly the kind of
+                cleverness that breaks silently.
+
+                Unwatched, this is an ordinary delete. Watched, it is the
+                only control on this page that takes something away from
+                people who did not ask, so it changes its name, states the
+                number, and destroys the watches along with the search.
+                Leaving those behind would be worse: a subscription is
+                joined to its query, so each one would vanish from its
+                owner's page with no message and no way back — present in
+                the database and absent from every screen. %>
+            <% if (q.deletable) { %>
+              <form method="post" action="/admin/queries/<%= q.id %>/delete"
+                onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn-xs btn-bad" type="submit"
+                  title="Nobody is subscribed, so this is safe to remove">Delete</button>
+              </form>
+            <% } else { %>
+              <form method="post" action="/admin/queries/<%= q.id %>/delete"
+                onsubmit="return confirm('Delete this search AND the <%= q.subscribers %> watch(es) on it? Those people lose the watch entirely and are not told. This cannot be undone.')">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="force" value="1">
+                <button class="btn btn-xs btn-bad" type="submit"
+                  title="<%= q.subscribers %> person/people watch this. Deleting takes their watch with it.">Force delete</button>
+              </form>
+            <% } %>
+          </div>
+          <% if (q.mergeTargets.length) { %>
+            <%# Manual on purpose. upsert() already stops NEW duplicates
+                from appearing, but deciding that "internship" and
+                "intern" are one search is a judgement the system should
+                not make on anybody's behalf. Rows marked * fetch
+                provably identical results and are listed first.
+
+                Its own line, because a dropdown wide enough to read a
+                search in cannot share 116px with three buttons — the
+                first attempt wrapped mid-control and clipped the select
+                to "Merg". %>
+            <form class="merge" method="post" action="/admin/queries/<%= q.id %>/merge"
+              data-n="<%= q.subscribers %>"
+              onsubmit="return this.into.value !== '' && confirm('Move ' + this.dataset.n + ' watcher(s) onto the chosen search, then park this one?')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <select name="into" aria-label="Merge this search into">
+                <option value="">Merge into&hellip;</option>
+                <% q.mergeTargets.forEach(function (t) { %>
+                  <option value="<%= t.id %>"><%= t.same ? "* " : "" %><%= t.label %> (<%= t.watchers %>)</option>
+                <% }) %>
+              </select>
+              <button class="btn btn-xs" type="submit">Merge</button>
+            </form>
+          <% } %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>

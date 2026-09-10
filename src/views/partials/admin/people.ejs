@@ -1,0 +1,64 @@
+<%# admin/people.ejs
+     Accounts, newest first, capped for display.
+
+     Split out of pages/admin.ejs so it can be re-rendered on its own.
+     The wrapper carries the id the fragment route replaces and the
+     events that tell it to: a mutation announces what it changed, and
+     only the panels that care come and fetch it. Nothing polls. %>
+<div id="admin-people" hx-get="/admin/fragments/people"
+  hx-trigger="admin:peopleChanged from:body" hx-target="this" hx-swap="outerHTML">
+  <div class="panel">
+    <div class="panel-h">
+      <span class="dot live"></span>
+      <h3>People</h3>
+      <span class="sp"></span>
+      <%# The cap is a display limit. Saying what is shown out of what
+          exists is the difference between "not on this page" and "gone". %>
+      <span class="lbl">newest first · showing <%= totals.shown %> of <%= totals.users %></span>
+    </div>
+    <div class="row rhead r-admin">
+      <span>Email</span><span>State</span><span class="hide">Watches</span><span style="text-align:right">Actions</span>
+    </div>
+    <% if (!people.length) { %>
+      <div class="empty"><b>No accounts yet</b><span>Nobody has signed up.</span></div>
+    <% } %>
+    <% people.forEach(function (p) { %>
+      <div class="row r-admin">
+        <div class="role">
+          <div class="a"><%= p.email %><% if (p.isAdmin) { %><span class="why">admin</span><% } %></div>
+          <div class="b c-only">joined <%= p.joined %> · <%= p.watches %> watch<%= p.watches === 1 ? '' : 'es' %></div>
+        </div>
+        <span>
+          <% if (p.verified) { %><span class="pill go">Verified</span>
+          <% } else { %><span class="pill amber" title="Signed up but never entered the emailed code — they cannot sign in">Unverified</span><% } %>
+        </span>
+        <span class="muted hide"><%= p.active %>/<%= p.watches %></span>
+        <div class="acts">
+          <% if (!p.verified) { %>
+            <%# The reason this exists: a verification code in a spam
+                folder locks someone out of their own account with no way
+                to help them from inside the app. %>
+            <form method="post" action="/admin/users/<%= p.id %>/verify">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs" type="submit" title="Mark this address confirmed">Verify</button>
+            </form>
+          <% } %>
+          <% if (!p.isAdmin) { %>
+            <form method="post" action="/admin/users/<%= p.id %>/delete"
+              <%# The address goes in a data- attribute, not inside a JS
+                  string literal. o'brien@x.com is a valid address; EJS
+                  escapes the quote to &#39;, the browser decodes it back
+                  to ' while parsing the attribute, and the literal ends
+                  early — a syntax error, so confirm() never ran and the
+                  form submitted straight through. %>
+              data-email="<%= p.email %>"
+              onsubmit="return confirm('Delete ' + this.dataset.email + '? Their watches and mail history go too. This cannot be undone.')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn-xs btn-bad" type="submit" aria-label="Delete account">Delete</button>
+            </form>
+          <% } %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>
