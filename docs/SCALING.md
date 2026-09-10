@@ -27,8 +27,17 @@ Seven sources, all covering Sri Lanka:
 | John Keells | one employer | scraped HTML |
 | ITPro.lk | Sri Lankan IT board | scraped HTML |
 
-There is no official API for any of them. LinkedIn is read through its
-unauthenticated public endpoints, which are rate-limited and degrade silently.
+There is no supported public search/read API suitable for the LinkedIn
+discovery case. Several of the others do expose JSON endpoints — MAS through
+Oracle Recruiting, XpressJobs and Rooster through the APIs their own front ends
+call — but those carry no support guarantee and can change without notice.
+LinkedIn is read through its unauthenticated public endpoints, which are
+rate-limited and degrade silently.
+
+LinkedIn's official Talent Solutions APIs do not close this gap: the Job
+Posting API is for approved ATS and job-distribution partners to *create* jobs,
+not a search feed, and new partnerships for it are not currently being
+accepted.
 
 ---
 
@@ -38,7 +47,22 @@ unauthenticated public endpoints, which are rate-limited and degrade silently.
 > on the board, **for any number of users and any number of distinct
 > keywords.**
 
-The second half is the problem. The first half already works.
+**That sentence is not a usable target, because it measures something the
+system does not control.** It has to be split:
+
+| | measured from | to | controllable? |
+|---|---|---|---|
+| **source observability lag** | the employer posting it | the first moment any monitored source exposes it | **no** |
+| **processing latency** | our first observation | a durable alert queued | **yes** |
+
+The measured numbers say why this matters. Source observability lag on
+LinkedIn is a median of **19 minutes** and a 90th percentile of **46**, with
+only 11% under five minutes. Processing latency is a median of **3 seconds**.
+
+So a five-minute promise measured from the employer's timestamp is not
+achievable against LinkedIn at any architecture. Measured from first
+observation, it is already comfortably met — and the real question is how many
+distinct searches can be observed at all, which is §4a.
 
 ---
 
@@ -125,9 +149,12 @@ Surface walks, which is what the network and the rate limiter actually see:
 | **total** | **4** | **5N** |
 
 ```
-before any sharing:   7N   adapter calls  =  7N   surface walks
+before any sharing:   7N   adapter calls  =  9N   surface walks
 today:            4 + 3N   adapter calls  =  4 + 5N surface walks
 ```
+
+Pre-sharing is **9N**, not 7N: six sources contribute one walk each and
+LinkedIn contributes three.
 
 Sharing LinkedIn's country feed — the step described in §6 — moves the
 LinkedIn part from `3N` walks to `1 + 2N`, and the whole system to
@@ -144,11 +171,13 @@ Three remain per-search:
 - **Keells and Rooster**, which filter server-side, so a shared result would be
   missing other searches' jobs. Cheap (5s, 1s), so not urgent.
 
-```
- 5 searches ->  35 fetches before,  19 now
-20 searches -> 140 fetches before,  64 now
-50 searches -> 350 fetches before, 154 now
-```
+Counted in **surface walks**, which is what the rate limiter sees:
+
+| N | before sharing (9N) | today (4+5N) | shared LI feed (5+4N) | shared feed, no JSERP (5+3N) |
+|---:|---:|---:|---:|---:|
+| 5 | 45 | 29 | 25 | 20 |
+| 20 | 180 | 104 | 85 | 65 |
+| 50 | 450 | 254 | 205 | 155 |
 
 Still linear in N, and the linear part is the slowest, most fragile source.
 
@@ -303,7 +332,8 @@ than fetching its own: a change inside the adapter, not a cache around it.
 
 ### What that still does not solve
 
-Even at 5 + 2N, cost grows with N. Genuinely flat cost requires one of:
+Even at 5 + 4N whole-system walks (1 + 2N for LinkedIn alone), cost grows with
+N. Genuinely flat cost requires one of:
 
 - **one crawl, many matchers** — but 5.2 shows the unfiltered feed is not a
   superset, so this is lossy against LinkedIn specifically;
@@ -317,9 +347,13 @@ Even at 5 + 2N, cost grows with N. Genuinely flat cost requires one of:
 
 ## 7. Constraints any solution must respect
 
-1. **A source that cannot decide must throw, never return an empty array.**
-   Empty means nothing today, and is indistinguishable from a silent failure.
-   Every outage here has had that shape.
+1. **Positive and negative evidence are not symmetric.** A job seen on page 1
+   of a scan that later fails is still a real job and can be acted on. An
+   *empty* result can only be believed from a scan that completed healthily.
+   The current rule — a source that cannot decide must throw rather than return
+   an empty array — is the crude version of this; the precise version is that
+   absence requires proof of completeness, presence does not. Every outage here
+   has had the shape of absence being trusted when it should not have been.
 2. **Matching happens after fetching, never inside a shared artefact.** See 5.1.
 3. **A job must never be emailed twice.** The alertedJobs ledger records every
    job a search has ever seen, with a long TTL, separate from the 14-day feed
@@ -416,6 +450,13 @@ At five searches, 21% of the rows are duplication. The share grows with N.
 The fix is a global `jobs` table plus a `queryMatches` join, so a job is one
 object and the query relationship lives downstream.
 
+**That 21% is storage and bookkeeping, not HTTP.** A global fact cache saves a
+*request* only when the same job triggers employment-type enrichment under more
+than one query — and enrichment is already skipped whenever the title matches.
+Measure duplicate detail calls directly before quoting a request saving. At the
+time of writing N=1, so the measured duplicate-detail count is zero and the
+question is open.
+
 ### 11.2 A global fact cache for employment type
 
 The per-job detail request that reads employment type is already **lazy** — a
@@ -462,3 +503,88 @@ If JSERP's unique contribution is negligible, deleting it takes LinkedIn from
 `3N` walks to `2N` immediately, and to `1 + N` once the feed is shared. That
 is a larger and cheaper win than any caching scheme, and it needs one
 instrumentation change rather than an architecture.
+
+---
+
+## 13. The constraint nobody had modelled: capacity
+
+Everything above counts **requests**. None of it counts **time**, and time is
+what actually broke.
+
+Searches are swept one at a time. Let a search `q` cost `Cq` seconds of
+LinkedIn service time and ask for an interval of `Iq` seconds. A single serial
+lane is oversubscribed when
+
+```
+U = sum( Cq / Iq )  >=  1
+```
+
+With the measured midpoint `Cq ~= 85s` and every watch on the five-minute
+floor:
+
+```
+Nmax  ~=  300 / 85  ~=  3.5
+```
+
+**Three and a half searches.** Not fifty, not twenty — between three and four
+is where a five-minute promise stops being arithmetically possible, before
+throttling is considered at all.
+
+| N | one full round | vs a 5-minute interval |
+|---:|---:|---|
+| 1 | ~85s | fine |
+| 3 | ~4.3 min | fine |
+| 4 | ~5.7 min | already late |
+| 5 | ~7.1 min | permanent backlog |
+| 20 | ~28 min | the interval is fiction |
+
+This reframes the outage in §6. Five searches were not merely making too many
+requests; the system had promised more work than one serial lane could
+perform. Throttling and oversubscription arrived together, and the wire showed
+one number for both.
+
+Two consequences:
+
+1. **Capacity and email are independent ceilings.** Fifteen users on one shared
+   query hit the mail cap first. Five users with five distinct searches hit
+   LinkedIn capacity first. Neither number predicts the other.
+2. **An interval the lane cannot honour should be refused, not accepted.** The
+   form currently offers five minutes to everyone regardless of how many
+   distinct searches exist. Admission control — or an honest "checked about
+   every N minutes" derived from measured utilisation — is more truthful than
+   a promise the scheduler cannot keep.
+
+### The scheduling change this implies
+
+Make the LinkedIn crawler a **page-level** worker rather than a query-level
+one. Today a single search holds the host lane for 80+ seconds while every
+other search waits. If the unit of work is one page, the scheduler can
+interleave by deadline, and a job found on page 1 can be matched and queued
+immediately instead of after the whole three-surface union completes.
+
+This removes no requests at all. What it changes is fairness, observability of
+the constraint, and time-to-alert for the jobs that happen to appear early.
+
+---
+
+## 14. What is already built, so nobody rebuilds it
+
+Reviews of this document have twice proposed things the system already does.
+For the avoidance of doubt:
+
+- **Lazy enrichment.** `refine()` already skips the employment-type request
+  entirely when the title already matches. What is missing is only that the
+  result is not shared *between* searches.
+- **A recipient-level outbox.** `emailLog.open()` writes a `sending` row keyed
+  by user before the provider is called; `settle()` finalises it; the retry
+  queue reclaims both failed rows and rows abandoned mid-flight, with an
+  attempt limit. It is the transactional-outbox pattern in everything but a
+  database transaction.
+- **Cross-watch sharing.** A completed sweep already offers what it fetched to
+  every other live watch in the same country, matched on title, spending no
+  extra requests.
+- **A never-mail-twice ledger,** separate from the wire's own memory, with a
+  long TTL.
+- **A pre-send guard** that refuses to mail any job whose title does not match
+  the watch's keywords, unless it was kept for an employer tag rather than its
+  title.
