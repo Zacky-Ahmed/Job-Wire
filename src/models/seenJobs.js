@@ -68,6 +68,20 @@ export async function insertNew(queryId, jobs) {
     // user's job", and it is what the wire renders.
     matched: false,
     matchedBy: null,
+    /* WHICH LINKEDIN SURFACES SAW THIS JOB: F = country feed, G = guest
+       keyword API, J = JSERP search page, or a combination.
+
+       Recorded because the question "does JSERP earn its requests?"
+       cannot be answered afterwards. The raw logs say it adds 1-8 jobs
+       per sweep, and that number decides nothing: what matters is how
+       many jobs that produced a real user match and were visible ONLY to
+       that surface. Deleting a surface first and measuring the fallout
+       is not an experiment, it is an outage.
+
+       Absent on every non-LinkedIn job, and on LinkedIn jobs recorded
+       before this existed — the analysis script treats a missing mask as
+       "unknown" rather than as "feed only". */
+    ...(j._surfaces ? { surfaces: j._surfaces } : {}),
     // How many identical requisitions this row stands for. Set only where
     // a source collapsed a group (MAS raises one per plant), so an
     // ordinary job carries no field at all rather than a misleading 1.

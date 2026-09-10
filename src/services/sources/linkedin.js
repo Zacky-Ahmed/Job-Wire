@@ -293,6 +293,58 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
 
 const DETAIL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/";
 
+/* ONE FETCH OF A JOB'S PAGE PER SWEEP, NOT TWO.
+ *
+ * The same page answers two different questions and was being fetched
+ * twice to answer them. refine() reads it for employment type and
+ * seniority when a title does not match; the closure check reads it for
+ * "no longer accepting applications" when a job is too old to mail. A
+ * job that is BOTH — title did not match, and older than the cutoff —
+ * hits both paths in one sweep and cost two requests to the same URL,
+ * seconds apart, for one page.
+ *
+ * MEASURED FIRST, because the obvious bigger idea turned out to be
+ * worth nothing: caching employment type globally by job id, across
+ * searches, saves exactly the requests that two searches make for the
+ * same job — and npm run probe-detail says that is currently ZERO of
+ * 3,633 detail requests over a fortnight, because there is one LinkedIn
+ * search. It will matter at N>1 and does not matter now; building it
+ * today would be optimising a cost that does not exist. This one is
+ * different: it is duplication WITHIN a single sweep and does not depend
+ * on how many searches there are.
+ *
+ * THE TTL IS SHORT ON PURPOSE. Employment type and seniority are fixed
+ * once a job is posted, but closure status is not — it is the entire
+ * point of the closure check, and a stale "open" keeps telling people a
+ * filled vacancy is worth applying to. Two minutes covers one sweep of
+ * one query, which is all this is for. Anything longer would be caching
+ * a fact that changes.
+ */
+const DETAIL_TTL_MS = 2 * 60_000;
+const detailPages = new Map();   // rawId -> { html, at }
+
+async function detailPage(rawId) {
+  const hit = detailPages.get(rawId);
+  if (hit && Date.now() - hit.at < DETAIL_TTL_MS) return hit.html;
+
+  const html = await guardedFetch(DETAIL + encodeURIComponent(rawId), hosts, { jitter: true });
+  detailPages.set(rawId, { html, at: Date.now() });
+
+  /* Bounded, because this is a process that runs for weeks. Evicting the
+     oldest half rather than clearing outright so a sweep in progress does
+     not lose the pages it just fetched. */
+  if (detailPages.size > 2000) {
+    const oldest = [...detailPages.entries()].sort((a, b) => a[1].at - b[1].at);
+    for (const [key] of oldest.slice(0, 1000)) detailPages.delete(key);
+  }
+  return html;
+}
+
+/** For tests, and for anything that wants a guaranteed fresh read. */
+export function clearDetailCache() {
+  detailPages.clear();
+}
+
 /**
  * Decide which of these jobs the watch actually wants.
  *
@@ -327,8 +379,7 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
     let criteria = null;
     try {
       const raw = job.jobId.replace(/^linkedin:/, "");
-      const html = await guardedFetch(DETAIL + encodeURIComponent(raw), hosts, { jitter: true });
-      criteria = parseCriteria(html);
+      criteria = parseCriteria(await detailPage(raw));
     } catch (err) {
       log.warn("could not read job criteria — returning it undecided", {
         jobId: job.jobId, message: err.message,
@@ -395,7 +446,10 @@ function strip({ _matchedByLinkedIn, ...job }) {
 export async function isClosed(jobId) {
   const raw = String(jobId).replace(/^linkedin:/, "");
   try {
-    const html = await guardedFetch(DETAIL + encodeURIComponent(raw), hosts, { jitter: true });
+    /* The same page refine() may already have read this sweep. A job
+       whose title did not match AND which is older than the cutoff hits
+       both paths, and used to pay for the page twice. */
+    const html = await detailPage(raw);
     if (/closed-job|no longer accepting applications/i.test(html)) return true;
     // A page that parsed but carries no marker is open.
     return /topcard|job-details|description__text/i.test(html) ? false : null;

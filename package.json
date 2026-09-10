@@ -29,7 +29,9 @@
     "test-sources": "node scripts/test-sources.js",
     "probe-rooster": "node scripts/probe-rooster-locations.js",
     "backfill-intervals": "node scripts/backfill-watch-intervals.js",
-    "probe-topjobs": "node scripts/probe-topjobs-areas.js"
+    "probe-topjobs": "node scripts/probe-topjobs-areas.js",
+    "analyse-surfaces": "node scripts/analyse-linkedin-surfaces.js",
+    "probe-detail": "node scripts/probe-detail-duplication.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
