@@ -23,6 +23,10 @@
 </head>
 <body class="workspace" hx-headers='{"x-csrf-token": "<%= csrfToken %>"}'>
   <a class="skip-link" href="#workspaceMain">Skip to content</a>
+  <%# Shown only while a navigation is genuinely taking a moment; see
+      workspace.css. Ships hidden and stays hidden without script, where
+      there is nothing for it to report. %>
+  <div class="nav-rail" id="navRail" hidden></div>
   <div class="app">
     <header class="topbar">
       <span class="wordmark">

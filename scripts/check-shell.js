@@ -134,6 +134,11 @@ check("sign-out is NOT boosted — it leaves the shell",
   !/hx-boost[^>]*>\s*<input type="hidden" name="_csrf"/.test(shell));
 check("main is the history element",
   /id="workspaceMain"[^>]*hx-history-elt/.test(shell));
+/* The rail belongs to the shell, not to the page. Rendered inside the
+   swapped region it would be torn out and rebuilt by the very navigation
+   it is supposed to be reporting on. */
+check("the progress rail is in the shell, and ships hidden",
+  /<div class="nav-rail" id="navRail" hidden>/.test(shell));
 
 const vary = (await get("/wire", NAV)).headers.get("vary") || "";
 check("the two answers are not cacheable as one",

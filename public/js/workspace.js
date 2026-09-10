@@ -168,6 +168,44 @@
     collect();
   }
 
+  /* ---- the progress rail ---- */
+
+  /* Nothing at all for a fast navigation.
+
+     A spinner that appears the instant you click reports on itself
+     rather than on the wait: below roughly a tenth of a second the swap
+     already reads as immediate, and a bar that flashes on and off makes
+     it read as slower. So the rail is armed on every navigation and only
+     ever seen by the ones that outlast the delay — the loaded /wire on a
+     bad connection, not the tab change that took 40ms.
+
+     aria-busy is set immediately regardless. It is not a flicker to
+     anybody; it is the answer to "is something happening", and a screen
+     reader should get it whether or not the wait crosses a threshold. */
+  var RAIL_DELAY = 140;
+  var rail = document.getElementById('navRail');
+  var railTimer = null;
+
+  function railStart() {
+    if (main) main.setAttribute('aria-busy', 'true');
+    if (!rail || railTimer) return;
+    railTimer = setTimeout(function () { railTimer = null; rail.hidden = false; }, RAIL_DELAY);
+  }
+  function railStop() {
+    if (main) main.removeAttribute('aria-busy');
+    if (railTimer) { clearTimeout(railTimer); railTimer = null; }
+    if (rail) rail.hidden = true;
+  }
+
+  var isNav = function (e) { return main && e.detail && e.detail.target === main; };
+  document.body.addEventListener('htmx:beforeRequest', function (e) { if (isNav(e)) railStart(); });
+  document.body.addEventListener('htmx:afterRequest', function (e) { if (isNav(e)) railStop(); });
+  /* A request that never lands would otherwise leave the rail running
+     forever, which is worse than never showing it: it says "still
+     working" about something that has already given up. */
+  ['htmx:sendError', 'htmx:responseError', 'htmx:timeout', 'htmx:abort']
+    .forEach(function (n) { document.body.addEventListener(n, railStop); });
+
   /* ---- swaps ---- */
 
   document.body.addEventListener('htmx:afterSwap', function (e) {
