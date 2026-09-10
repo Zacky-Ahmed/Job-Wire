@@ -50,8 +50,21 @@ async function gather(user, show = PAGE, only = "", t = null) {
   // watch is shared, so an unscoped read handed a new account the whole
   // history of a search other people had been running for weeks.
   const scope = watches.map((w) => ({ queryId: w.queryId, since: w.createdAt }));
-  const caught = await SeenJobs.recentForSubscriptions(scope, show);
-  t?.mark("db-caught");
+
+  /* One round trip for everything that needs only `scope`.
+     
+     These four were written one after another and ran that way: measured,
+     /wire spent 554ms across five serial round trips, and rendering the
+     result took 2ms. Only `emails` genuinely depends on `caught` — it
+     looks delivery up by the jobs actually on screen — so it stays behind.
+     The counters depend on nothing but the user. */
+  const [caught, caughtCount, sentToday, sentTodayAll] = await Promise.all([
+    SeenJobs.recentForSubscriptions(scope, show),
+    SeenJobs.countMatchedForSubscriptions(scope),
+    EmailLog.countTodayForUser(user._id),
+    EmailLog.countToday(),
+  ]);
+  t?.mark("db-scoped");
 
   // Look up delivery BY THE JOBS ON SCREEN, not by a fixed slice of the
   // email log. Reading the newest 30 rows only worked while sweeps
@@ -147,8 +160,6 @@ async function gather(user, show = PAGE, only = "", t = null) {
   const filtered = only ? dispatches.filter((d) => (d.sourceId || sourceOf(d.jobId)) === only) : dispatches;
 
   t?.mark("shape-rows");
-  const caughtCount = await SeenJobs.countMatchedForSubscriptions(scope);
-  t?.mark("db-caught-count");
 
 
   return {
@@ -171,8 +182,8 @@ async function gather(user, show = PAGE, only = "", t = null) {
     // Yours, not the instance's. This used to be the global figure, so a
     // brand-new account with an empty inbox was told "4 emails sent
     // today" — four emails that had gone to other people.
-    sentToday: await EmailLog.countTodayForUser(user._id),
-    sentTodayAll: await EmailLog.countToday(),
+    sentToday,
+    sentTodayAll,
     mailCap: dailyCap(),
     mailProvider: providerLabel(),
     pollerEnabled: env.pollerEnabled,

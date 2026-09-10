@@ -61,8 +61,18 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
        missing account reads as "not on this page" rather than "gone". */
     const PEOPLE_LIMIT = 200;
 
-    const [userCount, verifiedCount, users, queries, watches, mailToday, failedToday] =
-      await Promise.all([
+    /* Everything that depends on nothing goes in one round trip.
+       
+       Measured before this change: the parallel block below took 169ms and
+       was then followed by four more queries in series — my-watches,
+       last-send, poller and the watcher lookup — for another ~250ms of a
+       467ms page. Three of those four depend on nothing at all and were
+       serial only because they were written further down the function.
+       Rendering the whole page, for comparison, is 4ms. */
+    const [
+      userCount, verifiedCount, users, queries, watches, mailToday, failedToday,
+      myWatches, lastSend, beat, watcherUsers,
+    ] = await Promise.all([
         collections.users().countDocuments({}),
         collections.users().countDocuments({ verified: true }),
         collections.users()
@@ -79,6 +89,27 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
            comfortably low on the morning the sends were about to stop. */
         EmailLog.countToday(),
         EmailLog.countFailedToday(),
+        // Independent of every query above; only their position made them wait.
+        Subs.listForUser(req.user._id),
+        collections.emailLog()
+          .find({ status: "sent" }).sort({ sentAt: -1 }).limit(1).next(),
+        collections.pollerState().findOne({ _id: "poller" }),
+        /* The addresses of everyone who watches anything, resolved by the
+           database rather than by a second trip from here.
+           
+           This used to read the subscriptions first and then look their
+           accounts up with an $in, which cannot start until the first has
+           landed — 63ms of a page that was already waiting on the block
+           above. Grouping to distinct watchers and joining inside one
+           aggregate makes it depend on nothing, so it runs alongside
+           everything else. It is bounded by the number of distinct people
+           watching, not by the size of the users collection. */
+        collections.subscriptions().aggregate([
+          { $group: { _id: "$userId" } },
+          { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "u" } },
+          { $unwind: "$u" },
+          { $project: { _id: 1, email: "$u.email" } },
+        ]).toArray(),
       ]);
     res.locals.t?.mark("db-core");
 
@@ -98,19 +129,6 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
        every watcher whose account fell outside the newest N rendered as
        "(deleted account)" — a label an owner could reasonably act on by
        deleting a search real people were waiting on. */
-    const watcherIds = [];
-    const seenWatcher = new Set();
-    for (const s of watches) {
-      const k = String(s.userId);
-      if (!seenWatcher.has(k)) { seenWatcher.add(k); watcherIds.push(s.userId); }
-    }
-    const watcherUsers = watcherIds.length
-    // (the watcherUsers lookup itself is timed by the mark below)
-      ? await collections.users()
-          .find({ _id: { $in: watcherIds } }, { projection: { email: 1 } })
-          .toArray()
-      : [];
-    res.locals.t?.mark("db-watcher-users");
     const emailById = new Map(watcherUsers.map((u) => [String(u._id), u.email]));
     const subsByQuery = new Map();
     for (const s of watches) {
@@ -221,8 +239,6 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
     });
 
     res.locals.t?.mark("shape-query-rows");
-    const myWatches = await Subs.listForUser(req.user._id);
-    res.locals.t?.mark("db-my-watches");
 
     // WHY MAIL IS NOT ARRIVING.
     //
@@ -238,9 +254,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
     const from = (env.mailFrom || "").match(/<([^>]+)>/)?.[1] || env.mailFrom || "";
     const freemail = /@(gmail|googlemail|yahoo|outlook|hotmail|live|aol|icloud|proton(mail)?)\./i;
     const relayed = !!env.brevoApiKey;
-    const lastSend = await collections.emailLog()
-      .find({ status: "sent" }).sort({ sentAt: -1 }).limit(1).next();
-    res.locals.t?.mark("db-last-send");
+
 
     const delivery = {
       provider: providerLabel(),
@@ -260,8 +274,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
        minutes on ONE query is not slow, it is wedged. */
     const STALL_MINUTES = 15;
 
-    const beat = await collections.pollerState().findOne({ _id: "poller" });
-    res.locals.t?.mark("db-poller");
+
     const tickAgeMs = beat?.lastTickAt ? Date.now() - new Date(beat.lastTickAt) : null;
     const state = beat?.state || "unknown";
     const never = !beat?.lastTickAt;
@@ -473,12 +486,18 @@ adminRoutes.post("/admin/users/:id/delete", ...guard, async (req, res, next) => 
     }
 
     const subs = await collections.subscriptions().find({ userId: id }).toArray();
-    await collections.subscriptions().deleteMany({ userId: id });
-    await collections.emailLog().deleteMany({ userId: id });
-    await collections.users().deleteOne({ _id: id });
-    for (const qid of new Set(subs.map((s) => String(s.queryId)))) {
-      await Subs.syncSchedule(subs.find((s) => String(s.queryId) === qid).queryId);
-    }
+    /* Three deletes across three collections that do not depend on each
+       other, so they go together instead of one after another. */
+    await Promise.all([
+      collections.subscriptions().deleteMany({ userId: id }),
+      collections.emailLog().deleteMany({ userId: id }),
+      collections.users().deleteOne({ _id: id }),
+    ]);
+    /* Every search this person watched has to be re-timed now that a
+       subscriber is gone. Distinct queries only, and all at once. */
+    const touched = new Map();
+    for (const s of subs) touched.set(String(s.queryId), s.queryId);
+    await Promise.all([...touched.values()].map((qid) => Subs.syncSchedule(qid)));
     log.warn("ADMIN deleted an account", { by: req.user.email, account: u.email, watches: subs.length });
     res.redirect("/admin");
   } catch (err) { next(err); }
@@ -594,12 +613,18 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
        something away from somebody who did not ask. */
     if (subs > 0) {
       const rows = await collections.subscriptions().find({ queryId: id }).toArray();
-      const who = [];
-      for (const r of rows) {
-        const u = await collections.users().findOne(
-          { _id: r.userId }, { projection: { email: 1 } });
-        if (u) who.push(u.email);
-      }
+      /* One query for every address, not one per subscription.
+         
+         This read the users collection inside the loop, so a search with
+         twenty watchers cost twenty round trips — about 65ms each here —
+         to build a log line. The distinct ids go in a single $in. */
+      const ids = [...new Set(rows.map((r) => String(r.userId)))]
+        .map((k) => rows.find((r) => String(r.userId) === k).userId);
+      const who = ids.length
+        ? (await collections.users()
+            .find({ _id: { $in: ids } }, { projection: { email: 1 } })
+            .toArray()).map((u) => u.email)
+        : [];
       await collections.subscriptions().deleteMany({ queryId: id });
       log.warn("ADMIN force-deleted a search that people were watching", {
         by: req.user.email, location: q.location,
