@@ -165,16 +165,24 @@ Four sources (topjobs, MAS, XpressJobs, ITPro) fetch a whole listing and then
 filter it in the adapter. Those are now fetched **once per country, unfiltered**,
 and each search filters the shared result locally, which is free.
 
-**"Once per cycle" is what this document used to say, and it is not what the
-code does.** The share is a process-memory cache with a **four-minute TTL**
-([`fetchCache.js`](../src/services/poller/fetchCache.js)), not a boundary tied
-to a pass over the due queue. If a pass takes longer than four minutes — which
-it will as N grows, since LinkedIn alone is ~80s per search — a later search in
-the *same* logical pass refetches a source an earlier one already had. The
-`4` in `4 + 5N` is therefore a floor, not a guarantee, and it degrades exactly
-when scale makes it matter most. The fix is an explicit immutable snapshot
-keyed by (source, country, snapshotId) that a pass pins for its duration,
-rather than a wall-clock TTL that a slow pass outlives.
+**"Once per cycle" is now literally true, and for a while it was not.** The
+share used to be a process-memory cache with a four-minute wall-clock TTL,
+which agrees with "per cycle" only while a pass over the due queue finishes
+inside four minutes — and it will not: LinkedIn alone is ~80s per search, so
+the pass outgrows the window at roughly three searches and a later search
+refetches a board an earlier one already had. The shared-fetch saving eroded
+exactly as scale made it matter.
+
+The unit is now the **pass** ([`snapshot.js`](../src/services/poller/snapshot.js)).
+A pass opens, takes at most one immutable snapshot per (source, country), and
+every query in that pass reads the same one however long the pass runs. The
+snapshot is frozen, so no matcher can change what the next matcher sees — the
+failure the first version of the cache actually had. An in-flight fetch is
+shared as a promise, so two queries reaching the same board together make one
+request rather than two.
+
+So the `4` in `4 + 5N` is a real constant now, rather than a floor that
+degraded precisely as N grew.
 
 Three remain per-search:
 

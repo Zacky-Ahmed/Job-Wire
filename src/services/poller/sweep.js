@@ -9,7 +9,7 @@
 import { getSource, sourcesForCountry, DEFAULT_SOURCE } from "../sources/index.js";
 import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
-import { sharedFetch, isShared } from "./fetchCache.js";
+import { sharedFetch, isShared } from "./snapshot.js";
 import { normalize } from "../sources/observe.js";
 import * as Observations from "../../models/observations.js";
 import * as Queries from "../../models/queries.js";
@@ -287,8 +287,14 @@ export async function sweepQuery(query) {
     };
 
     try {
-      /* One fetch per board per country per cycle — see fetchCache.js for
-         the measurement that made it necessary. */
+      /* One fetch of this board for this country per PASS.
+
+         Per pass, not per four minutes. The old cache was a wall-clock
+         TTL and the comment above it claimed "per cycle" — which agree
+         only while a pass finishes inside four minutes, and it will not:
+         LinkedIn alone is eighty seconds a search, so the pass outgrows
+         the window at about three searches and a later query refetches
+         a board an earlier one already had. See snapshot.js. */
       const jobs = await sharedFetch(sourceId, query.geoId, walkEveryPage);
 
       /* THE FILTER THAT WAS MISSING.

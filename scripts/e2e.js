@@ -21,7 +21,33 @@ const { ensureIndexes } = await import("../src/models/indexes.js");
 const EMAIL = `e2e-${Date.now()}@example.invalid`;
 const PASS = "correcthorsebattery";
 const jar = new Map();
-const ok = (c, m) => console.log(`  ${c ? "PASS" : "FAIL"}  ${m}`);
+let passes = 0;
+let failures = 0;
+const ok = (c, m) => {
+  if (c) passes++; else failures++;
+  console.log(`  ${c ? "PASS" : "FAIL"}  ${m}`);
+};
+
+/* A SUITE THAT DIES IS NOT A SUITE THAT PASSED.
+
+   This has to be counted rather than eyeballed. A stale call left behind
+   by a rename threw a TypeError two thirds of the way down this file,
+   node exited, and the output ended in a wall of PASS with no FAIL
+   anywhere — the run looked green and had skipped sixty-five
+   assertions. Grepping for FAIL is the obvious way to read this output
+   and it would have reported nothing wrong.
+
+   So the run says how far it got, and a run that stops early exits
+   non-zero even though every assertion it reached had passed. */
+let reachedTheEnd = false;
+process.on("exit", (code) => {
+  if (reachedTheEnd) return;
+  console.error(
+    `\nSUITE DID NOT FINISH — ${passes} passed, ${failures} failed, and then it stopped.\n` +
+    `Everything after that point never ran. Do not read the passes above as a green run.`
+  );
+  if (code === 0) process.exitCode = 1;
+});
 
 const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
 function store(res) {
@@ -1143,7 +1169,7 @@ ok(!keellsSrc.includes("t.includes(n)"),
 // an "intern" wire filled with IT Manager and Senior Executive - IT. What
 // is shared is now the UNFILTERED listing, and the sweep applies each
 // watch's own words to it.
-const FC = await import("../src/services/poller/fetchCache.js");
+const FC = await import("../src/services/poller/snapshot.js");
 const { matchesAny: titleMatch } = await import("../src/utils/match.js");
 
 ok(FC.isShared("topjobs") && FC.isShared("mas") && FC.isShared("xpress") && FC.isShared("itpro"),
@@ -1153,7 +1179,11 @@ ok(!FC.isShared("linkedin"),
 ok(!FC.isShared("keells") && !FC.isShared("rooster"),
   "nor the two that filter server-side — sharing those would lose jobs");
 
-FC.clearFetchCache();
+FC.clearSnapshots();
+/* A pass, not a clock. Without one open, sharedFetch deliberately does
+   not share at all — nothing outside the poller has a pass, and a lone
+   call should not silently read somebody else's snapshot. */
+FC.openPass();
 let hits = 0;
 const listing = [
   { jobId: "topjobs:1", title: "Intern - Software Engineering" },
@@ -1178,8 +1208,64 @@ ok(internSet.length === 1 && internSet[0].title.includes("Intern"),
 ok(!internSet.some((j) => /IT Manager|Senior Executive/.test(j.title)),
   "a shared fetch never hands one watch another watch's jobs");
 
+/* IMMUTABLE. A matcher must not be able to change what the next matcher
+   sees — which is precisely what the first version of this cache
+   allowed, by storing the adapter's already-filtered result. Freezing
+   makes it structural instead of remembered. */
+const snapshot = await FC.sharedFetch("topjobs", "LK", fetchAll);
+let mutated = null;
+try { snapshot.push({ jobId: "topjobs:99", title: "Injected" }); }
+catch (err) { mutated = err; }
+ok(!!mutated || snapshot.length === 3,
+  "the snapshot cannot be added to by whoever reads it");
+ok((await FC.sharedFetch("topjobs", "LK", fetchAll)).length === 3,
+  "so the next search still sees the three jobs the board actually had");
+
+/* SHARED IN FLIGHT. Two queries reaching the same board at the same
+   moment used to make two requests, because the old cache was only
+   written after the first fetch returned. */
+FC.clearSnapshots();
+FC.openPass();
+let slowHits = 0;
+const slowFetch = () => {
+  slowHits++;
+  return new Promise((res) => setTimeout(() => res(listing), 120));
+};
+await Promise.all([
+  FC.sharedFetch("topjobs", "LK", slowFetch),
+  FC.sharedFetch("topjobs", "LK", slowFetch),
+  FC.sharedFetch("topjobs", "LK", slowFetch),
+]);
+ok(slowHits === 1,
+  `three queries racing one slow board make ONE request (got ${slowHits})`);
+
+/* THE BUG THIS PHASE EXISTS FOR. A pass that runs longer than the old
+   four-minute TTL used to refetch a board it already had. The pass is
+   the unit now, so its length cannot matter. */
+FC.clearSnapshots();
+const passId = FC.openPass();
+let longHits = 0;
+const countingFetch = () => { longHits++; return Promise.resolve(listing); };
+await FC.sharedFetch("topjobs", "LK", countingFetch);
+// Five minutes of pass, which the old TTL would have expired twice over.
+const info = FC.passInfo();
+info.startedAt.setTime(info.startedAt.getTime() - 5 * 60_000);
+await FC.sharedFetch("topjobs", "LK", countingFetch);
+ok(longHits === 1,
+  `a pass longer than four minutes still fetches once (got ${longHits})`);
+ok(FC.passInfo().id === passId, "and it is still the same pass");
+
+// Closing it is what lets the next pass see fresh listings.
+const summary = FC.closePass();
+ok(summary && summary.snapshots === 1, "closing the pass reports what it took");
+FC.openPass();
+await FC.sharedFetch("topjobs", "LK", countingFetch);
+ok(longHits === 2, "and the next pass fetches again, however long the last one ran");
+FC.clearSnapshots();
+
 // Countries never share.
-FC.clearFetchCache();
+FC.clearSnapshots();
+FC.openPass();
 hits = 0;
 await FC.sharedFetch("topjobs", "LK", fetchAll);
 await FC.sharedFetch("topjobs", "DE", fetchAll);
@@ -1606,4 +1692,6 @@ for (const q of new Set(testSubs.map((s) => String(s.queryId)))) {
 await resetTestDb();
 await server.stop();
 await closeDb();
-console.log("\ncleaned up test data");
+reachedTheEnd = true;
+console.log(`\ncleaned up test data — ${passes} passed, ${failures} failed`);
+if (failures) process.exitCode = 1;

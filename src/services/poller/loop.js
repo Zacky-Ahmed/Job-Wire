@@ -15,6 +15,7 @@ import { log } from "../../utils/logger.js";
 import { collections } from "../../config/db.js";
 import * as Lease from "../../models/pollerLease.js";
 import { reportUtilisation } from "./utilisation.js";
+import { openPass, closePass } from "./snapshot.js";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 
@@ -146,6 +147,16 @@ async function tick() {
   const tickStarted = Date.now();
   let settle;
   inFlight = new Promise((resolve) => { settle = resolve; });
+
+  /* A pass. Every board shared across searches is fetched at most once
+     inside it, however long it runs.
+
+     This is the unit that replaced a four-minute wall-clock TTL. The two
+     agreed only while a pass finished inside four minutes, and it will
+     not — LinkedIn alone is about eighty seconds a search, so the pass
+     outgrows the window at roughly three searches and the sharing
+     quietly stops working exactly as scale makes it matter. */
+  const passId = openPass();
   try {
     await beat({ lastTickAt: new Date(), state: "working" });
     /* Deliver what is already owed before looking for more.
@@ -195,6 +206,14 @@ async function tick() {
     log.error("tick failed", { message: err.message });
   } finally {
     running = false;
+    /* Closing the pass is what lets the NEXT one fetch fresh listings.
+       Held open, a long pass would keep serving jobs from whenever it
+       started; released on a timer instead, a long pass would refetch
+       mid-crawl. Neither is what "one fetch per cycle" ever meant. */
+    const pass = closePass();
+    if (pass && pass.snapshots) {
+      log.debug("pass closed", { pass: passId, ...pass });
+    }
     /* Is the schedule everyone asked for still possible?
 
        U = Σ(serviceTime / interval) over the searches sharing the
