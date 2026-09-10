@@ -589,7 +589,25 @@ export async function sweepQuery(query) {
   }
   if (!sendable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
 
-  const alerted = await fanOut(query, sendable, new Date(started));
+  /* Claimed before matching, so an undelivered batch has to be returned.
+     
+     dedupe.diff() writes the ledger claim the moment a job is discovered,
+     which is what stops two sweeps racing it into two emails. The cost is
+     that anything failing between there and delivery stays claimed and is
+     never offered again.
+     
+     The mail cap was doing exactly that. A deferred batch reached nobody,
+     so putting it back is safe, and it is the difference between the
+     ceiling meaning "send later" and meaning "forget". A failed SEND is
+     not returned: it has an emailLog row and the retry queue owns it. */
+  const { sent: alerted, deferred: capDeferred } = await fanOut(query, sendable, new Date(started));
+
+  if (capDeferred) {
+    await Ledger.release(query._id, sendable.map((j) => j.jobId));
+    log.warn("batch returned to the ledger — it will be offered again", {
+      queryId: String(query._id), jobs: sendable.length,
+    });
+  }
 
   /* Everything this sweep pulled is now offered to the other watches in
      this country, matched on title alone so it costs no requests. Failure
@@ -604,29 +622,23 @@ export async function sweepQuery(query) {
 }
 
 /** One email per subscriber per sweep, carrying every new job at once. */
-/* `send` is injectable for one reason: the all-sends-failed branch below
-   is unreachable in a test otherwise, and that branch shipped with a
-   ReferenceError in it precisely because nothing ever ran it. Production
-   never passes it. */
-export async function fanOut(query, all, startedAt, { send = sendAlert } = {}) {
+/* `send` and `cap` are injectable for one reason: the two branches that
+   matter most here are unreachable in a test otherwise. The all-sends-failed
+   branch shipped with a ReferenceError in it precisely because nothing ever
+   ran it, and the deferral branch decides whether hitting the daily ceiling
+   means "send later" or "forget" — which is not something to leave untested
+   until a real ceiling proves it. Production passes neither. */
+export async function fanOut(
+  query, all, startedAt, { send = sendAlert, cap = null } = {}
+) {
   const subs = await Subs.activeSubscribers(query._id);
-  if (!subs.length) return 0;
-  if (!all.length) return 0;
+  if (!subs.length || !all.length) return { sent: 0, deferred: false };
 
-  /* Counted ONCE before the loop, this was a ceiling in name only: with
-     279 of 280 used and a hundred watchers on a shared query, the check
-     passed once and then sent a hundred. The running total is tracked
-     locally and re-checked before every individual send, so the cap
-     bounds the fan-out rather than merely gating its start. */
-  const cap = dailyCap();
-  let sentToday = await EmailLog.countToday();
-  if (sentToday >= cap) {
-    log.warn("daily mail ceiling reached — alerts suppressed", { sentToday, cap });
-    return 0;
-  }
-
-  let sent = 0;
-  let eligible = 0;
+  /* PASS ONE: who is owed this batch, and what exactly do they get?
+     
+     Worked out before a single message is sent, because the daily cap has
+     to be an all-or-nothing decision for the batch. See below. */
+  const owed = [];
   for (const sub of subs) {
     const user = await collections.users().findOne(
       { _id: sub.userId },
@@ -651,20 +663,11 @@ export async function fanOut(query, all, startedAt, { send = sendAlert } = {}) {
       });
       continue;
     }
-    eligible++;
 
-    /* The subscriber's own narrowing, applied here and nowhere else.
-       
-       A pack is the AND half of a watch: the keyword decides what is a job
-       worth looking at, the pack decides whether it is about the right
-       subject. Two people can sit on the same "intern" search and one of
-       them be mailed only the data ones — which is the entire reason it
-       lives on the subscription rather than the query. Twenty watchers
-       still cost one fetch; only the last step differs.
-       
-       EMAIL ONLY. The wire keeps showing everything the watch caught,
-       because the complaint packs exist to fix is inbox noise, not having
-       too much to read when you deliberately open the page. */
+    /* The subscriber's own narrowing. A pack is the AND half of a watch:
+       the keyword decides what is a job worth looking at, the pack decides
+       whether it is about the right subject. EMAIL ONLY — the wire keeps
+       showing everything the watch caught. */
     const jobs = sub.emailPack
       ? all.filter((j) => passesPack(j.title, sub.emailPack))
       : all;
@@ -675,13 +678,43 @@ export async function fanOut(query, all, startedAt, { send = sendAlert } = {}) {
       continue;
     }
 
-    if (sentToday >= cap) {
-      log.warn("daily mail ceiling reached mid fan-out — remaining watchers skipped", {
-        queryId: String(query._id), cap, delivered: sent,
-      });
-      break;
-    }
+    owed.push({ sub, user, jobs });
+  }
 
+  if (!owed.length) return { sent: 0, deferred: false };
+
+  /* THE CAP IS ALL OR NOTHING FOR THIS BATCH, and that is a correctness
+     rule rather than tidiness.
+     
+     It used to stop mid-fan-out and skip the remaining watchers. Those
+     people never received those jobs — ever — because the jobs had
+     already been claimed on the ledger, so no later sweep would offer
+     them again. The cap did not mean "send tomorrow", it meant "forget".
+     
+     The obvious repair, releasing the claim so a later sweep retries, is
+     unsafe part-way through: the ledger is keyed by (query, job) and not
+     by recipient, so releasing after some people were served would mail
+     those people the same jobs a second time. Until obligations are
+     tracked per recipient, the only safe unit is the whole batch.
+     
+     So: serve everyone, or serve nobody and let the caller put the batch
+     back. Near the ceiling that costs timeliness. It never costs the
+     alert. */
+  const ceiling = cap ?? dailyCap();
+  const sentToday = await EmailLog.countToday();
+  if (sentToday + owed.length > ceiling) {
+    log.warn("daily mail ceiling would be crossed — batch deferred, not dropped", {
+      queryId: String(query._id), sentToday, cap: ceiling,
+      wouldSend: owed.length, jobs: all.length,
+    });
+    return { sent: 0, deferred: true };
+  }
+
+  /* PASS TWO: send. From here the batch is committed — every recipient
+     gets a durable emailLog row before their provider call, so a failure
+     belongs to the retry queue and the claim must stay put. */
+  let sent = 0;
+  for (const { sub, user, jobs } of owed) {
     /* Open the row BEFORE the provider is called. Sending first and
        recording after meant a crash in between left the jobs deduped
        with no log row at all: no alert, and nothing for the retry queue
@@ -692,7 +725,6 @@ export async function fanOut(query, all, startedAt, { send = sendAlert } = {}) {
       queryId: query._id,
       jobIds: jobs.map((j) => j.jobId),
     });
-    sentToday++;
 
     const res = await send({ to: user.email, label: sub.label, jobs });
     await EmailLog.settle(logId, { ok: res.ok, providerId: res.id, error: res.error });
@@ -710,18 +742,14 @@ export async function fanOut(query, all, startedAt, { send = sendAlert } = {}) {
   // The retry queue is the right mechanism: the emailLog row already
   // holds the jobIds, so retry.js resends from there with a bounded
   // attempt count. The job stays remembered exactly once.
-  if (eligible > 0 && sent === 0) {
-    /* `all.length`, not `jobs.length`.
-       
-       `jobs` is the per-subscriber slice and is scoped to the loop above,
-       so reading it here threw ReferenceError — and it threw only when
-       every send had already failed, which is precisely the moment a
-       diagnostic must not be the thing that breaks. The batch size is
-       what this line was trying to report anyway. */
+  //
+  // That is why only the DEFERRED case above returns the batch. A failed
+  // send has a row and an owner; a deferred batch has neither.
+  if (sent === 0) {
     log.warn("all sends failed — queued for retry", {
-      queryId: String(query._id), considered: all.length, watchers: eligible,
+      queryId: String(query._id), considered: all.length, watchers: owed.length,
     });
   }
 
-  return sent;
+  return { sent, deferred: false };
 }

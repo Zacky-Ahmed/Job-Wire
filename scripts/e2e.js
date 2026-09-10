@@ -399,6 +399,78 @@ ok(kept.some((j) => j.jobId === "linkedin:4"),
 ok(guard(batch, []).length === 4,
   "a match-all watch has no words, so the guard withholds nothing from it");
 
+/* PHASE 1 — the mail cap must mean "send later", never "forget".
+ *
+ * The jobs are claimed on the ledger the moment they are discovered, so a
+ * batch the cap refused was claimed, never sent, and never offered again.
+ * Reaching the daily ceiling silently destroyed those alerts.
+ */
+const Ledger1 = await import("../src/models/alertedJobs.js");
+const { fanOut: fanOut1 } = await import("../src/services/poller/sweep.js");
+
+const capUser = (await collections.users().insertOne({
+  email: `e2e-cap-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+const capQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-cap-${Date.now()}`, keywords: ["intern"], geoId: "e2e-c",
+  matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+await collections.subscriptions().insertOne({
+  userId: capUser, queryId: capQ, label: "Intern", active: true, createdAt: new Date(0),
+});
+const capJobs = [{ jobId: "linkedin:e2e-cap-1", title: "Intern - Capped", company: "X", url: "https://example.invalid" }];
+
+// Claim them exactly as a sweep would, then exhaust the ceiling.
+await Ledger1.remember(capQ, capJobs.map((j) => j.jobId));
+const capBefore = await Ledger1.knownIds(capQ, capJobs.map((j) => j.jobId));
+ok(capBefore.size === 1, "the batch starts out claimed, as a real sweep would leave it");
+
+const realCap = (await import("../src/services/mail/transport.js")).dailyCap();
+const capSpy = [];
+const capResult = await fanOut1(
+  { _id: capQ, keywords: ["intern"] }, capJobs, new Date(),
+  { send: async (m) => { capSpy.push(m); return { ok: true }; } },
+);
+
+ok(capResult.sent === 1 && !capResult.deferred,
+  "under the ceiling the batch is delivered normally");
+
+/* Now the branch that matters, forced rather than waited for. A ceiling of
+   zero cannot accommodate any recipient, so this is the exact situation
+   that used to destroy the batch. */
+capSpy.length = 0;
+const cappedResult = await fanOut1(
+  { _id: capQ, keywords: ["intern"] }, capJobs, new Date(),
+  { send: async (m) => { capSpy.push(m); return { ok: true }; }, cap: 0 },
+);
+ok(cappedResult.deferred === true, "at the ceiling the batch is deferred");
+ok(capSpy.length === 0, "and mails nobody — the old code mailed some and dropped the rest");
+ok(cappedResult.sent === 0, "reporting nothing sent");
+
+// The rule that matters: deferring must put the claim back.
+await Ledger1.release(capQ, capJobs.map((j) => j.jobId));
+const capAfter = await Ledger1.knownIds(capQ, capJobs.map((j) => j.jobId));
+ok(capAfter.size === 0, "releasing a deferred batch un-claims it, so a later sweep offers it again");
+
+// And a second claim then succeeds, which is what "offered again" means.
+const reclaimed = await Ledger1.remember(capQ, capJobs.map((j) => j.jobId));
+ok(reclaimed.has("linkedin:e2e-cap-1"), "the next sweep can claim it afresh");
+
+// Nobody eligible is NOT a deferral: there is nothing to send later.
+await collections.subscriptions().deleteMany({ userId: capUser });
+const noneResult = await fanOut1(
+  { _id: capQ, keywords: ["intern"] }, capJobs, new Date(),
+  { send: async () => ({ ok: true }) },
+);
+ok(noneResult.sent === 0 && noneResult.deferred === false,
+  "a query with no eligible watchers is not deferred — releasing it would loop for ever");
+
+await collections.emailLog().deleteMany({ userId: capUser });
+await collections.users().deleteOne({ _id: capUser });
+await Ledger1.forgetQuery(capQ);
+await collections.queries().deleteOne({ _id: capQ });
+void realCap;
+
 /* PHASE 0 — three fixes that were each wrong in a way nothing exercised. */
 
 // 1. The all-sends-failed branch used to throw ReferenceError.
@@ -431,7 +503,9 @@ try {
 } catch (err) { threw = err; }
 
 ok(!threw, `the all-sends-failed path does not throw (${threw && threw.message})`);
-ok(delivered === 0, `and reports nothing delivered (got ${delivered})`);
+ok(delivered && delivered.sent === 0, `and reports nothing delivered (got ${delivered && delivered.sent})`);
+ok(delivered && delivered.deferred === false,
+  "a failed send is NOT deferred — it has a row and the retry queue owns it");
 const logged = await collections.emailLog().countDocuments({ userId: fanUser });
 ok(logged === 1, "a row is left behind for the retry queue to find");
 

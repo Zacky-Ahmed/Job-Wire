@@ -60,6 +60,24 @@ export async function remember(queryId, jobIds) {
   }
 }
 
+/**
+ * Put jobs back, so a later sweep offers them again.
+ *
+ * The claim is what stops a job being mailed twice, so releasing it is
+ * only ever safe when NOBODY received it. The one caller is the daily
+ * mail cap: a batch that was never sent to anyone has no owner and no
+ * emailLog row, and without this it would sit claimed for ever and reach
+ * nobody — the cap meaning "forget" rather than "send later".
+ *
+ * A FAILED send must not come through here. That has a row, and the retry
+ * queue owns it; releasing those was tried once and produced an infinite
+ * forget/re-catch/fail loop that wrote 43 log rows in an evening.
+ */
+export function release(queryId, jobIds) {
+  if (!jobIds.length) return Promise.resolve();
+  return collections.alertedJobs().deleteMany({ queryId, jobId: { $in: jobIds } });
+}
+
 /** Used when a query is deleted, so its ledger goes with it. */
 export function forgetQuery(queryId) {
   return collections.alertedJobs().deleteMany({ queryId });
