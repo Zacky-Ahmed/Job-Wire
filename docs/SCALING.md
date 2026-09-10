@@ -162,8 +162,19 @@ LinkedIn part from `3N` walks to `1 + 2N`, and the whole system to
 mixing the two units.
 
 Four sources (topjobs, MAS, XpressJobs, ITPro) fetch a whole listing and then
-filter it in the adapter. Those are now fetched **once per country per cycle,
-unfiltered**, and each search filters the shared result locally, which is free.
+filter it in the adapter. Those are now fetched **once per country, unfiltered**,
+and each search filters the shared result locally, which is free.
+
+**"Once per cycle" is what this document used to say, and it is not what the
+code does.** The share is a process-memory cache with a **four-minute TTL**
+([`fetchCache.js`](../src/services/poller/fetchCache.js)), not a boundary tied
+to a pass over the due queue. If a pass takes longer than four minutes — which
+it will as N grows, since LinkedIn alone is ~80s per search — a later search in
+the *same* logical pass refetches a source an earlier one already had. The
+`4` in `4 + 5N` is therefore a floor, not a guarantee, and it degrades exactly
+when scale makes it matter most. The fix is an explicit immutable snapshot
+keyed by (source, country, snapshotId) that a pass pins for its duration,
+rather than a wall-clock TTL that a slow pass outlives.
 
 Three remain per-search:
 
