@@ -20,7 +20,7 @@ Seven sources, all covering Sri Lanka:
 | source | what it is | how it is read |
 |---|---|---|
 | LinkedIn | global job board | scraped: 3 public surfaces, unioned |
-| topjobs.lk | Sri Lankan board | scraped HTML, ~306 listings |
+| topjobs.lk | Sri Lankan board | scraped HTML, **5,261 listings across 31 functional areas** |
 | XpressJobs | Sri Lankan board | JSON API, ~400 listings |
 | Rooster | regional platform | JSON API (POST), ~490 listings |
 | MAS Holdings | one employer | Oracle Recruiting JSON API |
@@ -184,6 +184,39 @@ request rather than two.
 So the `4` in `4 + 5N` is a real constant now, rather than a floor that
 degraded precisely as N grew.
 
+### Topjobs coverage was six per cent
+
+Measured 2026-09-10 with the adapter's own parser (`npm run probe-topjobs`):
+
+| | |
+|---|---:|
+| functional areas the board publishes | 31 |
+| open vacancies across them | 5,261 |
+| areas the adapter crawled | 3 |
+| vacancies those three reached | 336 (**6%**) |
+| vacancies invisible to every watch | 4,925 |
+
+Accounting alone carries 736 — more than twice the entire reach of the old
+crawl. On the one keyword this product exists for, the three areas matched
+**29** internships; the whole board holds **238**.
+
+Nothing would have surfaced this. The adapter returned jobs, the counts looked
+ordinary, and the missing 94% did not exist as far as the system was
+concerned. It is a larger hole than any latency problem in this document.
+
+Fixed by treating topjobs as a country corpus
+([`topjobsCorpus.js`](../src/services/sources/topjobsCorpus.js)): all 31 areas,
+crawled independently of any watch, six of the most overdue per pass, tiered by
+size. Verified live — six passes take the corpus from 6/31 areas to 31/31. The
+per-pass cost is bounded by a budget, so adding an area can never make a sweep
+slower; it makes every area come round slightly less often instead.
+
+The tiers are set from open-vacancy counts, which is a **proxy**. What matters
+for latency is churn — new postings per hour — and a 736-vacancy area may add
+fewer per day than a 20-vacancy one. Churn is measurable now that observations
+are recorded; re-derive the tiers from a week of that data rather than from this
+snapshot.
+
 Three remain per-search:
 
 - **LinkedIn**, the long pole and the one that throttles.
@@ -224,8 +257,12 @@ in one sweep.
 
 **Now working** for the four keyword-independent sources: fetch unfiltered,
 filter per search in the sweep. Verified by reproducing the exact failure —
-IT sweeps first, then intern reads the same cached 306-job listing and gets 24
+IT sweeps first, then intern reads the same shared 306-job listing and gets 24
 jobs with zero foreign titles.
+
+*(That 306 was the whole of topjobs as this document originally understood
+it: three functional areas. The board has 31 and 5,261 open vacancies — see
+below. The lesson about filtering is unaffected; the number is not the board.)*
 
 Lesson: the boundary between what is fetched and what is matched was implicit
 and undocumented. Sharing is only safe if the shared artefact is the
