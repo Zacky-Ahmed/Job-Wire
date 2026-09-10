@@ -10,6 +10,8 @@ import { getSource, sourcesForCountry, DEFAULT_SOURCE } from "../sources/index.j
 import { BlockedBySource } from "../http/guardedFetch.js";
 import { diff } from "./dedupe.js";
 import { sharedFetch, isShared } from "./fetchCache.js";
+import { normalize } from "../sources/observe.js";
+import * as Observations from "../../models/observations.js";
 import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
 import * as Ledger from "../../models/alertedJobs.js";
@@ -237,10 +239,28 @@ export async function sweepQuery(query) {
        a runaway guard rather than a target. */
     const MAX_PAGES = source.maxPages ?? 4;
     const shared = isShared(sourceId);
+    /* What the adapter says it did, as opposed to what it returned.
+
+       Merged across pages, because a page that comes back degraded
+       degrades the whole walk: a second page whose markup we no longer
+       understand is a partial failure even if the first page was
+       perfect, and reporting only the last page would hide it. */
+    let observed = null;
+    const noteObservation = (obs) => {
+      if (!observed) { observed = { ...obs, surfaces: { ...obs.surfaces } }; return; }
+      observed.requests = (observed.requests ?? 0) + (obs.requests ?? 0);
+      observed.pages = (observed.pages ?? 0) + (obs.pages ?? 0);
+      observed.rawCount = (observed.rawCount ?? 0) + (obs.rawCount ?? 0);
+      observed.warnings = [...observed.warnings, ...obs.warnings];
+      observed.surfaces = { ...observed.surfaces, ...obs.surfaces };
+      if (obs.status !== "healthy") observed.status = obs.status;
+      observed.reported = observed.reported || obs.reported;
+    };
+
     const walkEveryPage = async () => {
       const out = new Map();
       for (let p = 0; p < MAX_PAGES; p++) {
-        const jobs = await source.fetchJobs({
+        const raw = await source.fetchJobs({
           // A shared fetch asks for the WHOLE listing. matchAll is how
           // every one of these adapters is told to skip its own keyword
           // filter, and skipping it is the point: the cached result has to
@@ -250,6 +270,14 @@ export async function sweepQuery(query) {
           matchAll: shared ? true : !!query.matchAll,
           page: p,
         });
+        /* Either shape is accepted. Seven adapters returned a bare array
+           yesterday and rewriting all of them in the change whose
+           purpose is to make breakage VISIBLE would be seven chances to
+           break a working crawl. normalize() infers what it can from an
+           array and marks the observation as inferred rather than
+           reported, so the difference stays legible. */
+        const { jobs, observation } = normalize(raw, { source: sourceId });
+        noteObservation(observation);
         if (!jobs.length) break;
         const before = out.size;
         jobs.forEach((j) => out.set(j.jobId, j));
@@ -278,6 +306,62 @@ export async function sweepQuery(query) {
       const mine = shared && words.length
         ? jobs.filter((j) => matchesAny(j.title, words))
         : jobs;
+
+      /* Written down whatever happened, including a perfectly healthy
+         sweep. A baseline made only of the bad days is not a baseline.
+
+         Skipped when the fetch was served from the shared cache, because
+         nothing was observed — recording a cache hit as a fresh
+         observation would flood the baseline with duplicates of one real
+         measurement and make a genuine collapse look like a rounding
+         error. */
+      if (observed) {
+        await Observations.record({
+          source: sourceId, geoId: query.geoId, queryId: query._id,
+          observation: observed, ms: Date.now() - started,
+        });
+        /* AND WHETHER TODAY IS UNUSUAL FOR THIS SURFACE.
+
+           A surface can be perfectly "ok" — 200, right shape, rows
+           parsed — and still be returning a fifth of what it normally
+           does, which is what a filter change or a silent throttle looks
+           like. Nothing in the response says so; only the history does.
+
+           Compared per surface rather than per source on purpose. That
+           is the whole point of Phase 5: LinkedIn's country feed can
+           hold the total up while the guest keyword surface quietly
+           returns nothing, and a source-level comparison would see a
+           normal day. */
+        for (const [name, surf] of Object.entries(observed.surfaces)) {
+          if (!surf.ok || !Number.isFinite(surf.parsedCount)) continue;
+          try {
+            const base = await Observations.baseline({ source: sourceId, surface: name, geoId: query.geoId });
+            if (Observations.isAnomalous(surf.parsedCount, base)) {
+              log.error("a source surface returned far less than it normally does", {
+                source: sourceId, surface: name,
+                sawNow: surf.parsedCount,
+                normally: base.median,
+                over: `${base.samples} recent sweeps`,
+                note: "the response looked fine — suspect a filter change or a silent throttle, not a quiet day",
+              });
+            }
+          } catch (err) {
+            log.warn("could not compare a surface against its baseline", {
+              source: sourceId, surface: name, message: err.message,
+            });
+          }
+        }
+
+        if (observed.status !== "healthy") {
+          log.warn("source answered, but not completely", {
+            queryId: String(query._id), source: sourceId,
+            warnings: observed.warnings,
+            surfaces: Object.entries(observed.surfaces)
+              .filter(([, v]) => !v.ok)
+              .map(([k, v]) => `${k}: ${v.error || "nothing usable"}`),
+          });
+        }
+      }
 
       // Map writes are not interleaved: each adapter awaits its own
       // network calls, and JS resumes one continuation at a time, so

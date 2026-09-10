@@ -17,6 +17,7 @@
 // script afterwards, so cheerio is enough and there is no API to depend on.
 
 import * as cheerio from "cheerio";
+import { observer, checkPageShape } from "./observe.js";
 import { guardedFetch } from "../http/guardedFetch.js";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
@@ -47,13 +48,32 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
   // so paging would silently re-fetch the same fifty jobs for ever. Fifty
   // newest is the right window anyway for a sweep that runs every five
   // minutes; anything older has been seen already.
-  if (page > 0) return [];
+  const obs = observer(id);
+  if (page > 0) return obs.done([]);
 
   const html = await guardedFetch(LIST, hosts, { jitter: true });
   const $ = cheerio.load(html);
 
+  const cards = $("article.job-card");
+  /* HTTP 200 is not the same as "the page we parse".
+
+     One selector, article.job-card, stands between this adapter and
+     silence. The site can rename that class in a redesign, keep
+     answering 200, and this returns an empty array that reads as "no IT
+     internships today" — for ever, and plausibly, because some days
+     really do have none.
+
+     The invariant is the container, not the count: if the listing
+     element is on the page, zero cards is a real empty state. */
+  const shape = checkPageShape({
+    html,
+    containerFound: cards.length > 0 || $(".job-list, .jobs, main").length > 0,
+    rowsFound: cards.length,
+    parsedCount: cards.length,
+  });
+
   const out = [];
-  $("article.job-card").each((_, el) => {
+  cards.each((_, el) => {
     const $c = $(el);
     const rawId = $c.attr("id");
     if (!rawId) return;
@@ -84,8 +104,20 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
     });
   });
 
-  if (matchAll) return out;
+  obs.surface("listing", {
+    ok: shape.ok, requests: 1, pages: 1,
+    rawCount: cards.length, parsedCount: out.length,
+    error: shape.ok ? null : shape.error,
+  });
+  /* This board only ever exposes its newest page, so a long outage is
+     not recoverable from it: whatever scrolled off while the poller was
+     down is gone as far as this source is concerned. Said out loud on
+     every observation, because it is a property of the source rather
+     than a fault, and nothing else in the system would reveal it. */
+  obs.note("only the newest page is exposed — an outage longer than its churn loses jobs here");
+
+  if (matchAll) return obs.done(out);
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
-  if (!words.length) return out;
-  return out.filter((j) => matchesAny(j.title, words));
+  if (!words.length) return obs.done(out);
+  return obs.done(out.filter((j) => matchesAny(j.title, words)));
 }

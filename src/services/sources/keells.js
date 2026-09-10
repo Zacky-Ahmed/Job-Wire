@@ -13,6 +13,7 @@
 
 import * as cheerio from "cheerio";
 import { guardedFetch } from "../http/guardedFetch.js";
+import { observer, checkPageShape } from "./observe.js";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
 
@@ -58,13 +59,40 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
   const params = new URLSearchParams({ q });
   if (page > 0) params.set("startrow", String(page * pageSize));
 
+  const obs = observer(id);
   const html = await guardedFetch(`${BASE}?${params}`, hosts, { jitter: page === 0 });
   const $ = cheerio.load(html);
 
   const rows = $('tr[class*="data-row"]');
+
+  /* HTTP 200 IS NOT THE SAME AS "THE PAGE WE PARSE".
+
+     This is a scraper. The board can change its markup at any time, keep
+     answering 200, and leave our selectors matching nothing — and an
+     empty array is indistinguishable from a quiet day. That is the exact
+     failure this project keeps having, and on a scraped source it is the
+     most likely one there is.
+
+     The invariant is not "we found jobs". Keells really can have none.
+     It is "the page still contains the structure we parse": the results
+     table is there, whether or not it has rows in it. */
+  const shape = checkPageShape({
+    html,
+    containerFound: $("table").length > 0 || rows.length > 0,
+    rowsFound: rows.length,
+    parsedCount: rows.length,
+  });
+
   // No rows at all on page 0 is a legitimate "no results"; on a later
   // page it just means we reached the end.
-  if (!rows.length) return [];
+  if (!rows.length) {
+    obs.surface("listing", {
+      ok: shape.ok, requests: 1, pages: 1, rawCount: 0, parsedCount: 0,
+      error: shape.ok ? null : shape.error,
+      note: shape.ok ? "the listing is there and empty" : null,
+    });
+    return obs.done([]);
+  }
 
   const out = [];
   rows.each((_, el) => {
@@ -101,6 +129,14 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
      same keyword refused them everywhere else. An adapter inventing its
      own idea of a match is how a rule gets enforced in six places and
      broken in the seventh. */
-  if (!words.length) return out;
-  return out.filter((j) => matchesAny(j.title, words));
+  /* rawCount is what the page held; parsedCount is what survived the
+     keyword filter. Keeping them apart is what makes "the board went
+     quiet" separable from "our filter got stricter" — one number could
+     never say which. */
+  obs.surface("listing", {
+    ok: true, requests: 1, pages: 1, rawCount: rows.length, parsedCount: out.length,
+  });
+
+  if (!words.length) return obs.done(out);
+  return obs.done(out.filter((j) => matchesAny(j.title, words)));
 }

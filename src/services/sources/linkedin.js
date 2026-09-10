@@ -37,6 +37,7 @@
 import { guardedFetch } from "../http/guardedFetch.js";
 import { parseJobs, parseCriteria, classifyResponse } from "../linkedin/parse.js";
 import { findGeo } from "../linkedin/geoIds.js";
+import { observer } from "./observe.js";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
 import { log } from "../../utils/logger.js";
@@ -157,34 +158,76 @@ async function collect(makeUrl) {
  * downstream sees them — so `page > 0` returns nothing.
  */
 export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false }) {
-  if (page > 0) return [];
+  if (page > 0) return { jobs: [], observation: observer(id).done([]).observation };
 
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
   const query = words.join(" ");
 
+  /* THREE SURFACES, REPORTED SEPARATELY.
+
+     They were unioned into one array and the sweep counted the result.
+     That count cannot distinguish a quiet day from one of the three
+     going dark: the country feed alone routinely carries most of the
+     jobs, so the guest keyword API could stop answering entirely and the
+     total would barely move. It is the single most likely way for this
+     app to start missing jobs while every number on the admin page looks
+     ordinary — which is the failure shape this whole project keeps
+     having.
+
+     So each one says what it did. A surface that fails makes the whole
+     observation degraded; it does not fail the sweep, because two
+     working surfaces are worth more than none. */
+  const obs = observer(id);
+
   // The complete feed, always.
   const everything = await collect((p) => urlFor({ geoId, page: p }));
+  obs.surface("countryFeed", {
+    ok: true, requests: 1, pages: 1, rawCount: everything.size, parsedCount: everything.size,
+  });
 
   // LinkedIn's own matching, which sees descriptions and job type — the
   // only way to reach a job whose title never says "intern". Skipped
   // entirely when the watch already wants everything, since it could not
   // add anything the feed above does not already have.
-  const relevant = query && !matchAll
-    ? await collect((p) => urlFor({ geoId, keywords: query, page: p }))
-    : new Map();
+  let relevant = new Map();
+  if (query && !matchAll) {
+    try {
+      relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }));
+      obs.surface("guestKeyword", {
+        ok: true, requests: 1, pages: 1, rawCount: relevant.size, parsedCount: relevant.size,
+      });
+    } catch (err) {
+      /* Recorded, not thrown. This surface failing is exactly the case
+         the union exists to survive — but it must not then look like a
+         normal sweep, which is what happened before: the error went to a
+         log line nobody reads and the jobs count stayed plausible. */
+      obs.surface("guestKeyword", { ok: false, requests: 1, error: err.message });
+      log.warn("linkedin guest keyword surface failed — continuing on the others", {
+        message: err.message,
+      });
+    }
+  } else {
+    obs.surface("guestKeyword", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to this watch" });
+  }
 
   /* The third surface. Supplementary, so a failure here must not cost
-     the sweep the other two — it is unioned in when it works and logged
-     and skipped when it does not. */
+     the sweep the other two — it is unioned in when it works and
+     recorded as degraded when it does not. */
   let fromPage = new Map();
   if (!matchAll) {
     try {
       fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }));
+      obs.surface("jserp", {
+        ok: true, requests: 1, pages: 1, rawCount: fromPage.size, parsedCount: fromPage.size,
+      });
     } catch (err) {
+      obs.surface("jserp", { ok: false, requests: 1, error: err.message });
       log.warn("linkedin search page failed — continuing on the guest API alone", {
         message: err.message,
       });
     }
+  } else {
+    obs.surface("jserp", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to a match-all watch" });
   }
 
   const merged = new Map([...everything, ...relevant, ...fromPage]);
@@ -224,9 +267,28 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
     postedText: j.postedText || "",
     postedAt: j.postedAt, // resolved by parse.js against the fetch instant
     _matchedByLinkedIn: relevant.has(j.jobId) || fromPage.has(j.jobId),
+    /* WHICH SURFACES SAW THIS JOB.
+
+       F = country feed, G = guest keyword, J = JSERP. Recorded on every
+       job so the question "what does JSERP actually add?" can be
+       answered with a measurement instead of a guess — the raw
+       "1-8 extra jobs" figure counts jobs, and the number that decides
+       whether to keep a surface is how many ACTIONABLE matches were
+       visible only to it. Costs nothing to collect and cannot be
+       reconstructed afterwards. */
+    _surfaces:
+      (everything.has(j.jobId) ? "F" : "") +
+      (relevant.has(j.jobId) ? "G" : "") +
+      (fromPage.has(j.jobId) ? "J" : ""),
   }));
 
-  return shaped;
+  /* The country filter drops jobs, and that is not degradation — it is
+     the filter working. Recorded so the gap between raw and parsed is
+     explicable rather than alarming. */
+  const droppedForCountry = merged.size - shaped.length;
+  if (droppedForCountry) obs.raw(0);
+
+  return obs.done(shaped);
 }
 
 const DETAIL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/";

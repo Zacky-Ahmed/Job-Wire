@@ -11,6 +11,7 @@
 //     512 MB Atlas tier fills up.
 
 import { collections } from "../config/db.js";
+import { OBSERVATION_TTL_DAYS } from "./observations.js";
 import { env } from "../config/env.js";
 import { log } from "../utils/logger.js";
 
@@ -183,6 +184,25 @@ export async function ensureIndexes() {
     await idx(collections.outbox(),
       { userId: 1, status: 1, discoveredAt: -1 },
       { name: "owed_to_user" }
+    )
+  );
+
+  // ── observations: what each surface did, and when ────────────
+  /* The rolling baseline query: one source, recently, sometimes narrowed
+     to a country. Also the TTL's field. */
+  created.push(
+    await idx(collections.observations(),
+      { source: 1, at: -1 },
+      { name: "source_recent" }
+    )
+  );
+  /* Expiring, because this is diagnostics rather than record. Two weeks
+     is long enough to cover a holiday — which is the span you need to
+     tell "the board is quiet" from "the parser broke". */
+  created.push(
+    await idx(collections.observations(),
+      { at: 1 },
+      { name: "observation_ttl", expireAfterSeconds: OBSERVATION_TTL_DAYS * 86400 }
     )
   );
 

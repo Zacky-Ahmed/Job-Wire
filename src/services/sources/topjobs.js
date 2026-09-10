@@ -28,6 +28,7 @@
 // code is stable, so it is the dedupe key.
 
 import { guardedFetch } from "../http/guardedFetch.js";
+import { observer, checkPageShape } from "./observe.js";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
 import * as cheerio from "cheerio";
@@ -113,12 +114,27 @@ function parseArea(html) {
  * Paging is internal — one request per area — so page > 0 returns nothing.
  */
 export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
-  if (page > 0) return [];
+  const obs = observer(id);
+  if (page > 0) return obs.done([]);
 
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
   const found = new Map();
   const failures = [];
 
+  /* EACH AREA IS ITS OWN SURFACE.
+
+     Three of them, and they were unioned into one Map whose size was the
+     only thing anyone saw. One area going dark — a changed FA code, a
+     changed table — moved that total by a third at most and looked like
+     a slow week. Reported separately so it looks like what it is.
+
+     COVERAGE IS ALSO PARTIAL, and that is worth recording rather than
+     implying. The board carries roughly 31 functional areas and this
+     asks for three, so a watch for an accounting or hospitality
+     internship believes it has topjobs coverage and has never had a
+     single page of it fetched. That is a bigger hole than any parser
+     bug, and until it is fixed the honest thing is to say so on every
+     observation instead of letting the count imply completeness. */
   for (const area of AREAS) {
     try {
       const html = await guardedFetch(
@@ -126,15 +142,35 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
         hosts,
         { jitter: true, charset: CHARSET }
       );
-      for (const job of parseArea(html)) {
+      const parsed = parseArea(html);
+      /* HTTP 200 is not the same as "the page we parse". This is a
+         scraper: the board can change its markup, keep answering 200,
+         and leave our selectors matching nothing — an empty result then
+         reads as a quiet day for ever. */
+      const shape = checkPageShape({
+        html,
+        containerFound: /<table/i.test(html),
+        rowsFound: (html.match(/<tr/gi) || []).length,
+        parsedCount: parsed.length,
+      });
+      obs.surface(`area:${area.fa}`, {
+        ok: shape.ok, requests: 1, pages: 1,
+        rawCount: (html.match(/<tr/gi) || []).length,
+        parsedCount: parsed.length,
+        error: shape.ok ? null : shape.error,
+      });
+      for (const job of parsed) {
         // A vacancy can be listed under more than one area; the job code
         // is the same, so the Map collapses it rather than alerting twice.
         if (!found.has(job.jobId)) found.set(job.jobId, { ...job, area: area.name });
       }
     } catch (err) {
       failures.push(`${area.fa}: ${err.message}`);
+      obs.surface(`area:${area.fa}`, { ok: false, requests: 1, error: err.message });
     }
   }
+
+  obs.note(`coverage is partial: ${AREAS.length} of ~31 functional areas are crawled`);
 
   // One area being down should not look like a quiet day, but it should
   // not lose the other two either.
@@ -147,6 +183,6 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
     jobId: qualify(id, j.jobId),
   }));
 
-  if (matchAll || !words.length) return all;
-  return all.filter((j) => matchesAny(j.title, words));
+  if (matchAll || !words.length) return obs.done(all);
+  return obs.done(all.filter((j) => matchesAny(j.title, words)));
 }

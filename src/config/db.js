@@ -77,6 +77,10 @@ export const collections = {
      and removed only by being delivered or by the watch disappearing.
      See models/outbox.js for why the two cannot be the same table. */
   outbox: () => getDb().collection("outbox"),
+  /* What each source and surface DID on each sweep. Small rows, short
+     TTL: enough history to tell a quiet fortnight from a broken parser,
+     which one aggregate count never could. */
+  observations: () => getDb().collection("observations"),
   // One document. The poller's own heartbeat, so "is it running?" is a
   // measurement rather than a restatement of POLLER_ENABLED.
   pollerState: () => getDb().collection("pollerState"),
