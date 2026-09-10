@@ -63,7 +63,8 @@
           stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></svg>
         <span id="themeLabel">Dark</span>
       </button>
-      <a class="btn btn-sig btn-xs" href="/watches?new=1">
+      <a class="btn btn-sig btn-xs" href="/watches?new=1"
+        hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Watch</a>
       <form method="post" action="/signout">
@@ -75,7 +76,21 @@
       </form>
     </header>
 
-    <nav class="tabs" id="workspaceNav" aria-label="Workspace">
+    <%# Boosted, and ONLY here.
+
+        A blanket hx-boost on <body> would also capture sign-out, every
+        row link out to a job board, and the auth pages — links whose
+        whole point is to leave this shell. These three places are the
+        ones that move between workspace tabs, so these three are what
+        get intercepted; everything else stays an ordinary link and
+        behaves like one, including with script switched off.
+
+        The target and swap are declared once here and inherited: replace
+        the contents of <main>, keep the scroll at the top, and let htmx
+        push the real URL so the address bar, bookmarks, and the back
+        button all stay honest. %>
+    <nav class="tabs" id="workspaceNav" aria-label="Workspace"
+      hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
       <span class="nav-caption">WORKSPACE</span>
       <a href="/wire" aria-label="The Wire" title="The Wire" <%- nav === 'wire' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -97,18 +112,19 @@
       <span class="me"><%= user.email %></span>
     </nav>
 
-    <main id="workspaceMain" tabindex="-1">
-      <section class="workspace-heading">
-        <div><div class="eyebrow">JOB WIRE / <%= nav === 'admin' ? 'OPERATIONS' : 'YOUR WORKSPACE' %></div>
-          <h1><%= nav === 'wire' ? 'Your next move starts here.' : nav === 'watches' ? 'Always on the lookout.' : nav === 'admin' ? 'Operations, at a glance.' : title %></h1>
-          <p><%= nav === 'wire' ? 'Fresh opportunities. Less searching. More possibility.' : nav === 'watches' ? 'Your searches, working quietly in the background.' : 'A clear view of your people, sources, and delivery.' %></p>
-        </div>
-        <button class="btn command-trigger" id="commandOpen" type="button" hidden>Quick jump <kbd>Ctrl K</kbd></button>
-      </section>
+    <%# hx-history-elt scopes back/forward to this element.
+
+        Without it htmx snapshots and restores <body>, so pressing Back
+        would tear down and rebuild the header and the sidebar to show a
+        page whose header and sidebar had not changed — undoing the whole
+        point of swapping only the middle. %>
+    <main id="workspaceMain" tabindex="-1" hx-history-elt>
+      <%- include('../partials/workspace-heading') %>
       <%- body %>
     </main>
   </div>
-  <dialog class="command-dialog" id="commandDialog" aria-labelledby="commandTitle">
+  <dialog class="command-dialog" id="commandDialog" aria-labelledby="commandTitle"
+    hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
     <div class="command-head"><h2 id="commandTitle">Quick jump</h2><button class="btn btn-xs" id="commandClose" type="button">Close</button></div>
     <p>Go straight to your workspace.</p>
     <a href="/wire">↗ The Wire <span>Explore opportunities</span></a>
@@ -119,5 +135,10 @@
   <script src="<%= asset('/js/theme.js') %>"></script>
   <script src="<%= asset('/js/ticker.js') %>"></script>
   <script src="<%= asset('/js/workspace.js') %>"></script>
+  <%# Only the new-watch form uses this, but it is loaded here rather than
+      from the page. A script tag inside <main> is re-inserted and
+      re-evaluated on every navigation to that page; loaded from the shell
+      it is fetched once and re-runs itself on swap. %>
+  <script src="<%= asset('/js/watch-form.js') %>"></script>
 </body>
 </html>

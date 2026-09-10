@@ -1,0 +1,20 @@
+<%# workspace-heading.ejs
+     The band at the top of every workspace page: where you are, and the
+     quick-jump trigger.
+
+     Lives in a partial because it is now rendered from two places — the
+     full shell on a cold load, and the fragment layout on an in-app
+     navigation. Two copies of the same markup is two places for the
+     heading to drift, and the drift would only show up on the path a
+     first-time visitor never takes. %>
+<section class="workspace-heading">
+  <div>
+    <div class="eyebrow">JOB WIRE / <%= nav === 'admin' ? 'OPERATIONS' : 'YOUR WORKSPACE' %></div>
+    <h1><%= nav === 'wire' ? 'Your next move starts here.' : nav === 'watches' ? 'Always on the lookout.' : nav === 'admin' ? 'Operations, at a glance.' : title %></h1>
+    <p><%= nav === 'wire' ? 'Fresh opportunities. Less searching. More possibility.' : nav === 'watches' ? 'Your searches, working quietly in the background.' : 'A clear view of your people, sources, and delivery.' %></p>
+  </div>
+  <%# Ships hidden; script reveals it. Sits INSIDE the swapped region, so
+      every navigation delivers a fresh hidden button and the mount step
+      has to unhide it again. %>
+  <button class="btn command-trigger" id="commandOpen" type="button" hidden>Quick jump <kbd>Ctrl K</kbd></button>
+</section>

@@ -1,0 +1,15 @@
+<%# workspace-main.ejs
+     What an in-app navigation actually sends.
+
+     The shell — topbar, sidebar, theme, command dialog, the countdown —
+     is already in the browser and already correct. Re-sending it on every
+     tab change means the browser throws away a working header and rebuilds
+     an identical one, which is where the flicker on /wire -> /watches came
+     from. So this is the contents of <main> and nothing else.
+
+     The <title> must be a DIRECT child here: htmx lifts a top-level title
+     out of a fragment and puts it on the document. Nested inside anything
+     it is ignored, and the tab would keep the previous page's name. %>
+<title><%= title %> · Job Wire</title>
+<%- include('../partials/workspace-heading') %>
+<%- body %>

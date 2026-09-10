@@ -3,8 +3,15 @@
 // The server renders an absolute timestamp in data-next; this counts it
 // down every second so the page does not sit frozen between sweeps.
 // Server stays the source of truth — this only formats.
+//
+// The interval and the listeners below are started ONCE and outlive every
+// navigation, because the shell they belong to does. Nothing here may
+// hold on to an element inside <main>: those are replaced wholesale on
+// every tab change, and a captured reference would keep pointing at a
+// detached node that nobody can see.
 (function () {
   var clocks = [];
+  // #nextSweep is in the topbar, which persists, so this one is safe to keep.
   var head = document.getElementById("nextSweep");
   function collectClocks() { clocks = Array.from(document.querySelectorAll("[data-next]")); }
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
@@ -58,7 +65,8 @@
   dedupeFlash();
   setInterval(tick, 1000);
   document.addEventListener("visibilitychange", tick);
-  // htmx swaps in fresh rows; re-bind to whatever just arrived
+  // htmx swaps in fresh rows; re-bind to whatever just arrived. This
+  // covers both the 15s wire poll and a whole-page navigation.
   document.body.addEventListener("htmx:afterSwap", function () {
     collectClocks();
     tick();
@@ -72,11 +80,18 @@
  * which looks exactly like a quiet morning. That is the same failure
  * shape the sweep itself has, and it deserves the same treatment —
  * say so rather than let the reader assume nothing is happening.
+ *
+ * #pollDead lives on the wire page, inside the swapped region, so it is
+ * looked up per event rather than once. Held as a reference, the banner
+ * bound on the first load would be a detached node the moment you visited
+ * Watches and came back — and the failure it exists to report is exactly
+ * the one nobody would notice was no longer being reported.
  */
 (function () {
-  var el = document.getElementById("pollDead");
-  if (!el) return;
-  function dead(on) { el.hidden = !on; }
+  function dead(on) {
+    var el = document.getElementById("pollDead");
+    if (el) el.hidden = !on;
+  }
   document.body.addEventListener("htmx:sendError", function () { dead(true); });
   document.body.addEventListener("htmx:timeout", function () { dead(true); });
   document.body.addEventListener("htmx:responseError", function () { dead(true); });
