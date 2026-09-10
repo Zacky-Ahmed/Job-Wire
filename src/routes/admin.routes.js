@@ -80,6 +80,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
         EmailLog.countToday(),
         EmailLog.countFailedToday(),
       ]);
+    res.locals.t?.mark("db-core");
 
     // One pass instead of a query per user — a page that lists accounts
     // must not issue N queries to do it.
@@ -104,10 +105,12 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       if (!seenWatcher.has(k)) { seenWatcher.add(k); watcherIds.push(s.userId); }
     }
     const watcherUsers = watcherIds.length
+    // (the watcherUsers lookup itself is timed by the mark below)
       ? await collections.users()
           .find({ _id: { $in: watcherIds } }, { projection: { email: 1 } })
           .toArray()
       : [];
+    res.locals.t?.mark("db-watcher-users");
     const emailById = new Map(watcherUsers.map((u) => [String(u._id), u.email]));
     const subsByQuery = new Map();
     for (const s of watches) {
@@ -124,6 +127,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       });
     }
 
+    res.locals.t?.mark("shape-index");
     const now = Date.now();
     const people = users.map((u) => {
       const mine = subsByUser.get(String(u._id)) || [];
@@ -151,6 +155,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       identityGroups.get(k).push(q);
     }
 
+    res.locals.t?.mark("shape-people");
     const queryRows = queries.map((q) => {
       const watchers = subsByQuery.get(String(q._id)) || [];
       const subscribers = watchers.length;
@@ -215,7 +220,9 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
       };
     });
 
+    res.locals.t?.mark("shape-query-rows");
     const myWatches = await Subs.listForUser(req.user._id);
+    res.locals.t?.mark("db-my-watches");
 
     // WHY MAIL IS NOT ARRIVING.
     //
@@ -233,6 +240,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
     const relayed = !!env.brevoApiKey;
     const lastSend = await collections.emailLog()
       .find({ status: "sent" }).sort({ sentAt: -1 }).limit(1).next();
+    res.locals.t?.mark("db-last-send");
 
     const delivery = {
       provider: providerLabel(),
@@ -253,6 +261,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
     const STALL_MINUTES = 15;
 
     const beat = await collections.pollerState().findOne({ _id: "poller" });
+    res.locals.t?.mark("db-poller");
     const tickAgeMs = beat?.lastTickAt ? Date.now() - new Date(beat.lastTickAt) : null;
     const state = beat?.state || "unknown";
     const never = !beat?.lastTickAt;
@@ -353,6 +362,7 @@ adminRoutes.get("/admin", requireAuth, requireAdmin, async (req, res, next) => {
     const sourceHealth = [...bySource.values()]
       .sort((a, b) => Number(a.ok) - Number(b.ok) || a.source.localeCompare(b.source))
       .map((r) => ({ ...r, seen: r.at ? rel(r.at) : "never" }));
+    res.locals.t?.mark("shape-health");
 
     page(res, "pages/admin", {
       title: "Admin",

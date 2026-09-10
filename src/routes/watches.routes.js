@@ -25,6 +25,7 @@ export const watchesRoutes = Router();
 
 async function render(req, res, extra = {}) {
   const watches = await Subs.listForUser(req.user._id);
+  res.locals.t?.mark("db-watches");
   page(res, "pages/watches", {
     title: "Watches",
     nav: "watches",

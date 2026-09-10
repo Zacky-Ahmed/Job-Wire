@@ -23,7 +23,8 @@
     "prune-matches": "node scripts/prune-matches.js",
     "merge-queries": "node scripts/merge-duplicate-queries.js",
     "backfill-alerts": "node scripts/backfill-alert-ledger.js",
-    "prime-sources": "node scripts/prime-new-sources.js"
+    "prime-sources": "node scripts/prime-new-sources.js",
+    "measure-routes": "node scripts/measure-routes.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -27,6 +27,7 @@ import { ensureIndexes } from "./models/indexes.js";
 import { buildSession } from "./middleware/session.js";
 import { csrf } from "./middleware/csrf.js";
 import { theme } from "./middleware/theme.js";
+import { timing } from "./utils/timing.js";
 import { assets } from "./utils/assets.js";
 import { generalLimiter } from "./middleware/rateLimit.js";
 import { rejectOperators } from "./utils/sanitize.js";
@@ -99,6 +100,8 @@ export async function buildApp() {
   app.use(rejectOperators); // NoSQL operator injection, before anything queries
   app.use(generalLimiter);
   app.use(buildSession());
+  // Before anything that can answer, so the header covers the whole request.
+  app.use(timing);
   app.use(theme); // resolves data-theme before any HTML is written
 
   /* The routes with no form on them are mounted ABOVE csrf on purpose.

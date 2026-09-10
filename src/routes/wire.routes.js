@@ -40,8 +40,10 @@ function showCount(raw) {
 /** The board a row came from, from its id prefix. */
 const sourceOf = (jobId) => String(jobId).split(":")[0];
 
-async function gather(user, show = PAGE, only = "") {
+async function gather(user, show = PAGE, only = "", t = null) {
   const watches = await Subs.listForUser(user._id);
+  t?.mark("db-watches");
+
   const labelByQuery = new Map(watches.map((w) => [String(w.queryId), w.label]));
 
   // Scoped to when THIS person started watching. The query row behind a
@@ -49,12 +51,16 @@ async function gather(user, show = PAGE, only = "") {
   // history of a search other people had been running for weeks.
   const scope = watches.map((w) => ({ queryId: w.queryId, since: w.createdAt }));
   const caught = await SeenJobs.recentForSubscriptions(scope, show);
+  t?.mark("db-caught");
+
   // Look up delivery BY THE JOBS ON SCREEN, not by a fixed slice of the
   // email log. Reading the newest 30 rows only worked while sweeps
   // happened to batch several jobs per email: measured on this account it
   // took 28 of those 30 to cover the 50 rows rendered, so two more
   // single-job sends would have started marking delivered jobs "—".
   const emails = await EmailLog.forJobs(user._id, caught.map((j) => j.jobId));
+  t?.mark("db-mail-status");
+
 
   // Only SUCCESSFUL sends count as delivered. Including failed ones here
   // showed "Sent" next to jobs whose email never arrived — the single most
@@ -140,7 +146,10 @@ async function gather(user, show = PAGE, only = "") {
   const sources = [...perSource.values()].sort((a, b) => b.n - a.n);
   const filtered = only ? dispatches.filter((d) => (d.sourceId || sourceOf(d.jobId)) === only) : dispatches;
 
+  t?.mark("shape-rows");
   const caughtCount = await SeenJobs.countMatchedForSubscriptions(scope);
+  t?.mark("db-caught-count");
+
 
   return {
     watches,
@@ -176,7 +185,8 @@ wireRoutes.get("/wire", requireAuth, async (req, res, next) => {
     // would otherwise filter the feed down to nothing and look like a bug.
     const asked = String(req.query.source || "").trim();
     const only = getSource(asked) ? asked : "";
-    const data = await gather(req.user, showCount(req.query.show), only);
+    const data = await gather(req.user, showCount(req.query.show), only, res.locals.t);
+    res.locals.t?.mark("db-counters");
     page(res, "pages/wire", { title: "The Wire", nav: "wire", user: req.user, ...data });
   } catch (err) {
     next(err);
