@@ -6,7 +6,11 @@
 //
 // Run:  npm run test-sweep
 
-import { connectDb, closeDb, collections } from "../src/config/db.js";
+// FIRST import: sets MONGODB_DB before env.js reads it, and refuses to
+// run against production. This writes query and seenJobs rows — a
+// throwaway keyword prefix kept them out of anyone's way, but "out of
+// the way" in the production database is not the same as "not there".
+import { connectDb, closeDb, collections } from "./lib/test-db.js";
 import { ensureIndexes } from "../src/models/indexes.js";
 import * as Queries from "../src/models/queries.js";
 import * as SeenJobs from "../src/models/seenJobs.js";

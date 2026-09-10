@@ -1,15 +1,23 @@
 // e2e.js
 //
-// Drives the SIGNED-IN pages against a running server.
-// Start the server first, then:  npm run e2e
+// Drives the SIGNED-IN pages.  npm run e2e
 //
-// Seeds a pre-verified user directly in Mongo
-// so the run does not depend on reading a real inbox.
-const { connectDb, collections, closeDb } = await import("../src/config/db.js");
+// Owns its own server and its own database. It used to require you to
+// have started a server yourself, and then talked to localhost:3000 on
+// whatever MONGODB_URI pointed at — which is production. It cleaned up
+// after itself, but an aborted run did not, and aborted runs left real
+// rows behind more than once: four stray accounts on one occasion, and
+// a match-all watch that the production poller then swept and flooded
+// real inboxes with.
+//
+// test-db.js must be the FIRST import. It sets MONGODB_DB before env.js
+// can read it, and refuses to run at all against production.
+import { TEST_DB, connectDb, collections, closeDb, resetTestDb } from "./lib/test-db.js";
+import { startTestServer } from "./lib/test-server.js";
+
 const pw = await import("../src/services/auth/password.js");
 const { canonicalKey } = await import("../src/services/linkedin/buildUrl.js");
-
-const BASE = "http://localhost:3000";
+const { ensureIndexes } = await import("../src/models/indexes.js");
 const EMAIL = `e2e-${Date.now()}@example.invalid`;
 const PASS = "correcthorsebattery";
 const jar = new Map();
@@ -37,6 +45,18 @@ const post = (p, fields) => req(p, {
 const csrf = (h) => h.match(/name="_csrf" value="([^"]+)"/)?.[1] ?? "";
 
 await connectDb();
+/* A clean database, then the indexes — in that order, because several
+   of the rules under test ARE indexes (the ledger's uniqueness, the
+   duplicate-subscription guard) and a suite running without them would
+   pass while proving nothing. */
+await resetTestDb();
+await ensureIndexes();
+console.log("database:", TEST_DB);
+
+const server = await startTestServer();
+const BASE = server.base;
+console.log("server:  ", BASE);
+
 await collections.users().insertOne({
   email: EMAIL, passHash: await pw.hash(PASS),
   verified: true, verifiedAt: new Date(), createdAt: new Date(),
@@ -695,6 +715,28 @@ ok(!isStillWorthMailing({ jobId: "linkedin:1", postedAt: daysAgo(1) }),
 const { ensureStarterWatch } = await import("../src/services/onboarding/starterWatch.js");
 const { identityOf: idOf } = await import("../src/models/queries.js");
 
+/* The shared intern/Sri Lanka row, seeded warm and on purpose.
+
+   This assertion used to pass without it, because the row exists in
+   production and that is where this suite used to run. On a clean
+   database it failed — correctly: a starter watch that CREATES the
+   shared search gets an unprimed one, and the first sweep primes it
+   without alerting. The behaviour worth testing is the other case, the
+   one every account after the first hits: joining a row that is already
+   warm, so the wire fills on the very next sweep. Seeded rather than
+   inherited, so it is a fixture and not a coincidence. */
+const { upsert: upsertQuery } = await import("../src/models/queries.js");
+const sharedIntern = await upsertQuery({
+  keywordsKey: canonicalKey(["intern"]),
+  keywords: ["intern"],
+  geoId: "100446352",
+  location: "Sri Lanka",
+  everyMinutes: 15,
+  sources: ["linkedin"],
+  matchAll: false,
+});
+await collections.queries().updateOne({ _id: sharedIntern._id }, { $set: { primed: true } });
+
 const newbie = (await collections.users().insertOne({
   email: `e2e-starter-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(),
 })).insertedId;
@@ -968,5 +1010,11 @@ for (const q of new Set(testSubs.map((s) => String(s.queryId)))) {
     await collections.queries().deleteOne({ _id: qid });
   }
 }
+/* The database is thrown away wholesale now, so the careful per-row
+   cleanup above is belt and braces rather than the only thing standing
+   between an aborted run and production data. It is kept because it
+   also asserts that the app leaves nothing dangling behind a deletion. */
+await resetTestDb();
+await server.stop();
 await closeDb();
 console.log("\ncleaned up test data");
