@@ -100,6 +100,18 @@ for (const path of ["/wire", "/watches"]) {
     !/<script/i.test(frag),
     "— a script here is re-evaluated on every navigation");
 
+  /* The topbar readouts come back out of band.
+
+     The shell no longer re-renders on a tab change, so without this the
+     sweep countdown would freeze at whatever it said when the tab was
+     opened and stay there for the rest of the session. htmx only looks
+     for out-of-band markers among the response's OWN children, so this
+     also checks it is not buried inside the page. */
+  check("the shell readouts ride along out of band",
+    /<div class="chips" id="shellReadouts" hx-swap-oob="true">/.test(frag));
+  check("at the top level, where htmx looks for them",
+    /^<div class="chips" id="shellReadouts"/m.test(frag));
+
   const saved = Math.round((1 - frag.length / full.length) * 100);
   check("and it is smaller than the full page",
     frag.length < full.length,

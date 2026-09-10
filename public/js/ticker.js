@@ -11,8 +11,6 @@
 // detached node that nobody can see.
 (function () {
   var clocks = [];
-  // #nextSweep is in the topbar, which persists, so this one is safe to keep.
-  var head = document.getElementById("nextSweep");
   function collectClocks() { clocks = Array.from(document.querySelectorAll("[data-next]")); }
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
   function mmss(s) {
@@ -31,10 +29,17 @@
       if (soonest === null || at < soonest) soonest = at;
     });
 
-    // The header countdown is the SERVER's answer, falling back to the
-    // rows only if it did not supply one. Deriving it purely from
-    // [data-next] meant it worked on /watches and nowhere else, so the
-    // wire — the page people actually leave open — read "—" forever.
+    /* The header countdown is the SERVER's answer, falling back to the
+       rows only if it did not supply one. Deriving it purely from
+       [data-next] meant it worked on /watches and nowhere else, so the
+       wire — the page people actually leave open — read "—" forever.
+
+       Looked up each tick rather than held: #nextSweep is in the topbar,
+       which persists, but the topbar's readouts are replaced out of band
+       by every navigation, so afterwards it is a different node. A
+       reference taken at load would count down a node nobody can see,
+       while the visible one sat at "—" with nothing obviously wrong. */
+    var head = document.getElementById("nextSweep");
     if (head) {
       var at = Number(head.dataset.nextSweep) || soonest;
       setText(head,

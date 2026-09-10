@@ -11,5 +11,9 @@
      out of a fragment and puts it on the document. Nested inside anything
      it is ignored, and the tab would keep the previous page's name. %>
 <title><%= title %> · Job Wire</title>
+<%# Out of band, so the topbar it belongs to keeps up with the page. %>
+<%- include('../partials/readouts', {
+      oob: true, sweeping, watchCount, activeCount,
+      nextSweepAt: typeof nextSweepAt !== 'undefined' ? nextSweepAt : null }) %>
 <%- include('../partials/workspace-heading') %>
 <%- body %>

@@ -46,16 +46,9 @@
           <path d="M9 4v16m6-11-3 3 3 3"/></svg>
       </button>
 
-      <div class="chips">
-        <span class="chip"><span class="dot <%= sweeping ? 'live' : 'off' %> live-dot"></span>
-          <b><%= sweeping ? 'Sweeping' : (watchCount && !activeCount ? 'All held' : (activeCount ? 'Poller off' : 'Idle')) %></b></span>
-        <span class="chip"><span class="k">Watches</span><b><%= activeCount %>/<%= watchCount %></b></span>
-        <%# The countdown comes from the server. Deriving it from row
-            elements meant it only worked on /watches, so the page people
-            actually sit on showed "—" forever. %>
-        <span class="chip"><span class="k">Next</span><b class="tnum" id="nextSweep"
-          data-next-sweep="<%= typeof nextSweepAt !== 'undefined' && nextSweepAt ? nextSweepAt : '' %>">—</b></span>
-      </div>
+      <%- include('../partials/readouts', {
+            oob: false, sweeping, watchCount, activeCount,
+            nextSweepAt: typeof nextSweepAt !== 'undefined' ? nextSweepAt : null }) %>
 
       <span class="sp"></span>
       <button class="btn btn-xs" id="themeBtn" type="button" aria-label="Toggle theme">

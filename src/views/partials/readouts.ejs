@@ -1,2 +1,24 @@
 <%# readouts.ejs
-     The station-bar readouts: sweep countdown, watches active, median lead. %>
+     The station-bar readouts: what the poller is doing, how many watches
+     are live, and how long until the next sweep.
+
+     These live in the topbar, which no longer re-renders when you change
+     tabs — so left alone they would be frozen at whatever they said when
+     the tab was first opened, and the countdown in particular would sit
+     at "due" for the rest of the session. Every fragment response carries
+     this block back out of band, so the shell stays as current as the
+     page under it.
+
+     `oob` is the only difference between the two renders. It must be a
+     TOP-LEVEL element of the fragment: htmx only looks for out-of-band
+     markers among the response's own children. %>
+<div class="chips" id="shellReadouts"<%- oob ? ' hx-swap-oob="true"' : '' %>>
+  <span class="chip"><span class="dot <%= sweeping ? 'live' : 'off' %> live-dot"></span>
+    <b><%= sweeping ? 'Sweeping' : (watchCount && !activeCount ? 'All held' : (activeCount ? 'Poller off' : 'Idle')) %></b></span>
+  <span class="chip"><span class="k">Watches</span><b><%= activeCount %>/<%= watchCount %></b></span>
+  <%# The countdown comes from the server. Deriving it from row
+      elements meant it only worked on /watches, so the page people
+      actually sit on showed "—" forever. %>
+  <span class="chip"><span class="k">Next</span><b class="tnum" id="nextSweep"
+    data-next-sweep="<%= nextSweepAt ? nextSweepAt : '' %>">—</b></span>
+</div>
