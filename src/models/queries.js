@@ -152,8 +152,42 @@ export function siblings(geoId, exceptId) {
     .toArray();
 }
 
-export async function reschedule(id, { everyMinutes, primed, tracked }) {
+/**
+ * @param timing  { scheduledFor, startedAt, finishedAt } — when this
+ *   sweep was DUE, when it actually began, and when it ended.
+ *
+ *   Two numbers fall out of those three and neither was measurable
+ *   before. QUEUE DELAY is how long the sweep waited past its due time,
+ *   which is the honest answer to "my watch says every five minutes and
+ *   I got this twenty minutes late". SERVICE TIME is how long the crawl
+ *   itself took, which is what decides whether the requested cadence is
+ *   arithmetically possible at all: one serial LinkedIn lane can sustain
+ *   Σ(serviceTime / interval) < 1 and no more, and above that the
+ *   schedule is a wish rather than a plan.
+ *
+ *   serviceMsAvg is an exponentially weighted average rather than the
+ *   last value, because one slow sweep during a LinkedIn hiccup should
+ *   not be read as the new normal, and one fast sweep should not clear
+ *   a genuine problem.
+ */
+export async function reschedule(id, { everyMinutes, primed, tracked, timing }) {
   const set = { lastFetchedAt: new Date(), failCount: 0 };
+  if (timing?.startedAt && timing?.finishedAt) {
+    const serviceMs = timing.finishedAt - timing.startedAt;
+    set.lastServiceMs = serviceMs;
+    set.lastStartedAt = new Date(timing.startedAt);
+    set.lastFinishedAt = new Date(timing.finishedAt);
+    if (timing.scheduledFor) {
+      set.lastScheduledFor = new Date(timing.scheduledFor);
+      // Never negative: a sweep can run early when the tick catches it,
+      // and "minus four minutes late" is not a useful thing to record.
+      set.lastQueueDelayMs = Math.max(0, timing.startedAt - new Date(timing.scheduledFor).getTime());
+    }
+    const prior = await collections.queries().findOne({ _id: id }, { projection: { serviceMsAvg: 1 } });
+    set.serviceMsAvg = Number.isFinite(prior?.serviceMsAvg)
+      ? Math.round(prior.serviceMsAvg * 0.7 + serviceMs * 0.3)
+      : serviceMs;
+  }
   if (primed !== undefined) set.primed = primed;
   // How many the LAST sweep saw, not a running total. $inc made this
   // climb forever — 574 for a search that returns about 25 — which made

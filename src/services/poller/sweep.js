@@ -103,16 +103,25 @@ async function shareWithOtherWatches(from, fetched, startedAt) {
     const unseen = worth.filter((j) => !known.has(j.jobId)).slice(0, CROSS_MATCH_CAP);
     if (!unseen.length) continue;
 
-    // Claimed exactly as dedupe claims: the unique index decides, so this
-    // cannot race the target's own sweep into sending the job twice.
-    const claimed = await Ledger.remember(q._id, unseen.map((j) => j.jobId));
-    const mine = unseen.filter((j) => claimed.has(j.jobId));
-    if (!mine.length) continue;
+    /* Obligations first, ledger second — the same order the main sweep
+       uses, and for the same reason.
 
-    await SeenJobs.insertNew(q._id, mine);
-    await SeenJobs.markMatched(q._id, mine.map((j) => ({ ...j, matchedBy: "title" })));
+       This used to claim here and enqueue afterwards, which put the
+       whole discovery-to-delivery window back on the sharing path: a
+       crash between the two lines meant the target query had these jobs
+       marked as met and nobody had been told, and no later sweep would
+       offer them again. The enqueue is an upsert, so running this twice
+       lands on the same rows rather than mailing twice. */
+    await SeenJobs.insertNew(q._id, unseen);
+    await SeenJobs.markMatched(q._id, unseen.map((j) => ({ ...j, matchedBy: "title" })));
 
-    const { recipients } = await fanOut(q, mine, startedAt);
+    const { recipients } = await fanOut(q, unseen, startedAt);
+    /* Claimed only now. The unique index still decides a race with the
+       target's own sweep — whichever gets here first claims, and the
+       loser's enqueue is absorbed by the outbox's own uniqueness rather
+       than becoming a second email. */
+    await Ledger.remember(q._id, unseen.map((j) => j.jobId));
+    const mine = unseen;
     delivered += mine.length;
     log.info("shared a fetch with another watch", {
       from: (from.keywords || []).join("+") || "everything",
@@ -175,6 +184,11 @@ export function isStillWorthMailing(j) {
 
 export async function sweepQuery(query) {
   const started = Date.now();
+  /* When this sweep was DUE, captured before anything else touches the
+     row. The gap between it and `started` is queue delay — the part of
+     "my five-minute watch told me twenty minutes late" that belongs to
+     us rather than to the board. */
+  const scheduledFor = query.nextFetchAt || null;
 
   // Every source that covers this country, resolved fresh each sweep
   // rather than read off the row — a watch created before an adapter
@@ -334,6 +348,7 @@ export async function sweepQuery(query) {
   }
 
   await Queries.reschedule(query._id, {
+    timing: { scheduledFor, startedAt: started, finishedAt: Date.now() },
     everyMinutes: query.everyMinutes,
     primed: true,
     tracked: fetched.length,
@@ -349,6 +364,36 @@ export async function sweepQuery(query) {
     partial: failures.length ? failures.map((f) => f.sourceId).join(",") : undefined,
     ms: Date.now() - started,
   });
+
+  /* SHARE THE CORPUS HERE, not after this query has finished with it.
+
+     This call used to sit at the very bottom of the sweep, after five
+     early returns. Every one of them was a statement about the OWNING
+     query — nothing new, nothing fresh enough, nothing matching, nothing
+     sendable — and none of them says anything about whether the fetch
+     was useful to somebody else. A "supply chain" sweep that turns up
+     forty jobs and matches none of them would return at the first of
+     those exits, and the "intern" watch two rows down would never be
+     offered the intern job that fetch had just paid for.
+
+     The corpus is known by this line and nothing above it can be
+     undone, so this is the earliest correct place. It is deliberately
+     AFTER the priming return is decided but before it happens — a
+     priming sweep has a perfectly good corpus and no reason to keep it
+     to itself.
+
+     Matching stays title-only inside shareWithOtherWatches, so this
+     costs no extra requests to any board: it is arithmetic over jobs
+     already in memory.
+
+     Failure here must not fail a sweep that has already succeeded. */
+  if (!primed || (storedJobs || []).length) {
+    try {
+      await shareWithOtherWatches(query, fetched, new Date(started));
+    } catch (err) {
+      log.warn("sharing this fetch with other watches failed", { message: err.message });
+    }
+  }
 
   if (primed) {
     // The priming sweep alerts on nothing, but it should not leave the
@@ -625,15 +670,6 @@ export async function sweepQuery(query) {
      narrowed. */
   const { queued: alerted } = await fanOut(query, sendable, new Date(started));
   await claimSettled();
-
-  /* Everything this sweep pulled is now offered to the other watches in
-     this country, matched on title alone so it costs no requests. Failure
-     here must not fail the sweep that already succeeded. */
-  try {
-    await shareWithOtherWatches(query, fetched, new Date(started));
-  } catch (err) {
-    log.warn("sharing this fetch with other watches failed", { message: err.message });
-  }
 
   return { ok: true, fetched: fetched.length, alerted };
 }

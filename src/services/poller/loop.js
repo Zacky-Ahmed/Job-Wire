@@ -14,6 +14,7 @@ import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 import { collections } from "../../config/db.js";
 import * as Lease from "../../models/pollerLease.js";
+import { reportUtilisation } from "./utilisation.js";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 
@@ -194,11 +195,31 @@ async function tick() {
     log.error("tick failed", { message: err.message });
   } finally {
     running = false;
+    /* Is the schedule everyone asked for still possible?
+
+       U = Σ(serviceTime / interval) over the searches sharing the
+       LinkedIn lane. Above 1 the cadence is not slow, it is impossible:
+       sweeps fall further behind every cycle for ever, and the only
+       symptom anybody sees is alerts arriving later and later for no
+       stated reason. Computed from measured crawl times rather than
+       assumed ones, and reported here because nothing else looks at the
+       whole schedule at once. */
+    let utilisation = null;
+    try {
+      utilisation = await reportUtilisation();
+    } catch (err) {
+      log.warn("could not compute lane utilisation", { message: err.message });
+    }
     await beat({
       state: "idle",
       currentQueryId: null,
       lastTickMs: Date.now() - tickStarted,
       leaseOwner: OWNER,
+      ...(utilisation ? {
+        laneUtilisation: utilisation.U,
+        laneMeasured: utilisation.measured,
+        laneHeadroom: utilisation.headroom,
+      } : {}),
     });
     settle();
     inFlight = null;

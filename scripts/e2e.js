@@ -764,6 +764,145 @@ await collections.subscriptions().deleteMany({ userId: { $in: [slowUser, fastUse
 await collections.users().deleteMany({ _id: { $in: [slowUser, fastUser] } });
 await collections.queries().deleteOne({ _id: sharedQ._id });
 
+/* PHASE 4 — a fetch is shared even when it earns its owner nothing.
+ *
+ * shareWithOtherWatches used to run at the very bottom of the sweep,
+ * after five early returns. Every one of those returns is a statement
+ * about the OWNING query — nothing new, nothing fresh enough, nothing
+ * matching, nothing sendable — and none of them says anything about
+ * whether the fetch was useful to somebody else.
+ *
+ * So a "supply chain" sweep that pulled forty jobs and matched none of
+ * them returned at the first exit, and the "intern" watch on the same
+ * board never saw the intern job that fetch had already paid for. The
+ * request had been made, the jobs were in memory, and they were dropped.
+ */
+const { sweepQuery: sweepQ4 } = await import("../src/services/poller/sweep.js");
+const SourcesP4 = await import("../src/services/sources/index.js");
+
+const shareUser = (await collections.users().insertOne({
+  email: `e2e-share-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+
+/* Query A looks for something the corpus does not contain, so A itself
+   sends nothing and takes an early return. Query B is watching for the
+   thing the corpus DOES contain. Both in the same country, which is what
+   makes them siblings. */
+const shareQA = (await collections.queries().insertOne({
+  keywordsKey: `e2e-shareA-${Date.now()}`, keywords: ["quantum welding"], geoId: "e2e-s",
+  sources: ["e2e-fixture"], matchAll: false, createdAt: new Date(0), primed: true,
+  nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+const shareQB = (await collections.queries().insertOne({
+  keywordsKey: `e2e-shareB-${Date.now()}`, keywords: ["intern"], geoId: "e2e-s",
+  sources: ["e2e-fixture"], matchAll: false, createdAt: new Date(0), primed: true,
+  nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+const subB = (await collections.subscriptions().insertOne({
+  userId: shareUser, queryId: shareQB, label: "Intern", active: true, createdAt: new Date(0),
+})).insertedId;
+
+/* A fixture source, registered for this test only. Sharing must cost no
+   extra requests to anybody, so the corpus is handed over in memory and
+   this counts how many times it is asked for it. */
+let fixtureCalls = 0;
+SourcesP4.SOURCES["e2e-fixture"] = {
+  id: "e2e-fixture", label: "E2E Fixture", hosts: [], countries: ["e2e-s"],
+  timePrecision: "minute", pageSize: 100, maxPages: 1,
+  fetchJobs: async () => {
+    fixtureCalls++;
+    return [{
+      jobId: "e2e-fixture:shared-1", title: "Software Engineering Intern",
+      company: "Fixture Co", location: "Colombo, Sri Lanka",
+      url: "https://example.invalid/shared-1", postedAt: new Date(), postedText: "just now",
+    }];
+  },
+};
+
+await sweepQ4(await collections.queries().findOne({ _id: shareQA }));
+
+ok(fixtureCalls === 1, `A's sweep made exactly one fetch (got ${fixtureCalls})`);
+const aSent = await collections.outbox().countDocuments({ queryId: shareQA });
+ok(aSent === 0, "A itself owes nothing — the job does not match 'quantum welding'");
+
+const bOwed = await collections.outbox().find({ queryId: shareQB }).toArray();
+ok(bOwed.length === 1,
+  `but B is owed the job A's fetch found (got ${bOwed.length})`);
+ok(bOwed[0] && bOwed[0].job.title === "Software Engineering Intern",
+  "the actual job, carried across in memory");
+ok(fixtureCalls === 1,
+  `and sharing cost no extra request — still ${fixtureCalls} fetch, title matching only`);
+
+// The ledger records that B has met it, so B's own sweep will not re-alert.
+const bKnows = await (await import("../src/models/alertedJobs.js"))
+  .knownIds(shareQB, ["e2e-fixture:shared-1"]);
+ok(bKnows.size === 1, "and B's ledger records it, so B's own sweep will not send it again");
+
+delete SourcesP4.SOURCES["e2e-fixture"];
+await collections.outbox().deleteMany({ queryId: { $in: [shareQA, shareQB] } });
+await collections.seenJobs().deleteMany({ queryId: { $in: [shareQA, shareQB] } });
+await collections.subscriptions().deleteOne({ _id: subB });
+await collections.users().deleteOne({ _id: shareUser });
+await collections.queries().deleteMany({ _id: { $in: [shareQA, shareQB] } });
+
+/* PHASE 3d — the number that says whether the schedule is possible.
+ *
+ * LinkedIn is one serial lane. A search that wants sweeping every five
+ * minutes and takes eighty seconds to crawl is asking for 80/300 of it.
+ * U = Σ(serviceTime / interval) across everything on that lane; above 1
+ * the cadence is not slow, it is impossible, and sweeps fall further
+ * behind every cycle for ever. The only symptom anybody ever sees is
+ * alerts arriving later and later for no stated reason, which is why
+ * this has to be computed rather than noticed.
+ */
+const { laneUtilisation } = await import("../src/services/poller/utilisation.js");
+
+const laneQ = [];
+// Two searches, each an 80-second crawl, each asking for every 5 minutes.
+for (let i = 0; i < 2; i++) {
+  laneQ.push((await collections.queries().insertOne({
+    keywordsKey: `e2e-lane-${i}-${Date.now()}`, keywords: [`lane${i}`], geoId: "e2e-l",
+    sources: ["linkedin"], matchAll: false, createdAt: new Date(0), primed: true,
+    nextFetchAt: new Date(), everyMinutes: 5, serviceMsAvg: 80_000,
+  })).insertedId);
+}
+let lane = await laneUtilisation();
+ok(Math.abs(lane.U - (2 * 80_000) / (5 * 60_000)) < 0.001,
+  `two 80s crawls at 5 minutes use ${Math.round(lane.U * 100)}% of the lane`);
+ok(lane.U < 1, "which still fits");
+
+// A third and a fourth take it past the point where arithmetic allows it.
+for (let i = 2; i < 6; i++) {
+  laneQ.push((await collections.queries().insertOne({
+    keywordsKey: `e2e-lane-${i}-${Date.now()}`, keywords: [`lane${i}`], geoId: "e2e-l",
+    sources: ["linkedin"], matchAll: false, createdAt: new Date(0), primed: true,
+    nextFetchAt: new Date(), everyMinutes: 5, serviceMsAvg: 80_000,
+  })).insertedId);
+}
+lane = await laneUtilisation();
+ok(lane.U > 1, `six of them do not fit (${Math.round(lane.U * 100)}% of one lane`);
+ok(lane.headroom === 0, "and there is no headroom left to report");
+
+// A search nobody has measured yet is skipped, not guessed at.
+const unmeasured = (await collections.queries().insertOne({
+  keywordsKey: `e2e-lane-new-${Date.now()}`, keywords: ["brand new"], geoId: "e2e-l",
+  sources: ["linkedin"], matchAll: false, createdAt: new Date(0), primed: false,
+  nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+laneQ.push(unmeasured);
+const withNew = await laneUtilisation();
+ok(Math.abs(withNew.U - lane.U) < 0.001,
+  "an unmeasured search does not move the number — a default would be confidently wrong");
+ok(withNew.unmeasured === lane.unmeasured + 1,
+  `it is counted separately so it is not simply invisible (${lane.unmeasured} -> ${withNew.unmeasured})`);
+
+// A parked search is not on the lane at all.
+await collections.queries().updateOne({ _id: laneQ[0] }, { $set: { nextFetchAt: null } });
+const parked = await laneUtilisation();
+ok(parked.U < lane.U, "parking a search gives its share of the lane back");
+
+await collections.queries().deleteMany({ _id: { $in: laneQ } });
+
 /* PHASE 3c — a process killed outright loses no alert.
  *
  * The claim to test is the one everything else rests on: durability
