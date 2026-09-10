@@ -213,10 +213,17 @@ export async function sweepQuery(query) {
       return;
     }
 
-    // Sources page 10-ish at a time, so keep asking until a page adds
-    // nothing new. Capped, because a broken "next page" that repeats
-    // itself would otherwise loop until the request budget is gone.
-    const MAX_PAGES = 4;
+    /* How deep to page is the ADAPTER's to say, not the sweep's.
+       
+       This was one guessed number, 4, applied to every source alike. It
+       was wrong in both directions: LinkedIn, MAS, topjobs and ITPro page
+       internally and return [] after page 0, so three of the four asks
+       were wasted; Rooster serves five pages of 100 and its fifth was
+       unreachable, hiding roughly a hundred of its ~490 listings.
+       
+       The loop still stops early when a page adds nothing new, so this is
+       a runaway guard rather than a target. */
+    const MAX_PAGES = source.maxPages ?? 4;
     const shared = isShared(sourceId);
     const walkEveryPage = async () => {
       const out = new Map();
@@ -597,7 +604,11 @@ export async function sweepQuery(query) {
 }
 
 /** One email per subscriber per sweep, carrying every new job at once. */
-async function fanOut(query, all, startedAt) {
+/* `send` is injectable for one reason: the all-sends-failed branch below
+   is unreachable in a test otherwise, and that branch shipped with a
+   ReferenceError in it precisely because nothing ever ran it. Production
+   never passes it. */
+export async function fanOut(query, all, startedAt, { send = sendAlert } = {}) {
   const subs = await Subs.activeSubscribers(query._id);
   if (!subs.length) return 0;
   if (!all.length) return 0;
@@ -683,7 +694,7 @@ async function fanOut(query, all, startedAt) {
     });
     sentToday++;
 
-    const res = await sendAlert({ to: user.email, label: sub.label, jobs });
+    const res = await send({ to: user.email, label: sub.label, jobs });
     await EmailLog.settle(logId, { ok: res.ok, providerId: res.id, error: res.error });
     if (res.ok) sent++;
   }
@@ -700,8 +711,15 @@ async function fanOut(query, all, startedAt) {
   // holds the jobIds, so retry.js resends from there with a bounded
   // attempt count. The job stays remembered exactly once.
   if (eligible > 0 && sent === 0) {
+    /* `all.length`, not `jobs.length`.
+       
+       `jobs` is the per-subscriber slice and is scoped to the loop above,
+       so reading it here threw ReferenceError — and it threw only when
+       every send had already failed, which is precisely the moment a
+       diagnostic must not be the thing that breaks. The batch size is
+       what this line was trying to report anyway. */
     log.warn("all sends failed — queued for retry", {
-      queryId: String(query._id), jobs: jobs.length,
+      queryId: String(query._id), considered: all.length, watchers: eligible,
     });
   }
 

@@ -40,6 +40,10 @@ export const hosts = ["linkedin.com"];
 export const perCountry = true;
 export const note = "Every employer, but minutes to an hour behind the posting";
 export const pageSize = 10;
+// Pages internally: fetchJobs returns everything on page 0 and [] after,
+// so the sweep must ask exactly once. Declared rather than inferred, because
+// the sweep previously applied one guessed cap to every source alike.
+export const maxPages = 1;
 // Postings carry a relative age ("40 minutes ago"), so an age here is
 // trustworthy to the minute and can be reasoned about.
 export const timePrecision = "minute";

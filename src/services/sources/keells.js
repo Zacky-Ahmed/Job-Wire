@@ -14,6 +14,7 @@
 import * as cheerio from "cheerio";
 import { guardedFetch } from "../http/guardedFetch.js";
 import { qualify } from "./index.js";
+import { matchesAny } from "../../utils/match.js";
 
 export const id = "keells";
 export const label = "John Keells Group";
@@ -22,6 +23,10 @@ export const perCountry = false;
 export const countries = ["100446352"]; // Sri Lanka
 export const note = "Publishes instantly — no search-index delay";
 export const pageSize = 10;
+// Externally paged via startrow. The board carries a few dozen postings at
+// most, so three pages is well past the end and the loop stops earlier anyway
+// once a page adds nothing new.
+export const maxPages = 3;
 // The board prints a DATE and nothing finer ("19 Aug 2026"), which
 // resolves to midnight. A job posted at nine this morning therefore reads
 // as several hours old the moment it appears, so its age cannot be used
@@ -87,13 +92,15 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
     });
   });
 
-  // Their search is broad — a query for "intern" also returns senior
-  // roles. Keep anything whose title actually contains a keyword, so a
-  // watch for "intern" does not alert on "Senior Consultant".
+  /* Their search is broad — a query for "intern" also returns senior
+     roles — so keep only what actually matches.
+     
+     Through matchesAny, which is the app's one definition of the word.
+     This used to be a lowercased substring test of its own, which meant
+     "intern" matched international, internal and internet here while the
+     same keyword refused them everywhere else. An adapter inventing its
+     own idea of a match is how a rule gets enforced in six places and
+     broken in the seventh. */
   if (!words.length) return out;
-  const needles = words.map((w) => w.toLowerCase());
-  return out.filter((j) => {
-    const t = j.title.toLowerCase();
-    return needles.some((n) => t.includes(n));
-  });
+  return out.filter((j) => matchesAny(j.title, words));
 }

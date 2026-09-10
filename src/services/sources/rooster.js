@@ -38,12 +38,16 @@ export const pageSize = 100;
 export const timePrecision = "day";
 
 const API = "https://api.rooster.jobs/jobSearch/jobs/search";
-const MAX_PAGES = 5;
+/* Exported, because the sweep caps paging too and used a single guessed
+   number for every source. Its cap was 4 while this said 5, so the fifth
+   page could never be requested and roughly a hundred of Rooster's ~490
+   listings were unreachable. One number, declared where it is true. */
+export const maxPages = 5;
 
 const inSriLanka = (loc) => /sri\s*lanka|colombo|kandy|galle|jaffna|negombo/i.test(String(loc || ""));
 
 export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
-  if (page >= MAX_PAGES) return [];
+  if (page >= maxPages) return [];
 
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
   const body = await guardedFetch(API, hosts, {

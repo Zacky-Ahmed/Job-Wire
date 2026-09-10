@@ -30,6 +30,9 @@ export const perCountry = false;
 export const countries = ["100446352"]; // Sri Lanka
 export const note = "Sri Lankan portal — JSON API, no markup to break";
 export const pageSize = 100;
+// Externally paged, 100 a page, and the last-24-hours window holds a few
+// hundred. Five is a runaway guard rather than a target.
+export const maxPages = 5;
 // createdDate is null on every record; there is no posting time to trust.
 export const timePrecision = "day";
 

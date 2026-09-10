@@ -33,6 +33,10 @@ export const perCountry = false;
 export const countries = ["100446352"]; // Sri Lanka
 export const note = "Apparel group — posts to its own portal instantly";
 export const pageSize = 0; // paging is internal
+// Pages internally: fetchJobs returns everything on page 0 and [] after,
+// so the sweep must ask exactly once. Declared rather than inferred, because
+// the sweep previously applied one guessed cap to every source alike.
+export const maxPages = 1;
 // PostedDate is "2026-08-20" — a date, no time. Same reasoning as
 // keells.js and topjobs.js: arrival is the signal, not printed age.
 export const timePrecision = "day";

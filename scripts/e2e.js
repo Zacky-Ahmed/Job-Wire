@@ -399,6 +399,65 @@ ok(kept.some((j) => j.jobId === "linkedin:4"),
 ok(guard(batch, []).length === 4,
   "a match-all watch has no words, so the guard withholds nothing from it");
 
+/* PHASE 0 — three fixes that were each wrong in a way nothing exercised. */
+
+// 1. The all-sends-failed branch used to throw ReferenceError.
+//
+// `jobs` is the per-subscriber slice and is scoped to the loop; the branch
+// read it after the loop. It fired only when every send had already failed,
+// so the diagnostic replaced the outage it was meant to describe. Nothing
+// ran this path, which is exactly why it shipped broken.
+const { fanOut } = await import("../src/services/poller/sweep.js");
+
+const fanUser = (await collections.users().insertOne({
+  email: `e2e-fan-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+const fanQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-fan-${Date.now()}`, keywords: ["intern"], geoId: "e2e-f",
+  matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+await collections.subscriptions().insertOne({
+  userId: fanUser, queryId: fanQ, label: "Intern", active: true, createdAt: new Date(0),
+});
+
+let threw = null, delivered = null;
+try {
+  delivered = await fanOut(
+    { _id: fanQ, keywords: ["intern"] },
+    [{ jobId: "linkedin:e2e-1", title: "Intern - Testing", company: "X", url: "https://example.invalid" }],
+    new Date(),
+    { send: async () => ({ ok: false, error: "provider refused" }) },
+  );
+} catch (err) { threw = err; }
+
+ok(!threw, `the all-sends-failed path does not throw (${threw && threw.message})`);
+ok(delivered === 0, `and reports nothing delivered (got ${delivered})`);
+const logged = await collections.emailLog().countDocuments({ userId: fanUser });
+ok(logged === 1, "a row is left behind for the retry queue to find");
+
+await collections.emailLog().deleteMany({ userId: fanUser });
+await collections.subscriptions().deleteMany({ userId: fanUser });
+await collections.users().deleteOne({ _id: fanUser });
+await collections.queries().deleteOne({ _id: fanQ });
+
+// 2. Every adapter declares how deep the sweep may page.
+const SRC0 = await import("../src/services/sources/index.js");
+const pagers = Object.values(SRC0.SOURCES);
+ok(pagers.every((s2) => Number.isInteger(s2.maxPages) && s2.maxPages >= 1),
+  "every source declares an integer page budget");
+ok(SRC0.getSource("rooster").maxPages === 5,
+  `Rooster can reach its fifth page (${SRC0.getSource("rooster").maxPages})`);
+ok(SRC0.getSource("linkedin").maxPages === 1 && SRC0.getSource("mas").maxPages === 1,
+  "and the internal pagers are asked exactly once, not four times");
+
+// 3. Keells uses the app's definition of a keyword match, not its own.
+const keells = await import("../src/services/sources/keells.js");
+const { readFileSync } = await import("node:fs");
+const keellsSrc = readFileSync("src/services/sources/keells.js", "utf8");
+ok(keellsSrc.includes("matchesAny("), "Keells filters through matchesAny");
+ok(!keellsSrc.includes("t.includes(n)"),
+  "and no longer substring-matches, which let intern match international");
+
 // A board is fetched once per country per cycle, not once per search.
 //
 // Five live searches in Sri Lanka meant five full walks of LinkedIn every

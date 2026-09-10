@@ -39,6 +39,10 @@ export const perCountry = false;
 export const countries = ["100446352"]; // Sri Lanka only
 export const note = "Sri Lanka's biggest board — publishes instantly";
 export const pageSize = 0; // one page per area; paging is internal
+// Pages internally: fetchJobs returns everything on page 0 and [] after,
+// so the sweep must ask exactly once. Declared rather than inferred, because
+// the sweep previously applied one guessed cap to every source alike.
+export const maxPages = 1;
 // Listings carry an opening DATE and no time, so an age here cannot tell
 // news from backlog. See the same note on keells.js.
 export const timePrecision = "day";

@@ -28,6 +28,10 @@ export const perCountry = false;
 export const countries = ["100446352"]; // Sri Lanka
 export const note = "IT board — timestamps to the minute";
 export const pageSize = 50;
+// Pages internally: fetchJobs returns everything on page 0 and [] after,
+// so the sweep must ask exactly once. Declared rather than inferred, because
+// the sweep previously applied one guessed cap to every source alike.
+export const maxPages = 1;
 // The one local board that prints a time as well as a date.
 export const timePrecision = "minute";
 

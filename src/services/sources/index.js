@@ -25,6 +25,11 @@
 //                 if it is one employer's own site (Keells)
 //   fetchJobs({ keywords, geoId, page, matchAll })  ->  job[]
 //                 One page. Return [] when there is nothing more.
+//   maxPages      how many times the sweep may call fetchJobs with an
+//                 increasing page. 1 means the adapter pages internally and
+//                 returns everything on page 0. The sweep used to apply one
+//                 guessed cap to every source, which starved Rooster of its
+//                 fifth page and wasted three calls on every internal pager.
 //   timePrecision "minute" if the site publishes a real time, "day" if it
 //                 prints only a date — a date resolves to midnight, so a
 //                 job posted this morning already reads as hours old and
