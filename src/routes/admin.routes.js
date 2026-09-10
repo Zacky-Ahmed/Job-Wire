@@ -46,6 +46,7 @@ import * as EmailLog from "../models/emailLog.js";
 import { rel } from "../utils/time.js";
 import { listPacks, getPack } from "../services/packs.js";
 import * as Ledger from "../models/alertedJobs.js";
+import * as Outbox from "../models/outbox.js";
 import { dailyCap, providerLabel } from "../services/mail/transport.js";
 import { env } from "../config/env.js";
 
@@ -729,6 +730,10 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
     // search that no longer exists — invisible, and never expiring on any
     // clock a reader can see.
     await Ledger.forgetQuery(id);
+    /* And anything the outbox still promised on its behalf. A pending
+       obligation against a deleted search would be delivered by the next
+       worker pass, describing a watch nobody has any more. */
+    await Outbox.forgetQuery(id);
     await collections.queries().deleteOne({ _id: id });
     log.warn("ADMIN deleted a query", {
       by: req.user.email, location: q.location,
@@ -835,6 +840,11 @@ adminRoutes.post("/admin/queries/:id/merge", ...guard, async (req, res, next) =>
           await collections.subscriptions().updateOne(
             { _id: existing._id }, { $set: { active: true } });
         }
+        /* Dropping a duplicate watch takes its unsent obligations with
+           it. The survivor's own rows still stand, so the person is told
+           once rather than twice — which is the entire point of merging
+           two searches that were always the same search. */
+        await Outbox.forgetSubscription(sub._id);
         await collections.subscriptions().deleteOne({ _id: sub._id });
         dropped++;
       } else {

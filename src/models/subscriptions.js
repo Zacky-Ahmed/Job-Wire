@@ -4,6 +4,7 @@
 
 import { collections } from "../config/db.js";
 import * as Queries from "./queries.js";
+import * as Outbox from "./outbox.js";
 
 export function listForUser(userId) {
   return collections.subscriptions()
@@ -88,6 +89,16 @@ export async function remove(userId, id) {
   const sub = await collections.subscriptions().findOne({ _id: id, userId });
   if (!sub) return;
   await collections.subscriptions().deleteOne({ _id: id, userId });
+
+  /* A watch that no longer exists cannot be owed anything.
+
+     This is the ONE legitimate reason to delete a pending obligation —
+     everything else about the outbox is designed to make deletion
+     impossible — and without it, deleting a watch would leave the queue
+     promising to email somebody about a search they cancelled. Rows
+     already SENT are left alone: those are history, and the wire still
+     reports on them. */
+  await Outbox.forgetSubscription(id);
 
   await syncSchedule(sub.queryId);
 }

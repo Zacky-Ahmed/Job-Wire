@@ -419,14 +419,23 @@ ok(kept.some((j) => j.jobId === "linkedin:4"),
 ok(guard(batch, []).length === 4,
   "a match-all watch has no words, so the guard withholds nothing from it");
 
-/* PHASE 1 — the mail cap must mean "send later", never "forget".
+/* PHASE 1 — an alert that has been discovered can no longer be lost.
  *
- * The jobs are claimed on the ledger the moment they are discovered, so a
- * batch the cap refused was claimed, never sent, and never offered again.
- * Reaching the daily ceiling silently destroyed those alerts.
+ * The old shape: dedupe claimed a job on the ledger the moment it was
+ * discovered, and the claim was permanent. Anything that went wrong
+ * between there and the send — a full ceiling, a crash, an exception on
+ * one subscriber — meant nobody was ever told, and no later sweep would
+ * offer the job again. The cap case was patched by deferring the whole
+ * batch and releasing the claim; the crash cases were not patched at all.
+ *
+ * The new shape: the sweep writes a durable obligation per recipient
+ * before anything is sent, and only then claims. These tests are about
+ * the states a killed process can leave behind.
  */
 const Ledger1 = await import("../src/models/alertedJobs.js");
+const Outbox = await import("../src/models/outbox.js");
 const { fanOut: fanOut1 } = await import("../src/services/poller/sweep.js");
+const { drainOutbox } = await import("../src/services/mail/outboxWorker.js");
 
 const capUser = (await collections.users().insertOne({
   email: `e2e-cap-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
@@ -435,70 +444,200 @@ const capQ = (await collections.queries().insertOne({
   keywordsKey: `e2e-cap-${Date.now()}`, keywords: ["intern"], geoId: "e2e-c",
   matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
 })).insertedId;
-await collections.subscriptions().insertOne({
+const capSub = (await collections.subscriptions().insertOne({
   userId: capUser, queryId: capQ, label: "Intern", active: true, createdAt: new Date(0),
-});
-const capJobs = [{ jobId: "linkedin:e2e-cap-1", title: "Intern - Capped", company: "X", url: "https://example.invalid" }];
+})).insertedId;
+const capJobs = [{
+  jobId: "linkedin:e2e-cap-1", title: "Intern - Capped", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
 
-// Claim them exactly as a sweep would, then exhaust the ceiling.
-await Ledger1.remember(capQ, capJobs.map((j) => j.jobId));
-const capBefore = await Ledger1.knownIds(capQ, capJobs.map((j) => j.jobId));
-ok(capBefore.size === 1, "the batch starts out claimed, as a real sweep would leave it");
+// 1. The sweep records the obligation. It does not send.
+const enq = await fanOut1({ _id: capQ, keywords: ["intern"] }, capJobs, new Date());
+ok(enq.queued === 1, `fanOut writes one obligation per recipient per job (got ${enq.queued})`);
+const owed1 = await collections.outbox().find({ subscriptionId: capSub }).toArray();
+ok(owed1.length === 1 && owed1[0].status === "pending",
+  "and leaves it pending — nothing has been sent yet");
+ok(owed1[0].job && owed1[0].job.title === "Intern - Capped",
+  "carrying its own copy of the job, so a retry cannot depend on the 14-day cache");
 
-const realCap = (await import("../src/services/mail/transport.js")).dailyCap();
+// 2. Enqueueing again does not create a second obligation.
+//
+// This is what lets the ledger claim move AFTER the enqueue: a sweep
+// killed between the two runs again and lands on the same row.
+const reEnqueued = await fanOut1({ _id: capQ, keywords: ["intern"] }, capJobs, new Date());
+ok(reEnqueued.queued === 0 && reEnqueued.alreadyQueued === 1,
+  "a repeat enqueue lands on the existing row rather than making a second");
+ok((await collections.outbox().countDocuments({ subscriptionId: capSub })) === 1,
+  "so a crash between enqueue and claim costs a delay, not a duplicate email");
+
+// 3. THE CEILING. A full ceiling must leave the obligation pending.
 const capSpy = [];
-const capResult = await fanOut1(
-  { _id: capQ, keywords: ["intern"] }, capJobs, new Date(),
-  { send: async (m) => { capSpy.push(m); return { ok: true }; } },
+const capped = await drainOutbox({
+  send: async (m) => { capSpy.push(m); return { ok: true }; },
+  cap: 0,
+});
+ok(capped.deferred === true && capped.sent === 0, "at the ceiling nothing is sent");
+ok(capSpy.length === 0, "and nobody is mailed");
+const afterCap = await collections.outbox().findOne({ subscriptionId: capSub });
+ok(afterCap.status === "pending",
+  "the obligation is still PENDING — the ceiling means later, not never");
+
+// 4. Below the ceiling it goes out, once.
+const sentSpy = [];
+const drained = await drainOutbox({
+  send: async (m) => { sentSpy.push(m); return { ok: true, id: "provider-1" }; },
+  cap: 100,
+});
+ok(drained.sent === 1, `one email for one recipient (got ${drained.sent})`);
+ok(sentSpy.length === 1 && sentSpy[0].jobs.length === 1, "carrying the job it owed");
+const settled = await collections.outbox().findOne({ subscriptionId: capSub });
+ok(settled.status === "sent", "and the obligation is discharged");
+
+const drainedAgain = await drainOutbox({
+  send: async () => { throw new Error("must not be called"); }, cap: 100,
+});
+ok(drainedAgain.sent === 0, "a discharged obligation is not sent a second time");
+
+/* 5. THE CEILING MIDWAY. The case that used to skip the remaining
+ *    watchers permanently: three recipients, a ceiling of one.
+ */
+const midUsers = [];
+const midSubs = [];
+for (let i = 0; i < 3; i++) {
+  const u = (await collections.users().insertOne({
+    email: `e2e-mid-${i}-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+  })).insertedId;
+  midUsers.push(u);
+  midSubs.push((await collections.subscriptions().insertOne({
+    userId: u, queryId: capQ, label: "Intern", active: true, createdAt: new Date(0),
+  })).insertedId);
+}
+const midJobs = [{
+  jobId: "linkedin:e2e-mid-1", title: "Intern - Midway", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
+const midEnq = await fanOut1({ _id: capQ, keywords: ["intern"] }, midJobs, new Date());
+ok(midEnq.recipients === 4, `every eligible watcher is owed the batch (got ${midEnq.recipients})`);
+
+const midSpy = [];
+await drainOutbox({
+  send: async (m) => { midSpy.push(m); return { ok: true, id: "p" }; },
+  cap: (await collections.emailLog().countDocuments({ status: "sent" })) + 1,
+});
+ok(midSpy.length === 1, `a ceiling of one sends exactly one email (got ${midSpy.length})`);
+const stillOwed = await collections.outbox().countDocuments({
+  jobId: "linkedin:e2e-mid-1", status: "pending",
+});
+ok(stillOwed === 3,
+  `and the other three are still PENDING, not skipped (got ${stillOwed})`);
+
+// The rest go out on the next pass, which is what "later" has to mean.
+const restSpy = [];
+await drainOutbox({ send: async (m) => { restSpy.push(m); return { ok: true, id: "p" }; }, cap: 10_000 });
+ok(restSpy.length === 3, `the deferred recipients are served next time (got ${restSpy.length})`);
+ok((await collections.outbox().countDocuments({ jobId: "linkedin:e2e-mid-1", status: "pending" })) === 0,
+  "leaving nothing owed");
+
+/* 6. A PROVIDER REFUSAL keeps the obligation and schedules a retry.
+ *    It must not be discarded, and it must not be retried immediately
+ *    for ever — the old queue re-read by sentAt and produced 43 attempts
+ *    in one evening for the same handful of jobs.
+ */
+const failJobs = [{
+  jobId: "linkedin:e2e-fail-1", title: "Intern - Refused", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
+await fanOut1({ _id: capQ, keywords: ["intern"] }, failJobs, new Date());
+const refusedDrain = await drainOutbox({
+  send: async () => ({ ok: false, error: "provider refused" }), cap: 10_000,
+});
+ok(refusedDrain.failed >= 1, "a refusal is reported as a failure");
+const failRow = await collections.outbox().findOne({ jobId: "linkedin:e2e-fail-1" });
+ok(failRow.status === "pending", "the obligation survives the refusal");
+ok(failRow.attempts === 1 && failRow.lastError === "provider refused",
+  "carrying why, and how many times");
+ok(failRow.nextAttemptAt > new Date(),
+  "and scheduled forward, so it is not retried on the very next tick");
+
+const tooSoon = await drainOutbox({
+  send: async () => { throw new Error("must not be called"); }, cap: 10_000,
+});
+ok(tooSoon.sent === 0 && tooSoon.failed === 0,
+  "nothing due yet means nothing is attempted — the backoff is real");
+
+/* 7. A MAIL CONFIGURATION ERROR is parked, not retried on a schedule.
+ *    Retrying a wrong password every tick is what wrote 43 rows in an
+ *    evening; there is nothing a retry can fix.
+ */
+const cfgJobs = [{
+  jobId: "linkedin:e2e-cfg-1", title: "Intern - Misconfigured", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
+await fanOut1({ _id: capQ, keywords: ["intern"] }, cfgJobs, new Date());
+await drainOutbox({
+  send: async () => ({ ok: false, error: "Invalid login: 535 Username and Password not accepted" }),
+  cap: 10_000,
+});
+const cfgRow = await collections.outbox().findOne({ jobId: "linkedin:e2e-cfg-1" });
+ok(cfgRow.status === "dead",
+  `a credential failure parks the message instead of retrying it (got ${cfgRow.status})`);
+ok(String(cfgRow.lastError).includes("535"), "with the provider's own words kept");
+
+/* 8. A WORKER THAT WENT AWAY. A row left SENDING is not a resting state:
+ *    without reclaiming it, a process killed mid-send loses the alert in
+ *    exactly the way the outbox exists to prevent.
+ */
+const orphanJobs = [{
+  jobId: "linkedin:e2e-orphan-1", title: "Intern - Orphaned", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
+await fanOut1({ _id: capQ, keywords: ["intern"] }, orphanJobs, new Date());
+await collections.outbox().updateMany(
+  { jobId: "linkedin:e2e-orphan-1" },
+  { $set: { status: "sending", claimedAt: new Date(Date.now() - 30 * 60_000), claimedBy: "a process that died" } }
 );
+const orphanSpy = [];
+await drainOutbox({ send: async (m) => { orphanSpy.push(m); return { ok: true, id: "p" }; }, cap: 10_000 });
+ok(orphanSpy.length >= 1, "a row abandoned mid-send is picked back up");
+ok((await collections.outbox().findOne({ jobId: "linkedin:e2e-orphan-1" })).status === "sent",
+  "and delivered rather than stranded");
 
-ok(capResult.sent === 1 && !capResult.deferred,
-  "under the ceiling the batch is delivered normally");
+/* 9. THE LEDGER CLAIM NO LONGER GATES DELIVERY. A job claimed but never
+ *    enqueued used to be gone for good. Nothing claims until the
+ *    obligations are written, so the claim is now a statement about what
+ *    has been LOOKED AT, not about what somebody was told.
+ */
+const claimed = await Ledger1.remember(capQ, ["linkedin:e2e-claim-only"]);
+ok(claimed.has("linkedin:e2e-claim-only"), "the ledger still records what a search has met");
+ok((await collections.outbox().countDocuments({ jobId: "linkedin:e2e-claim-only" })) === 0,
+  "and says nothing about whether anyone was told — that is the outbox's job");
 
-/* Now the branch that matters, forced rather than waited for. A ceiling of
-   zero cannot accommodate any recipient, so this is the exact situation
-   that used to destroy the batch. */
-capSpy.length = 0;
-const cappedResult = await fanOut1(
-  { _id: capQ, keywords: ["intern"] }, capJobs, new Date(),
-  { send: async (m) => { capSpy.push(m); return { ok: true }; }, cap: 0 },
-);
-ok(cappedResult.deferred === true, "at the ceiling the batch is deferred");
-ok(capSpy.length === 0, "and mails nobody — the old code mailed some and dropped the rest");
-ok(cappedResult.sent === 0, "reporting nothing sent");
+// Nobody eligible is not an obligation.
+await collections.subscriptions().deleteMany({ queryId: capQ });
+const noneResult = await fanOut1({ _id: capQ, keywords: ["intern"] }, capJobs, new Date());
+ok(noneResult.queued === 0 && noneResult.recipients === 0,
+  "a query with no eligible watchers owes nothing to nobody");
 
-// The rule that matters: deferring must put the claim back.
-await Ledger1.release(capQ, capJobs.map((j) => j.jobId));
-const capAfter = await Ledger1.knownIds(capQ, capJobs.map((j) => j.jobId));
-ok(capAfter.size === 0, "releasing a deferred batch un-claims it, so a later sweep offers it again");
-
-// And a second claim then succeeds, which is what "offered again" means.
-const reclaimed = await Ledger1.remember(capQ, capJobs.map((j) => j.jobId));
-ok(reclaimed.has("linkedin:e2e-cap-1"), "the next sweep can claim it afresh");
-
-// Nobody eligible is NOT a deferral: there is nothing to send later.
-await collections.subscriptions().deleteMany({ userId: capUser });
-const noneResult = await fanOut1(
-  { _id: capQ, keywords: ["intern"] }, capJobs, new Date(),
-  { send: async () => ({ ok: true }) },
-);
-ok(noneResult.sent === 0 && noneResult.deferred === false,
-  "a query with no eligible watchers is not deferred — releasing it would loop for ever");
-
-await collections.emailLog().deleteMany({ userId: capUser });
-await collections.users().deleteOne({ _id: capUser });
+await collections.outbox().deleteMany({ queryId: capQ });
+await collections.emailLog().deleteMany({ userId: { $in: [capUser, ...midUsers] } });
+await collections.users().deleteMany({ _id: { $in: [capUser, ...midUsers] } });
 await Ledger1.forgetQuery(capQ);
 await collections.queries().deleteOne({ _id: capQ });
-void realCap;
 
 /* PHASE 0 — three fixes that were each wrong in a way nothing exercised. */
 
-// 1. The all-sends-failed branch used to throw ReferenceError.
+// 1. fanOut records obligations and calls no provider at all.
 //
-// `jobs` is the per-subscriber slice and is scoped to the loop; the branch
-// read it after the loop. It fired only when every send had already failed,
-// so the diagnostic replaced the outage it was meant to describe. Nothing
-// ran this path, which is exactly why it shipped broken.
+// This block used to prove that the all-sends-failed branch did not throw
+// a ReferenceError: `jobs` was the per-subscriber slice, scoped to the
+// loop, and the branch read it after the loop — so the diagnostic
+// replaced the outage it was meant to describe, and nothing ever ran it.
+//
+// That branch no longer exists, because fanOut no longer sends. What is
+// worth asserting now is the stronger property that replaced it: no
+// provider is reachable from a sweep, so no provider failure can cost an
+// alert. The refusal path itself is tested against drainOutbox above.
 const { fanOut } = await import("../src/services/poller/sweep.js");
 
 const fanUser = (await collections.users().insertOne({
@@ -518,17 +657,19 @@ try {
     { _id: fanQ, keywords: ["intern"] },
     [{ jobId: "linkedin:e2e-1", title: "Intern - Testing", company: "X", url: "https://example.invalid" }],
     new Date(),
-    { send: async () => ({ ok: false, error: "provider refused" }) },
   );
 } catch (err) { threw = err; }
 
-ok(!threw, `the all-sends-failed path does not throw (${threw && threw.message})`);
-ok(delivered && delivered.sent === 0, `and reports nothing delivered (got ${delivered && delivered.sent})`);
-ok(delivered && delivered.deferred === false,
-  "a failed send is NOT deferred — it has a row and the retry queue owns it");
+ok(!threw, `fanOut does not throw (${threw && threw.message})`);
+ok(delivered && delivered.queued === 1,
+  `it records one obligation (got ${delivered && delivered.queued})`);
 const logged = await collections.emailLog().countDocuments({ userId: fanUser });
-ok(logged === 1, "a row is left behind for the retry queue to find");
+ok(logged === 0,
+  `and writes no email log row, because it attempted no email (got ${logged})`);
+ok((await collections.outbox().countDocuments({ userId: fanUser, status: "pending" })) === 1,
+  "the obligation is what survives the sweep, not an attempt");
 
+await collections.outbox().deleteMany({ userId: fanUser });
 await collections.emailLog().deleteMany({ userId: fanUser });
 await collections.subscriptions().deleteMany({ userId: fanUser });
 await collections.users().deleteOne({ _id: fanUser });
@@ -865,6 +1006,15 @@ const job = { jobId: "mas:e2e-old", title: "Intern - Ancient", company: "MAS",
   postedText: "2026-01-01", postedAt: new Date("2026-01-01") };
 const first = await diff({ _id: ledgerQ, primed: true }, [job]);
 ok(first.alertable.length === 1, "a genuinely new listing is alertable whatever date it prints");
+
+/* The sweep claims, not diff.
+
+   diff used to write the ledger claim itself, the moment a job was
+   discovered — before it had been matched and before anybody had been
+   told. That is what made a crash mid-sweep lose the alert for good.
+   The claim now happens after every recipient has a durable obligation,
+   so this test has to do what the sweep does. */
+await Ledger.remember(ledgerQ, first.alertable.map((j) => j.jobId));
 
 // Expire it from the wire exactly as the TTL would, leaving the ledger alone.
 await collections.seenJobs().deleteMany({ queryId: ledgerQ, jobId: "mas:e2e-old" });

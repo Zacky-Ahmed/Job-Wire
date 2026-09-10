@@ -9,6 +9,7 @@
 import * as Queries from "../../models/queries.js";
 import { sweepQuery } from "./sweep.js";
 import { retryFailedSends } from "./retry.js";
+import { drainOutbox } from "../mail/outboxWorker.js";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 import { collections } from "../../config/db.js";
@@ -67,8 +68,16 @@ async function tick() {
   const tickStarted = Date.now();
   try {
     await beat({ lastTickAt: new Date(), state: "working" });
-    // Deliver anything that failed last time before looking for more.
-    // A caught job the user never received is worth more than a new one.
+    /* Deliver what is already owed before looking for more.
+
+       A caught job the reader never received is worth more than a new
+       one, and now that the sweep only writes obligations, this is where
+       the mail actually leaves. Draining first also means a tick that
+       dies partway through the crawl has still delivered the backlog it
+       started with. */
+    await drainOutbox();
+    // The old failed-send queue, still draining emailLog rows written
+    // before the outbox existed. Removed once none are left.
     await retryFailedSends();
 
     const due = await Queries.findDue(10);
@@ -95,6 +104,12 @@ async function tick() {
         log.error("sweep threw", { queryId: String(query._id), message: err.message });
         await Queries.recordFailure(query._id, query.everyMinutes * 2);
       }
+      /* Again after each query, so a long crawl does not sit on the mail
+         it has already earned. A ten-query tick used to mean the tenth
+         query's alerts waited for the first nine to finish; obligations
+         written a minute ago should not wait on a crawl that has minutes
+         left to run. */
+      await drainOutbox();
     }
   } catch (err) {
     log.error("tick failed", { message: err.message });

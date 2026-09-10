@@ -14,12 +14,10 @@ import * as Queries from "../../models/queries.js";
 import * as SeenJobs from "../../models/seenJobs.js";
 import * as Ledger from "../../models/alertedJobs.js";
 import * as Subs from "../../models/subscriptions.js";
-import * as EmailLog from "../../models/emailLog.js";
+import * as Outbox from "../../models/outbox.js";
 import { collections } from "../../config/db.js";
 import { matchesAny } from "../../utils/match.js";
 import { passesPack } from "../packs.js";
-import { sendAlert } from "../mail/send.js";
-import { dailyCap } from "../mail/transport.js";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 
@@ -114,12 +112,12 @@ async function shareWithOtherWatches(from, fetched, startedAt) {
     await SeenJobs.insertNew(q._id, mine);
     await SeenJobs.markMatched(q._id, mine.map((j) => ({ ...j, matchedBy: "title" })));
 
-    const sent = await fanOut(q, mine, startedAt);
+    const { recipients } = await fanOut(q, mine, startedAt);
     delivered += mine.length;
     log.info("shared a fetch with another watch", {
       from: (from.keywords || []).join("+") || "everything",
       to: (q.keywords || []).join("+") || "everything",
-      jobs: mine.length, recipients: sent,
+      jobs: mine.length, recipients,
     });
   }
   return delivered;
@@ -475,10 +473,26 @@ export async function sweepQuery(query) {
   const settled = batch.filter((j) => !undecidedIds.has(j.jobId)).map((j) => j.jobId);
   await SeenJobs.clearPending(query._id, settled);
 
+  /* Claim what has a verdict, once nothing more is owed on it.
+
+     A job that reached a decision this sweep never needs looking at
+     again, whether it matched or not, so it goes on the ledger and stops
+     costing a refinement request every five minutes.
+
+     Undecided and deferred jobs are deliberately NOT claimed. They are
+     still carrying a refinePending flag and will come back; claiming
+     them would mean the next sweep skips them and the verdict never
+     arrives. That asymmetry is the reason this is a function called at
+     each exit rather than one line at the end — the exits below reach
+     the end of the sweep by different routes and every one of them has
+     to leave the ledger in the same state. */
+  const claimSettled = () => Ledger.remember(query._id, settled);
+
   if (!wanted.length) {
     log.info("sweep found new jobs but none matched the watch", {
       queryId: String(query._id), considered: batch.length,
     });
+    await claimSettled();
     return { ok: true, fetched: fetched.length, alerted: 0 };
   }
 
@@ -540,7 +554,10 @@ export async function sweepQuery(query) {
       queryId: String(query._id), stale, olderThanMinutes: ALERT_MAX_AGE_MIN,
     });
   }
-  if (!fresh.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+  if (!fresh.length) {
+    await claimSettled();
+    return { ok: true, fetched: fetched.length, alerted: 0 };
+  }
 
   /* No "have we mailed this before?" gate here any more.
      
@@ -587,27 +604,27 @@ export async function sweepQuery(query) {
        every five minutes for ever. */
     await SeenJobs.unmatch(query._id, dropped.map((j) => j.jobId), "keyword-guard");
   }
-  if (!sendable.length) return { ok: true, fetched: fetched.length, alerted: 0 };
-
-  /* Claimed before matching, so an undelivered batch has to be returned.
-     
-     dedupe.diff() writes the ledger claim the moment a job is discovered,
-     which is what stops two sweeps racing it into two emails. The cost is
-     that anything failing between there and delivery stays claimed and is
-     never offered again.
-     
-     The mail cap was doing exactly that. A deferred batch reached nobody,
-     so putting it back is safe, and it is the difference between the
-     ceiling meaning "send later" and meaning "forget". A failed SEND is
-     not returned: it has an emailLog row and the retry queue owns it. */
-  const { sent: alerted, deferred: capDeferred } = await fanOut(query, sendable, new Date(started));
-
-  if (capDeferred) {
-    await Ledger.release(query._id, sendable.map((j) => j.jobId));
-    log.warn("batch returned to the ledger — it will be offered again", {
-      queryId: String(query._id), jobs: sendable.length,
-    });
+  if (!sendable.length) {
+    await claimSettled();
+    return { ok: true, fetched: fetched.length, alerted: 0 };
   }
+
+  /* Obligations first, ledger second, and the order is the whole point.
+
+     The claim used to be written by dedupe.diff() the moment a job was
+     discovered — before matching, before refinement, before anyone was
+     told. Everything that went wrong between there and delivery lost the
+     alert permanently, because a claimed job is never offered again.
+     Deferring the batch and releasing the claim patched the one case the
+     cap caused; it did nothing for a process that simply died.
+
+     Now nothing is claimed until every recipient has a durable row. The
+     enqueue is an upsert on (subscription, job, channel), so a sweep
+     that dies between these two lines re-runs, re-enqueues onto the same
+     rows, and claims on the second pass. The window is gone rather than
+     narrowed. */
+  const { queued: alerted } = await fanOut(query, sendable, new Date(started));
+  await claimSettled();
 
   /* Everything this sweep pulled is now offered to the other watches in
      this country, matched on title alone so it costs no requests. Failure
@@ -621,23 +638,27 @@ export async function sweepQuery(query) {
   return { ok: true, fetched: fetched.length, alerted };
 }
 
-/** One email per subscriber per sweep, carrying every new job at once. */
-/* `send` and `cap` are injectable for one reason: the two branches that
-   matter most here are unreachable in a test otherwise. The all-sends-failed
-   branch shipped with a ReferenceError in it precisely because nothing ever
-   ran it, and the deferral branch decides whether hitting the daily ceiling
-   means "send later" or "forget" — which is not something to leave untested
-   until a real ceiling proves it. Production passes neither. */
+/**
+ * Write down what this batch owes, to whom, before anything is sent.
+ *
+ * This used to send. It no longer does — see the note over the bulk
+ * write below, and models/outbox.js for why observing a job and
+ * notifying a person had to stop being the same fact.
+ *
+ * `enqueue` is injectable so a test can watch what would be written
+ * without a database, and so the failure branches are reachable at all:
+ * the all-sends-failed branch shipped with a ReferenceError in it
+ * precisely because nothing ever ran it. Production passes neither.
+ */
 export async function fanOut(
-  query, all, startedAt, { send = sendAlert, cap = null } = {}
+  query, all, startedAt, { enqueue = Outbox.enqueue } = {}
 ) {
   const subs = await Subs.activeSubscribers(query._id);
-  if (!subs.length || !all.length) return { sent: 0, deferred: false };
+  if (!subs.length || !all.length) return { queued: 0, alreadyQueued: 0, recipients: 0 };
 
-  /* PASS ONE: who is owed this batch, and what exactly do they get?
-     
-     Worked out before a single message is sent, because the daily cap has
-     to be an all-or-nothing decision for the batch. See below. */
+  /* PASS ONE: who is owed this batch, and what exactly does each of them
+     get? Worked out in full before anything is written, so the write
+     itself is one operation that either happens or does not. */
   const owed = [];
   for (const sub of subs) {
     const user = await collections.users().findOne(
@@ -681,75 +702,54 @@ export async function fanOut(
     owed.push({ sub, user, jobs });
   }
 
-  if (!owed.length) return { sent: 0, deferred: false };
+  if (!owed.length) return { queued: 0, alreadyQueued: 0, recipients: 0 };
 
-  /* THE CAP IS ALL OR NOTHING FOR THIS BATCH, and that is a correctness
-     rule rather than tidiness.
-     
-     It used to stop mid-fan-out and skip the remaining watchers. Those
-     people never received those jobs — ever — because the jobs had
-     already been claimed on the ledger, so no later sweep would offer
-     them again. The cap did not mean "send tomorrow", it meant "forget".
-     
-     The obvious repair, releasing the claim so a later sweep retries, is
-     unsafe part-way through: the ledger is keyed by (query, job) and not
-     by recipient, so releasing after some people were served would mail
-     those people the same jobs a second time. Until obligations are
-     tracked per recipient, the only safe unit is the whole batch.
-     
-     So: serve everyone, or serve nobody and let the caller put the batch
-     back. Near the ceiling that costs timeliness. It never costs the
-     alert. */
-  const ceiling = cap ?? dailyCap();
-  const sentToday = await EmailLog.countToday();
-  if (sentToday + owed.length > ceiling) {
-    log.warn("daily mail ceiling would be crossed — batch deferred, not dropped", {
-      queryId: String(query._id), sentToday, cap: ceiling,
-      wouldSend: owed.length, jobs: all.length,
-    });
-    return { sent: 0, deferred: true };
-  }
+  /* ONE WRITE, AND IT IS THE POINT OF THE WHOLE CHANGE.
 
-  /* PASS TWO: send. From here the batch is committed — every recipient
-     gets a durable emailLog row before their provider call, so a failure
-     belongs to the retry queue and the claim must stay put. */
-  let sent = 0;
-  for (const { sub, user, jobs } of owed) {
-    /* Open the row BEFORE the provider is called. Sending first and
-       recording after meant a crash in between left the jobs deduped
-       with no log row at all: no alert, and nothing for the retry queue
-       to find, so it was gone for good. Opening first turns that into a
-       "sending" row the queue reclaims once it goes stale. */
-    const logId = await EmailLog.open({
+     What used to be here was a loop that called the mail provider once
+     per recipient. Everything about that loop was a way to lose an
+     alert: the daily cap returned before the loop and the batch, already
+     claimed on the ledger, was never offered again; an exception on
+     recipient three meant four through ten never got a row at all; and a
+     process killed between the claim and this point lost the lot,
+     silently, with the ledger insisting it had been dealt with.
+
+     Now every intended recipient gets a durable row BEFORE any provider
+     is called, in a single bulk write. After this line the obligation
+     exists and only delivery or the watch disappearing can remove it. A
+     crash costs a delay, not an alert.
+
+     The cap is gone from here entirely. It belongs to the worker that
+     drains this queue, where it can defer one person's mail without
+     touching anybody else's — which is what turns "we hit the ceiling"
+     from a batch-level verdict into a per-message one. */
+  const items = owed.flatMap(({ sub, user, jobs }) =>
+    jobs.map((job) => ({
+      subscriptionId: sub._id,
       userId: sub.userId,
       queryId: query._id,
-      jobIds: jobs.map((j) => j.jobId),
-    });
+      job,
+      label: sub.label,
+      email: user.email,
+      discoveredAt: startedAt || new Date(),
+    }))
+  );
 
-    const res = await send({ to: user.email, label: sub.label, jobs });
-    await EmailLog.settle(logId, { ok: res.ok, providerId: res.id, error: res.error });
-    if (res.ok) sent++;
-  }
+  const { queued, alreadyQueued } = await enqueue(items);
 
-  // NOTE: we deliberately do NOT un-remember the jobs when a send fails.
-  //
-  // An earlier version did, so the next sweep would rediscover them. With
-  // a persistent fault — an IPv6 route that does not exist, say — that
-  // became an infinite loop: forget, re-catch, fail, forget, every five
-  // minutes, writing a fresh emailLog row each time. 43 of them in one
-  // evening for the same handful of jobs.
-  //
-  // The retry queue is the right mechanism: the emailLog row already
-  // holds the jobIds, so retry.js resends from there with a bounded
-  // attempt count. The job stays remembered exactly once.
-  //
-  // That is why only the DEFERRED case above returns the batch. A failed
-  // send has a row and an owner; a deferred batch has neither.
-  if (sent === 0) {
-    log.warn("all sends failed — queued for retry", {
-      queryId: String(query._id), considered: all.length, watchers: owed.length,
-    });
-  }
+  /* alreadyQueued is not an error and is not usually a surprise. The
+     enqueue is an upsert on (subscription, job, channel) precisely so a
+     sweep that died after writing these rows and before claiming the
+     ledger can run again and land on the same rows instead of writing a
+     second set. Seeing a number here after a crash is the mechanism
+     working. */
+  log.info("obligations recorded", {
+    queryId: String(query._id),
+    recipients: owed.length,
+    jobs: all.length,
+    queued,
+    ...(alreadyQueued ? { alreadyQueued } : {}),
+  });
 
-  return { sent, deferred: false };
+  return { queued, alreadyQueued, recipients: owed.length };
 }

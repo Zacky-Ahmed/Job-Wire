@@ -63,15 +63,27 @@ export async function remember(queryId, jobIds) {
 /**
  * Put jobs back, so a later sweep offers them again.
  *
- * The claim is what stops a job being mailed twice, so releasing it is
- * only ever safe when NOBODY received it. The one caller is the daily
- * mail cap: a batch that was never sent to anyone has no owner and no
- * emailLog row, and without this it would sit claimed for ever and reach
- * nobody — the cap meaning "forget" rather than "send later".
+ * NOTHING CALLS THIS ANY MORE, and that is the point of keeping it
+ * documented rather than deleting it quietly.
  *
- * A FAILED send must not come through here. That has a row, and the retry
- * queue owns it; releasing those was tried once and produced an infinite
- * forget/re-catch/fail loop that wrote 43 log rows in an evening.
+ * Its one caller was the daily mail cap. The claim used to be written
+ * the moment a job was discovered, so a batch the ceiling refused was
+ * claimed, never sent, and never offered again — the cap meaning
+ * "forget" rather than "send later". Releasing the whole batch was the
+ * only safe repair, because the ledger is keyed by (query, job) and not
+ * by recipient: release after serving half the watchers and the served
+ * half get a second copy.
+ *
+ * The outbox made the question disappear. Obligations are per recipient,
+ * so the ceiling defers one person's mail without touching anyone
+ * else's, and nothing is claimed until every recipient has a durable
+ * row. There is no longer a state this function is the answer to.
+ *
+ * It stays because "release the claim" is a plausible-looking idea that
+ * has already been tried in the other direction — releasing FAILED sends
+ * produced an infinite forget/re-catch/fail loop that wrote 43 log rows
+ * in one evening. If a future change reaches for this, read that
+ * sentence first.
  */
 export function release(queryId, jobIds) {
   if (!jobIds.length) return Promise.resolve();

@@ -147,6 +147,45 @@ export async function ensureIndexes() {
     )
   );
 
+  // ── outbox: what we owe, and to whom ─────────────────────────
+  /* The uniqueness that makes enqueue idempotent, and therefore makes
+     it safe to claim the ledger AFTER enqueueing rather than before.
+     A sweep that dies between the two re-enqueues on its next pass and
+     these rows absorb the repeat instead of becoming second emails.
+
+     Per SUBSCRIPTION, not per user — see the note in models/outbox.js
+     about why that choice is deliberate and how to change it later. */
+  created.push(
+    await idx(collections.outbox(),
+      { subscriptionId: 1, jobId: 1, channel: 1 },
+      { name: "one_obligation", unique: true }
+    )
+  );
+  /* The worker's only query: the oldest thing that is due. status is an
+     equality match, nextAttemptAt the range, discoveredAt the sort, so
+     this serves the claim in one index walk rather than a scan over a
+     table that grows with every job we find. */
+  created.push(
+    await idx(collections.outbox(),
+      { status: 1, nextAttemptAt: 1, discoveredAt: 1 },
+      { name: "due_oldest_first" }
+    )
+  );
+  /* Reclaiming rows whose worker went away, and the wire asking what is
+     still owed to one person. */
+  created.push(
+    await idx(collections.outbox(),
+      { status: 1, claimedAt: 1 },
+      { name: "stale_claims" }
+    )
+  );
+  created.push(
+    await idx(collections.outbox(),
+      { userId: 1, status: 1, discoveredAt: -1 },
+      { name: "owed_to_user" }
+    )
+  );
+
   log.info("indexes ensured", { count: created.length, ttlDays: env.seenJobTtlDays });
   return created;
 }

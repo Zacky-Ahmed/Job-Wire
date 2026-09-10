@@ -70,6 +70,13 @@ export const collections = {
   // What has ever been EMAILED, as opposed to what the wire has shown.
   // Outlives seenJobs on purpose; see models/alertedJobs.js.
   alertedJobs: () => getDb().collection("alertedJobs"),
+  /* Durable promises to tell one person about one job.
+
+     Separate from emailLog, which records ATTEMPTS. An obligation
+     outlives its attempts: it is created before the first provider call
+     and removed only by being delivered or by the watch disappearing.
+     See models/outbox.js for why the two cannot be the same table. */
+  outbox: () => getDb().collection("outbox"),
   // One document. The poller's own heartbeat, so "is it running?" is a
   // measurement rather than a restatement of POLLER_ENABLED.
   pollerState: () => getDb().collection("pollerState"),
