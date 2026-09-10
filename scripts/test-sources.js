@@ -218,5 +218,87 @@ check("a surface that normally returns nothing cannot collapse",
   isAnomalous(0, { samples: 20, median: 0 }) === null);
 
 
+console.log("\n=== topjobs is a country corpus, not three hardcoded areas ===");
+
+/* Measured 2026-09-10 with this adapter's own parser: 31 functional
+   areas, 5,261 open vacancies, and the three areas the adapter crawled
+   reached 336 of them — six per cent. A watch for an accounting
+   internship had never had a single page of its own area fetched, and
+   nothing anywhere would have said so. */
+const Corpus = await import("../src/services/sources/topjobsCorpus.js");
+
+check("every functional area the board publishes is listed",
+  Corpus.AREAS.length === 31, `${Corpus.AREAS.length} areas`);
+check("and the three that used to be the whole crawl are still among them",
+  ["SDQ", "HNS", "COM"].every((fa) => Corpus.AREAS.some((a) => a.fa === fa)));
+
+const openTotal = Corpus.AREAS.reduce((n, a) => n + a.open, 0);
+const oldThree = Corpus.AREAS.filter((a) => ["SDQ", "HNS", "COM"].includes(a.fa))
+  .reduce((n, a) => n + a.open, 0);
+check("the old crawl reached a small fraction of the board",
+  oldThree / openTotal < 0.1,
+  `${oldThree} of ${openTotal} vacancies — ${Math.round((oldThree / openTotal) * 100)}%`);
+
+Corpus.clearCorpus();
+
+/* COLD START: everything is overdue, and the budget is what stops that
+   becoming 31 requests at once. */
+const firstDue = Corpus.dueAreas(Date.now());
+check("a cold corpus does not fetch all 31 in one go",
+  firstDue.length === Corpus.REFRESH_BUDGET,
+  `${firstDue.length} areas, the budget`);
+
+/* Lateness decides the ORDER; tiers decide how often. A cold area that
+   has waited two hours goes before a hot one thirty seconds late. */
+let fetched = [];
+const fakeArea = (area) => { fetched.push(area.fa); return Promise.resolve([{ jobId: `tj-${area.fa}-1`, title: `${area.name} Intern` }]); };
+
+await Corpus.refresh(fakeArea);
+check("a pass fetches only its budget", fetched.length === Corpus.REFRESH_BUDGET, `${fetched.length}`);
+const covered1 = Corpus.coverage();
+check("and the corpus reports how much of the board it can see",
+  covered1.areas === Corpus.REFRESH_BUDGET && covered1.share > 0 && covered1.share < 1,
+  `${covered1.areas}/${covered1.ofAreas} areas, ${Math.round(covered1.share * 100)}% of vacancies`);
+
+// Six passes later the whole board is covered.
+for (let i = 0; i < 6; i++) { fetched = []; await Corpus.refresh(fakeArea); }
+const full = Corpus.coverage();
+check("a handful of passes reaches every area",
+  full.areas === Corpus.AREAS.length,
+  `${full.areas}/${full.ofAreas} — the old crawl could never reach more than 3`);
+check("which is the whole board's vacancies, not six per cent",
+  full.share === 1, `${Math.round(full.share * 100)}%`);
+check("and the jobs are all there, de-duplicated",
+  full.jobs === Corpus.AREAS.length, `${full.jobs} jobs`);
+
+/* Nothing is due immediately after a refresh, so a pass that runs again
+   straight away costs no requests at all. */
+fetched = [];
+await Corpus.refresh(fakeArea);
+check("a freshly refreshed corpus asks for nothing", fetched.length === 0);
+
+// Hot areas come round first once time passes.
+const later = Date.now() + 11 * 60_000;
+const hotDue = Corpus.dueAreas(later);
+check("after eleven minutes the hot areas are due and the cold ones are not",
+  hotDue.length > 0 && hotDue.every((a) => a.tier === "hot"),
+  hotDue.map((a) => `${a.fa}(${a.tier})`).join(" "));
+
+/* A FAILED REFRESH KEEPS WHAT IT HAD. "We could not look just now" and
+   "this area has no vacancies" must not produce the same result — a
+   transient 503 would otherwise read as a board that closed all 736 of
+   its accounting vacancies at once. */
+const before = Corpus.coverage().jobs;
+const failing = () => Promise.reject(new Error("503 from the board"));
+await Corpus.refresh(failing, { now: Date.now() + 2 * 60 * 60_000 });
+const after = Corpus.coverage();
+check("a failed refresh keeps the jobs it already had",
+  after.jobs === before, `${before} -> ${after.jobs}`);
+check("and says which areas are failing rather than reporting them empty",
+  after.failing > 0, `${after.failing} failing`);
+
+Corpus.clearCorpus();
+
+
 console.log(failed ? `\n${failed} failed` : "\nall good");
 process.exit(failed ? 1 : 0);

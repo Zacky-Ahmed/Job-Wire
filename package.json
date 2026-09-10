@@ -28,7 +28,8 @@
     "check-shell": "node scripts/check-shell.js",
     "test-sources": "node scripts/test-sources.js",
     "probe-rooster": "node scripts/probe-rooster-locations.js",
-    "backfill-intervals": "node scripts/backfill-watch-intervals.js"
+    "backfill-intervals": "node scripts/backfill-watch-intervals.js",
+    "probe-topjobs": "node scripts/probe-topjobs-areas.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

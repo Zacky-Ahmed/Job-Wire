@@ -5,9 +5,16 @@
 // the functional-area page the moment it is published.
 //
 // The board is organised by FUNCTIONAL AREA rather than by keyword, and
-// each area is its own ~500KB page, so we cannot fetch all thirty-one of
-// them every five minutes. AREAS below is the set we watch. Adding one is
-// a single line; the full list of codes is in the site's own nav.
+// each area is its own ~500KB page, so all thirty-one cannot be fetched
+// every five minutes. This file used to name three of them and treat that
+// as coverage; measured, it reached 336 of the board's 5,261 open
+// vacancies — six per cent — and the other 4,925 did not exist as far as
+// this system was concerned.
+//
+// The areas, their tiers and their refresh schedule now live in
+// topjobsCorpus.js, which crawls them independently of any watch, a few
+// of the most overdue per pass, and filters the corpus locally for
+// whoever asked.
 //
 // Every listing is a table row shaped like this:
 //
@@ -29,6 +36,7 @@
 
 import { guardedFetch } from "../http/guardedFetch.js";
 import { observer, checkPageShape } from "./observe.js";
+import * as Corpus from "./topjobsCorpus.js";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
 import * as cheerio from "cheerio";
@@ -51,12 +59,9 @@ export const timePrecision = "day";
 const BASE = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp";
 const ADVERT = "https://www.topjobs.lk/employer/JobAdvertismentServlet";
 
-// The areas we sweep. Codes are topjobs' own.
-const AREAS = [
-  { fa: "SDQ", name: "IT-Software/DB/QA/Web/Graphics" },
-  { fa: "HNS", name: "IT-Hardware/Networks/Systems" },
-  { fa: "COM", name: "Corporate Management/Analysts" },
-];
+// The area list, the tiers and the refresh schedule all live in
+// topjobsCorpus.js now. Three hardcoded codes here reached 6% of the
+// board; the measurement is in that file.
 
 // The page is served as iso-8859-1. Decoding it as UTF-8 turns every
 // en-dash into "?" — "Intern ? Human Resources Operations".
@@ -71,7 +76,11 @@ function parseDate(text) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function parseArea(html) {
+/* Exported so the coverage probe counts with the SAME parser the sweep
+   uses. A probe with its own selector measures its own selector: the
+   first version of scripts/probe-topjobs-areas.js guessed one and
+   reported zero vacancies in all thirty-one areas. */
+export function parseArea(html) {
   const $ = cheerio.load(html);
   const jobs = [];
 
@@ -117,72 +126,75 @@ export async function fetchJobs({ keywords, page = 0, matchAll = false }) {
   const obs = observer(id);
   if (page > 0) return obs.done([]);
 
+  /* THE BOARD IS A COUNTRY CORPUS, NOT A PER-WATCH SEARCH.
+
+     Measured on 2026-09-10 with this file's own parser: topjobs has 31
+     functional areas and 5,261 open vacancies. This adapter crawled
+     three of them and reached 336 — SIX PER CENT. Accounting alone
+     carries 736, more than twice the entire reach of the old crawl, and
+     a watch for an accounting internship had never had a single page of
+     its own area fetched. Nothing would have shown it: the adapter
+     returned jobs, the counts looked normal, and the other 4,925
+     vacancies simply did not exist as far as this system was concerned.
+
+     Fetching all 31 per sweep is not the answer either — that is 31
+     requests to one host on a five-minute clock, ten times the load on a
+     board that has never once rate-limited us. So the areas are crawled
+     independently of any watch, a few of the most overdue per pass, and
+     the corpus is filtered locally for whoever asked. Every area is
+     covered; none is covered every sweep; the per-pass cost is bounded
+     by a budget rather than by how many areas exist. See
+     topjobsCorpus.js for the tiers and why they are a proxy. */
+  const results = await Corpus.refresh((area) => fetchArea(area));
+
+  for (const r of results) {
+    obs.surface(`area:${r.area.fa}`, {
+      ok: r.ok, requests: 1, pages: 1,
+      rawCount: r.rawCount ?? 0, parsedCount: r.jobs ?? 0,
+      error: r.error || null,
+    });
+  }
+
+  const cov = Corpus.coverage();
+  /* Said on every observation, healthy or not, because partial coverage
+     is a property of where the crawl has got to rather than a fault —
+     and because a corpus that is 60% warm is a fact somebody reading the
+     admin page needs, not an alarm. */
+  obs.note(
+    `corpus covers ${cov.areas}/${cov.ofAreas} areas, ` +
+    `${Math.round(cov.share * 100)}% of the board's vacancies, ${cov.jobs} jobs held`
+  );
+  if (cov.failing) obs.warn(`${cov.failing} areas are failing to refresh`);
+
+  const all = Corpus.all().map((j) => ({ ...j, jobId: qualify(id, j.jobId) }));
+
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
-  const found = new Map();
-  const failures = [];
-
-  /* EACH AREA IS ITS OWN SURFACE.
-
-     Three of them, and they were unioned into one Map whose size was the
-     only thing anyone saw. One area going dark — a changed FA code, a
-     changed table — moved that total by a third at most and looked like
-     a slow week. Reported separately so it looks like what it is.
-
-     COVERAGE IS ALSO PARTIAL, and that is worth recording rather than
-     implying. The board carries roughly 31 functional areas and this
-     asks for three, so a watch for an accounting or hospitality
-     internship believes it has topjobs coverage and has never had a
-     single page of it fetched. That is a bigger hole than any parser
-     bug, and until it is fixed the honest thing is to say so on every
-     observation instead of letting the count imply completeness. */
-  for (const area of AREAS) {
-    try {
-      const html = await guardedFetch(
-        `${BASE}?FA=${area.fa}&jst=OPEN`,
-        hosts,
-        { jitter: true, charset: CHARSET }
-      );
-      const parsed = parseArea(html);
-      /* HTTP 200 is not the same as "the page we parse". This is a
-         scraper: the board can change its markup, keep answering 200,
-         and leave our selectors matching nothing — an empty result then
-         reads as a quiet day for ever. */
-      const shape = checkPageShape({
-        html,
-        containerFound: /<table/i.test(html),
-        rowsFound: (html.match(/<tr/gi) || []).length,
-        parsedCount: parsed.length,
-      });
-      obs.surface(`area:${area.fa}`, {
-        ok: shape.ok, requests: 1, pages: 1,
-        rawCount: (html.match(/<tr/gi) || []).length,
-        parsedCount: parsed.length,
-        error: shape.ok ? null : shape.error,
-      });
-      for (const job of parsed) {
-        // A vacancy can be listed under more than one area; the job code
-        // is the same, so the Map collapses it rather than alerting twice.
-        if (!found.has(job.jobId)) found.set(job.jobId, { ...job, area: area.name });
-      }
-    } catch (err) {
-      failures.push(`${area.fa}: ${err.message}`);
-      obs.surface(`area:${area.fa}`, { ok: false, requests: 1, error: err.message });
-    }
-  }
-
-  obs.note(`coverage is partial: ${AREAS.length} of ~31 functional areas are crawled`);
-
-  // One area being down should not look like a quiet day, but it should
-  // not lose the other two either.
-  if (failures.length === AREAS.length) {
-    throw new Error(`every topjobs area failed — ${failures.join("; ")}`);
-  }
-
-  const all = [...found.values()].map((j) => ({
-    ...j,
-    jobId: qualify(id, j.jobId),
-  }));
-
   if (matchAll || !words.length) return obs.done(all);
   return obs.done(all.filter((j) => matchesAny(j.title, words)));
+}
+
+/**
+ * One functional area, fetched and parsed.
+ *
+ * Throws on anything that is not the page we parse. The corpus keeps the
+ * previous jobs for an area whose refresh failed, because "we could not
+ * look just now" and "this area has no vacancies" must not produce the
+ * same result — a transient 503 would otherwise read as a board that
+ * closed all 736 of its accounting vacancies at once.
+ */
+async function fetchArea(area) {
+  const html = await guardedFetch(
+    `${BASE}?FA=${area.fa}&jst=OPEN`,
+    hosts,
+    { jitter: true, charset: CHARSET }
+  );
+  const parsed = parseArea(html);
+  const shape = checkPageShape({
+    html,
+    containerFound: /<table/i.test(html),
+    rowsFound: (html.match(/<tr/gi) || []).length,
+    parsedCount: parsed.length,
+  });
+  if (!shape.ok) throw new Error(`${area.fa}: ${shape.error}`);
+  return parsed;
 }
