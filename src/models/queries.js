@@ -61,7 +61,28 @@ export async function upsert({ keywordsKey, keywords, geoId, location, everyMinu
   // new watch joins the existing search and no legacy key can re-split
   // it. Mongo copies the filter's equality field onto an insert, which is
   // why identityKey is not repeated in $setOnInsert.
-  const res = await collections.queries().findOneAndUpdate(
+  /* THE RACE THIS HAS TO SURVIVE.
+
+     upsert matches on identityKey, which is NOT unique — legacy rows can
+     already collide, and a unique index would fail those signups instead
+     of joining them. The database's uniqueness is on (keywordsKey,
+     geoId) instead. So the field defining "the same search" and the
+     field Mongo enforces are different fields, and two people creating
+     the same watch at the same moment can both find no identityKey
+     match, both try to insert, and the second one hits E11000 on the
+     canonical key.
+
+     There is nothing wrong with that outcome — the first insert IS the
+     row the second one wanted — but it arrived as an unhandled
+     duplicate-key error and the signup simply failed. Caught here and
+     re-read, which is the whole repair: the row the winner created is by
+     definition the row we were about to create.
+
+     The long-term fix is to make identityKey itself unique, so the field
+     that decides identity is the field that enforces it. That has to
+     wait until the legacy duplicates are merged, because adding it now
+     would fail on rows that already collide. */
+  const findOrJoin = () => collections.queries().findOneAndUpdate(
     { identityKey },
     {
       $setOnInsert: {
@@ -93,6 +114,30 @@ export async function upsert({ keywordsKey, keywords, geoId, location, everyMinu
          the nulls that mark a parked row, and createdAt settles ties. */
       sort: { nextFetchAt: -1, createdAt: 1 } }
   );
+
+  let res;
+  try {
+    res = await findOrJoin();
+  } catch (err) {
+    if (err?.code !== 11000) throw err;
+    /* Somebody else created it between our read and our write. Join
+       theirs. Matched on the canonical key rather than identityKey
+       because that is the constraint that just fired, so it is the one
+       guaranteed to find the winner. */
+    log.info("two watches raced to create the same search — joining the winner", {
+      keywordsKey, geoId,
+    });
+    const existing = await collections.queries().findOne({ keywordsKey, geoId });
+    if (!existing) throw err;            // not the collision we thought
+    /* Stamp the identity on it if it is missing, so the next signup
+       matches on meaning and never reaches this branch again. */
+    if (!existing.identityKey) {
+      await collections.queries().updateOne(
+        { _id: existing._id }, { $set: { identityKey } });
+      existing.identityKey = identityKey;
+    }
+    res = existing;
+  }
   const query = res.value ?? res;
 
   // Revive a retired row. Everything above that could wake it lives in

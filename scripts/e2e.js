@@ -764,6 +764,56 @@ await collections.subscriptions().deleteMany({ userId: { $in: [slowUser, fastUse
 await collections.users().deleteMany({ _id: { $in: [slowUser, fastUser] } });
 await collections.queries().deleteOne({ _id: sharedQ._id });
 
+/* PHASE 10 — two people creating the same watch at the same moment.
+ *
+ * upsert matches on identityKey, which is not unique: legacy rows can
+ * already collide and a unique index would fail those signups instead of
+ * joining them. Mongo's uniqueness is on (keywordsKey, geoId) instead.
+ * So the field that decides "the same search" and the field the database
+ * enforces are different fields, and two simultaneous signups can both
+ * find no identity match, both try to insert, and the loser gets E11000.
+ *
+ * The outcome is right — the winner's row IS the row the loser wanted —
+ * but it arrived as an unhandled duplicate-key error and the signup
+ * failed.
+ */
+const QueriesP10 = await import("../src/models/queries.js");
+const raceKey = `e2e-race-${Date.now()}`;
+const raceArgs = {
+  keywordsKey: raceKey, keywords: ["race", "condition"], geoId: "e2e-r",
+  location: "Nowhere", everyMinutes: 30, sources: ["linkedin"], matchAll: false,
+};
+
+const both = await Promise.all([
+  QueriesP10.upsert({ ...raceArgs }),
+  QueriesP10.upsert({ ...raceArgs }),
+]);
+ok(both.every(Boolean), "neither concurrent create throws");
+ok(String(both[0]._id) === String(both[1]._id),
+  `and both land on the SAME search (${String(both[0]._id)} / ${String(both[1]._id)})`);
+ok((await collections.queries().countDocuments({ keywordsKey: raceKey })) === 1,
+  "so one row exists, not two");
+
+/* The legacy shape that makes this possible: a row with the canonical
+   key and no identity on it at all. A new watch must join it and stamp
+   it, not insert a rival beside it. */
+const legacyKey = `e2e-legacy-${Date.now()}`;
+const legacyId = (await collections.queries().insertOne({
+  keywordsKey: legacyKey, keywords: ["legacy"], geoId: "e2e-r",
+  location: "Nowhere", everyMinutes: 30, sources: ["linkedin"], matchAll: false,
+  primed: true, nextFetchAt: new Date(), createdAt: new Date(0),
+})).insertedId;
+const joinedLegacy = await QueriesP10.upsert({
+  keywordsKey: legacyKey, keywords: ["legacy"], geoId: "e2e-r",
+  location: "Nowhere", everyMinutes: 30, sources: ["linkedin"], matchAll: false,
+});
+ok(String(joinedLegacy._id) === String(legacyId),
+  "a watch created against a row with no identityKey joins it rather than splitting the search");
+ok(!!(await collections.queries().findOne({ _id: legacyId })).identityKey,
+  "and stamps the identity on it, so the next one matches on meaning");
+
+await collections.queries().deleteMany({ geoId: "e2e-r" });
+
 /* PHASE 4 — a fetch is shared even when it earns its owner nothing.
  *
  * shareWithOtherWatches used to run at the very bottom of the sweep,
