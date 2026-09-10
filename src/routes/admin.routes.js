@@ -896,7 +896,11 @@ adminRoutes.post("/admin/queries/:id/watchers", ...guard, async (req, res, next)
     if (!q || !u) return answer(req, res, "/admin?err=nosuch", ["admin:queriesChanged"]);
 
     const label = (q.keywords || []).join(", ") || q.location || "Watch";
-    const sub = await Subs.create({ userId, queryId, label });
+    // Inherits the search's current cadence; see the note in starterWatch.js
+    // about why a silent subscriber is worse than an agreeing one.
+    const sub = await Subs.create({
+      userId, queryId, label, requestedEveryMinutes: q.everyMinutes,
+    });
     if (!sub) {
       // The unique index caught it: they are already on this search.
       return answer(req, res, "/admin?err=already", ["admin:queriesChanged"]);

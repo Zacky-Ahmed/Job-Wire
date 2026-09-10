@@ -90,7 +90,18 @@ export async function ensureStarterWatch(userId) {
     });
 
     const label = env.starterWatchLabel || kw[0];
-    const sub = await Subs.create({ userId, queryId: query._id, label });
+    /* Records the search's current cadence as this watch's own request.
+
+       Nobody chose it — a starter watch is given, not asked for — but a
+       subscriber with NO expressed interval cannot vote when the shared
+       cadence is recomputed, and a query where every remaining watcher
+       is silent keeps whatever it was last set to. Inheriting the
+       current value means the vote is "leave it as it is", which is
+       exactly what a new account means by saying nothing. */
+    const sub = await Subs.create({
+      userId, queryId: query._id, label,
+      requestedEveryMinutes: query.everyMinutes || env.defaultSweepMinutes,
+    });
     if (!sub) return null;                             // raced; fine
 
     log.info("gave a new account its starter watch", {

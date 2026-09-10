@@ -13,6 +13,9 @@ import { drainOutbox } from "../mail/outboxWorker.js";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 import { collections } from "../../config/db.js";
+import * as Lease from "../../models/pollerLease.js";
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 
 /* A heartbeat the loop writes itself.
  *
@@ -44,6 +47,22 @@ let timer = null;
 let running = false;
 let stopped = false;
 
+/* Who this process is, for the lease.
+
+   Host plus pid plus a random suffix: two containers on one host share a
+   hostname, two processes in one container could in principle share a
+   pid namespace, and neither is worth relying on when a UUID settles it.
+   Regenerated on every start, deliberately — a restarted process is a
+   different holder and should not be able to renew the lease its dead
+   predecessor was holding. */
+const OWNER = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
+
+/* The tick currently in flight, so shutdown can wait for it rather than
+   killing a sweep halfway through. Null when idle. */
+let inFlight = null;
+
+export function pollerOwner() { return OWNER; }
+
 export function startPoller() {
   if (timer) return;
   stopped = false;
@@ -55,7 +74,45 @@ export function startPoller() {
   tick(); // do not wait a full tick for the first pass
 }
 
-export function stopPoller() {
+/**
+ * Stop scheduling, wait for the tick in flight, and hand the lease back.
+ *
+ * The old version set a flag and cleared the interval, which stops new
+ * ticks and does nothing about the one already running — and a LinkedIn
+ * sweep takes about eighty seconds, comfortably longer than the ten
+ * seconds the process gave itself before calling process.exit(1). So a
+ * deploy could kill a sweep mid-crawl.
+ *
+ * That is survivable now rather than catastrophic, because the outbox
+ * means a half-finished sweep loses at most the work it had not written
+ * down yet, and everything it HAD written is still owed. But waiting is
+ * cheap and losing a crawl is not, so wait — and release the lease, so
+ * the replacement process starts immediately instead of sitting out the
+ * five-minute TTL.
+ */
+export async function stopPoller({ waitMs = 90_000 } = {}) {
+  stopped = true;
+  if (timer) clearInterval(timer);
+  timer = null;
+
+  if (inFlight) {
+    log.info("waiting for the sweep in flight before shutting the poller down");
+    const raced = await Promise.race([
+      inFlight.then(() => "finished"),
+      new Promise((r) => setTimeout(() => r("timed out"), waitMs)),
+    ]);
+    log.info("poller tick " + raced);
+  }
+
+  try {
+    if (await Lease.release(OWNER)) log.info("poller lease released");
+  } catch (err) {
+    // Not worth blocking a shutdown for; the TTL will clear it.
+    log.warn("could not release the poller lease", { message: err.message });
+  }
+}
+
+export function stopPollerSync() {
   stopped = true;
   if (timer) clearInterval(timer);
   timer = null;
@@ -64,8 +121,30 @@ export function stopPoller() {
 async function tick() {
   // A slow sweep must not stack: skip this tick rather than overlap.
   if (running || stopped) return;
+
+  /* And it must not stack ACROSS PROCESSES either.
+
+     `running` above is a module-level boolean, which guards one process
+     and says nothing about a second. A rolling deploy alone is enough to
+     have two: the old instance is still alive while the new one boots,
+     and both would start crawling LinkedIn on the same schedule for the
+     same queries from the same IP range. LinkedIn's answer to that is to
+     stop answering, and the symptom is the one this project keeps
+     having — no jobs, no error, indistinguishable from a quiet day. */
+  const held = await Lease.acquire(OWNER);
+  if (!held) {
+    const holder = await Lease.current();
+    log.info("another process holds the poller lease — standing by", {
+      holder: holder?.owner, expiresAt: holder?.expiresAt,
+    });
+    await beat({ state: "standby", leaseOwner: holder?.owner ?? null });
+    return;
+  }
+
   running = true;
   const tickStarted = Date.now();
+  let settle;
+  inFlight = new Promise((resolve) => { settle = resolve; });
   try {
     await beat({ lastTickAt: new Date(), state: "working" });
     /* Deliver what is already owed before looking for more.
@@ -119,7 +198,10 @@ async function tick() {
       state: "idle",
       currentQueryId: null,
       lastTickMs: Date.now() - tickStarted,
+      leaseOwner: OWNER,
     });
+    settle();
+    inFlight = null;
   }
 }
 

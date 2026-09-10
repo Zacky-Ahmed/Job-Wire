@@ -93,6 +93,14 @@ export const env = {
   fetchJitterMs: num("FETCH_JITTER_MS", 4000),
   maxFailCount: num("MAX_FAIL_COUNT", 6),
   pollerEnabled: bool("POLLER_ENABLED", true),
+  /* How long shutdown may take before the process exits anyway.
+
+     Generous, because a LinkedIn sweep runs about eighty seconds and
+     killing one mid-crawl used to lose every job it had claimed and not
+     yet delivered. It does not any more — obligations are durable — so
+     this buys tidiness rather than correctness, and a platform that
+     SIGKILLs sooner costs a delay and nothing else. */
+  shutdownGraceMs: num("SHUTDOWN_GRACE_MS", 120000),
 
   // How long a job stays in seenJobs before it can be "new" again.
   // Must outlive any realistic posting, or you re-alert on old jobs.

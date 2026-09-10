@@ -213,22 +213,81 @@ async function main() {
     });
   }
 
+  /* Held so the shutdown handler can stop it. Undefined when the poller
+     never started, which the handler treats as nothing to stop. */
+  let poller = null;
+
   if (!env.pollerEnabled) {
     log.info("poller disabled by POLLER_ENABLED");
   } else if (!indexed) {
     log.error("poller held back because the indexes could not be ensured");
   } else {
-    const { startPoller } = await import("./services/poller/loop.js");
-    startPoller();
+    poller = await import("./services/poller/loop.js");
+    poller.startPoller();
   }
 
+  /* SHUTTING DOWN WITHOUT LOSING WORK.
+   *
+   * The old version closed the HTTP server, closed the database, and
+   * exited after ten seconds whatever happened. It did not touch the
+   * poller. A LinkedIn sweep takes about eighty seconds, so a deploy
+   * could kill a crawl mid-flight — and before the outbox existed, every
+   * job that crawl had claimed but not yet delivered was lost for good.
+   *
+   * Three things now happen, in order, and the order is the point:
+   *
+   *   1. stop accepting new work — the HTTP server stops listening and
+   *      the poller stops scheduling ticks;
+   *   2. wait for the sweep in flight, and hand back the lease so the
+   *      replacement process can start immediately rather than sitting
+   *      out the lease TTL;
+   *   3. drain the outbox, so anything this process discovered and wrote
+   *      down goes out now rather than waiting for the next instance.
+   *
+   * Step 3 is a courtesy, not a correctness requirement — that is the
+   * whole point of the outbox. Every obligation is durable and still
+   * pending, so a kill -9 in the middle of any of this costs a delay,
+   * not an alert. The grace period is generous because being killed is
+   * survivable; it is being killed AND having lost the record that was
+   * not.
+   */
+  let shuttingDown = false;
   const shutdown = async (signal) => {
+    if (shuttingDown) return;                    // a second SIGTERM is not news
+    shuttingDown = true;
     log.info("shutting down", { signal });
-    server.close(async () => {
-      await closeDb();
-      process.exit(0);
-    });
-    setTimeout(() => process.exit(1), 10000).unref();
+
+    /* The hard deadline. Platforms send SIGKILL some seconds after
+       SIGTERM regardless of what we are doing, so this exists to make
+       the exit deliberate rather than to guarantee anything: whatever
+       has not finished by now is safe to abandon because it is written
+       down. */
+    const hard = setTimeout(() => {
+      log.warn("shutdown grace period expired — exiting anyway", { signal });
+      process.exit(1);
+    }, env.shutdownGraceMs);
+    hard.unref();
+
+    server.close();                              // stop taking new requests
+
+    try {
+      if (poller) await poller.stopPoller();
+    } catch (err) {
+      log.warn("poller did not stop cleanly", { message: err.message });
+    }
+
+    try {
+      const { drainOutbox } = await import("./services/mail/outboxWorker.js");
+      const { sent } = await drainOutbox();
+      if (sent) log.info("delivered what was owed before exiting", { sent });
+    } catch (err) {
+      // Everything is still pending; the next process will send it.
+      log.warn("could not drain the outbox on the way out", { message: err.message });
+    }
+
+    await closeDb();
+    log.info("shutdown complete", { signal });
+    process.exit(0);
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));

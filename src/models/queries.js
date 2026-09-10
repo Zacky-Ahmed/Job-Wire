@@ -4,6 +4,7 @@
 // is what makes 100 users watching "intern / Sri Lanka" cost ONE fetch.
 
 import { collections } from "../config/db.js";
+import { log } from "../utils/logger.js";
 
 /** Find the shared query row or create it. Never creates a duplicate. */
 /**
@@ -196,6 +197,36 @@ export async function reschedule(id, { everyMinutes, primed, tracked }) {
  * page of every source, plus a detail request per new job — to fan out to
  * nobody.
  */
+/**
+ * Set a shared query's cadence to whatever its live subscribers ask for.
+ *
+ * Deliberately an assignment, not a $min. $min is how the old ratchet
+ * worked: a five-minute watcher could pull a query down to five minutes
+ * and nothing could ever pull it back up, so the search kept sweeping
+ * twelve times more often than anyone still on it had asked, long after
+ * that person had gone. The caller (subscriptions.syncSchedule) computes
+ * the minimum across the ACTIVE subscribers, which can go up as well as
+ * down because it is recomputed from scratch every time.
+ *
+ * nextFetchAt is left alone. A query that has just become slower should
+ * not have its pending sweep cancelled, and one that has just become
+ * faster gets there on its next reschedule — moving it here would let a
+ * pause-and-resume loop trigger an immediate fetch on demand.
+ */
+export async function setInterval(id, everyMinutes) {
+  if (!Number.isFinite(everyMinutes) || everyMinutes <= 0) return;
+  const res = await collections.queries().updateOne(
+    { _id: id, everyMinutes: { $ne: everyMinutes } },
+    { $set: { everyMinutes } }
+  );
+  if (res.modifiedCount) {
+    log.info("shared query cadence recomputed from its watchers", {
+      queryId: String(id), everyMinutes,
+    });
+  }
+  return res.modifiedCount || 0;
+}
+
 export async function setSweeping(id, shouldSweep) {
   const q = await collections.queries().findOne({ _id: id }, { projection: { nextFetchAt: 1 } });
   if (!q) return;

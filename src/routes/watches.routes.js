@@ -160,7 +160,14 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
       matchAll,
     });
 
-    const sub = await Subs.create({ userId: req.user._id, queryId: query._id, label });
+    /* The interval the person actually asked for, kept on their own
+       watch. The shared query derives its cadence from the minimum across
+       whoever is still listening, so this can be recovered from when they
+       leave — see subscriptions.syncSchedule. */
+    const sub = await Subs.create({
+      userId: req.user._id, queryId: query._id, label,
+      requestedEveryMinutes: every,
+    });
     if (!sub)
       return render(req, res, { showNew: true, values, error: "You already watch this exact query." });
 

@@ -53,7 +53,7 @@ await resetTestDb();
 await ensureIndexes();
 console.log("database:", TEST_DB);
 
-const server = await startTestServer();
+let server = await startTestServer();
 const BASE = server.base;
 console.log("server:  ", BASE);
 
@@ -695,6 +695,185 @@ await collections.emailLog().deleteMany({ userId: { $in: [capUser, ...midUsers] 
 await collections.users().deleteMany({ _id: { $in: [capUser, ...midUsers] } });
 await Ledger1.forgetQuery(capQ);
 await collections.queries().deleteOne({ _id: capQ });
+
+/* PHASE 3 — a shared cadence that can go back up.
+ *
+ * The interval used to be applied to the query with $min, which is a
+ * one-way door. One five-minute watcher pulled a sixty-minute search
+ * down to five, and nothing ever pulled it back: that person could
+ * delete their watch and everyone else kept paying for a cadence nobody
+ * had asked for, twelve times more often, on the most expensive source
+ * in the system. Invisible, because there is no screen that says "this
+ * search sweeps faster than any of its watchers requested".
+ */
+const SubsP3 = await import("../src/models/subscriptions.js");
+const QueriesP3 = await import("../src/models/queries.js");
+
+const slowUser = (await collections.users().insertOne({
+  email: `e2e-slow-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+const fastUser = (await collections.users().insertOne({
+  email: `e2e-fast-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+
+const sharedQ = await QueriesP3.upsert({
+  keywordsKey: `e2e-cadence-${Date.now()}`,
+  keywords: ["cadence"], geoId: "100446352", location: "Sri Lanka",
+  everyMinutes: 60, sources: ["linkedin"], matchAll: false,
+});
+
+// A asks for an hour.
+const slowSub = await SubsP3.create({
+  userId: slowUser, queryId: sharedQ._id, label: "Slow", requestedEveryMinutes: 60,
+});
+let row = await collections.queries().findOne({ _id: sharedQ._id });
+ok(row.everyMinutes === 60, `one watcher at 60 leaves the search at 60 (got ${row.everyMinutes})`);
+
+// B joins and asks for five. The search speeds up for everybody, which
+// is correct: it is one fetch and the faster request is the binding one.
+const fastSub = await SubsP3.create({
+  userId: fastUser, queryId: sharedQ._id, label: "Fast", requestedEveryMinutes: 5,
+});
+row = await collections.queries().findOne({ _id: sharedQ._id });
+ok(row.everyMinutes === 5, `a 5-minute watcher joining takes the search to 5 (got ${row.everyMinutes})`);
+
+// B pauses. THE REGRESSION: the old code left it at 5 for ever.
+await SubsP3.setActive(fastUser, fastSub._id, false);
+row = await collections.queries().findOne({ _id: sharedQ._id });
+ok(row.everyMinutes === 60,
+  `pausing the fast watcher puts the search back to 60 (got ${row.everyMinutes})`);
+
+// Resuming brings it back down, so the recompute really is symmetric.
+await SubsP3.setActive(fastUser, fastSub._id, true);
+row = await collections.queries().findOne({ _id: sharedQ._id });
+ok(row.everyMinutes === 5, `resuming takes it back to 5 (got ${row.everyMinutes})`);
+
+// And deleting outright does the same as pausing.
+await SubsP3.remove(fastUser, fastSub._id);
+row = await collections.queries().findOne({ _id: sharedQ._id });
+ok(row.everyMinutes === 60,
+  `deleting the fast watcher recovers the slow cadence (got ${row.everyMinutes})`);
+
+// The last watcher leaving parks the search; its cadence stops mattering.
+await SubsP3.remove(slowUser, slowSub._id);
+row = await collections.queries().findOne({ _id: sharedQ._id });
+ok(row === null || row.nextFetchAt === null,
+  "and the last watcher leaving stops the search altogether");
+
+await collections.subscriptions().deleteMany({ userId: { $in: [slowUser, fastUser] } });
+await collections.users().deleteMany({ _id: { $in: [slowUser, fastUser] } });
+await collections.queries().deleteOne({ _id: sharedQ._id });
+
+/* PHASE 3c — a process killed outright loses no alert.
+ *
+ * The claim to test is the one everything else rests on: durability
+ * cannot depend on the shutdown path running. So this does not shut the
+ * server down politely — it SIGKILLs it, which is what a platform does
+ * when the grace period runs out, and what a crash looks like.
+ */
+const killUser = (await collections.users().insertOne({
+  email: `e2e-kill-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+const killQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-kill-${Date.now()}`, keywords: ["intern"], geoId: "e2e-k",
+  matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+const killSub = (await collections.subscriptions().insertOne({
+  userId: killUser, queryId: killQ, label: "Intern", active: true, createdAt: new Date(0),
+})).insertedId;
+
+// Discovered and written down, but not yet sent — the exact state a
+// sweep is in for the seconds between finding a job and delivering it.
+await fanOut1({ _id: killQ, keywords: ["intern"] }, [{
+  jobId: "linkedin:e2e-kill-1", title: "Intern - Survives A Kill", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}], new Date());
+
+// And one that a worker had already picked up when the lights went out.
+await fanOut1({ _id: killQ, keywords: ["intern"] }, [{
+  jobId: "linkedin:e2e-kill-2", title: "Intern - Mid Send", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}], new Date());
+await collections.outbox().updateOne(
+  { jobId: "linkedin:e2e-kill-2" },
+  { $set: { status: "sending", claimedAt: new Date(Date.now() - 30 * 60_000), claimedBy: "the process about to die" } }
+);
+
+// No SIGTERM, no handler, no chance to finish anything.
+const killed = await server.kill();
+ok(killed !== null, "the server was killed outright, with no shutdown handler run");
+
+const survived = await collections.outbox()
+  .find({ subscriptionId: killSub }).toArray();
+ok(survived.length === 2, `both obligations outlived the process (got ${survived.length})`);
+ok(survived.every((r) => r.job && r.job.title),
+  "each still carrying its own copy of the job, so a retry needs nothing else");
+
+// A new process. Nothing was handed over; it reads the same rows.
+server = await startTestServer();
+const resumeSpy = [];
+await drainOutbox({
+  send: async (m) => { resumeSpy.push(m); return { ok: true, id: "p" }; },
+  cap: 10_000,
+});
+ok(resumeSpy.length >= 1, "the replacement process picks up what was owed");
+const afterKill = await collections.outbox().find({ subscriptionId: killSub }).toArray();
+ok(afterKill.every((r) => r.status === "sent"),
+  "including the one that was mid-send when it died — SENDING is not a resting state");
+const titles = resumeSpy.flatMap((m) => m.jobs.map((j) => j.title));
+ok(titles.includes("Intern - Survives A Kill") && titles.includes("Intern - Mid Send"),
+  "and both jobs actually reached the reader");
+
+await collections.outbox().deleteMany({ queryId: killQ });
+await collections.emailLog().deleteMany({ userId: killUser });
+await collections.subscriptions().deleteMany({ queryId: killQ });
+await collections.users().deleteOne({ _id: killUser });
+await collections.queries().deleteOne({ _id: killQ });
+
+/* PHASE 3b — only one process may crawl.
+ *
+ * The guard against overlapping sweeps was a module-level boolean, which
+ * guards one process and says nothing about a second. A rolling deploy
+ * alone produces two: the old instance is still alive while the new one
+ * boots, and both would crawl LinkedIn on the same schedule, for the
+ * same queries, from the same IP range. LinkedIn's answer to that is to
+ * stop answering — no jobs, no error, indistinguishable from a quiet day.
+ */
+const Lease = await import("../src/models/pollerLease.js");
+await Lease.forceRelease();
+
+const A = "process-a";
+const B = "process-b";
+
+ok(await Lease.acquire(A), "the first process takes the lease");
+ok(!(await Lease.acquire(B)), "and the second one is refused — it must not crawl");
+ok(await Lease.acquire(A), "the holder may renew its own lease");
+
+const held = await Lease.current();
+ok(held.owner === A && !held.expired, `the database says who holds it (${held.owner})`);
+
+// Releasing hands it straight over, so a deploy does not have to wait
+// out the TTL before the replacement can start.
+ok(await Lease.release(A), "the holder can give it back");
+ok(await Lease.acquire(B), "and the next process takes it immediately");
+
+/* A process that DIED cannot release, so the lease has to rot on its
+   own. Simulated by expiring it, which is exactly what a dead holder
+   leaves behind. */
+await collections.pollerState().updateOne(
+  { _id: "poller" }, { $set: { leaseExpiresAt: new Date(Date.now() - 60_000) } }
+);
+ok(await Lease.acquire(A), "an expired lease is taken over, so a dead process cannot stop the poller for ever");
+
+/* And the loser must not be able to release the winner's lease. A
+   process whose own sweep overran the TTL has already lost the lease; if
+   it could release unconditionally it would hand the crawl away from
+   whoever legitimately took over. */
+ok(!(await Lease.release(B)), "a process that no longer holds it cannot release it");
+ok((await Lease.current()).owner === A, "so the real holder keeps it");
+
+await Lease.forceRelease();
+ok((await Lease.current()) === null, "and it can be cleared by hand when a holder is known to be gone");
 
 /* PHASE 0 — three fixes that were each wrong in a way nothing exercised. */
 

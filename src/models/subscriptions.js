@@ -21,8 +21,23 @@ export function countForUser(userId) {
   return collections.subscriptions().countDocuments({ userId });
 }
 
-export async function create({ userId, queryId, label }) {
-  const doc = { userId, queryId, label, active: true, createdAt: new Date() };
+export async function create({ userId, queryId, label, requestedEveryMinutes = null }) {
+  /* The interval belongs to the WATCH, not to the shared query.
+
+     It used to be applied straight to the query with $min, which is a
+     one-way door: once anybody had ever asked for five minutes the row
+     stayed at five minutes for ever, including long after that person
+     deleted their watch. Everyone else on that search kept paying for a
+     cadence nobody had asked for — on LinkedIn, the most expensive
+     source, that is the difference between a sustainable schedule and a
+     throttled one.
+
+     Storing it here means the query's interval can be RECOMPUTED from
+     whoever is actually listening, which is what syncSchedule does. */
+  const doc = {
+    userId, queryId, label, active: true, createdAt: new Date(),
+    ...(requestedEveryMinutes ? { requestedEveryMinutes } : {}),
+  };
   try {
     const { insertedId } = await collections.subscriptions().insertOne(doc);
     await syncSchedule(queryId);
@@ -64,9 +79,44 @@ export async function setActive(userId, id, active) {
  * Called after anything that changes who is: create, pause, resume,
  * delete.
  */
+/**
+ * Re-derive everything about a shared query that depends on who is on it.
+ *
+ * Called after create, pause, resume and delete — every event that
+ * changes the answer.
+ *
+ * TWO things are derived, and the second one used to be a ratchet.
+ * Whether the query sweeps at all is a question about whether anybody is
+ * listening. How OFTEN it sweeps is a question about what those people
+ * asked for, and the old code answered it with $min against the existing
+ * value, which can only ever go down. A five-minute subscriber joining a
+ * sixty-minute search dropped it to five; that subscriber leaving did
+ * not put it back, because nothing ever recomputed it. The search stayed
+ * twelve times more expensive than anyone still on it had asked for, for
+ * ever, invisibly.
+ */
 export async function syncSchedule(queryId) {
-  const live = await collections.subscriptions().countDocuments({ queryId, active: true });
-  await Queries.setSweeping(queryId, live > 0);
+  const live = await collections.subscriptions()
+    .find({ queryId, active: true }, { projection: { requestedEveryMinutes: 1 } })
+    .toArray();
+
+  await Queries.setSweeping(queryId, live.length > 0);
+  if (!live.length) return;                 // parked; its cadence is moot
+
+  /* MIN over the live subscribers, computed fresh each time.
+
+     Rows created before this field existed have no request on them, so
+     they are skipped rather than counted as some default — treating a
+     legacy row as "60" would slow down a search somebody deliberately
+     set to 5, and treating it as "5" would speed up everything. If none
+     of the live subscribers has expressed a preference, the query keeps
+     whatever it has. */
+  const asked = live
+    .map((s) => s.requestedEveryMinutes)
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (!asked.length) return;
+
+  await Queries.setInterval(queryId, Math.min(...asked));
 }
 
 /**
