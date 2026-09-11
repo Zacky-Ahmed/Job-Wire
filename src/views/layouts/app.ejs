@@ -52,6 +52,7 @@
 
       <%- include('../partials/readouts', {
             oob: false, sweeping, watchCount, activeCount,
+            pollerLabel, pollerHealthy,
             nextSweepAt: typeof nextSweepAt !== 'undefined' ? nextSweepAt : null }) %>
 
       <span class="sp"></span>

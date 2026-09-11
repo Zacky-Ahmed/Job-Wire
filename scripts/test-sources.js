@@ -386,5 +386,79 @@ check("and the shell carries the snapshot's own label",
   chip.pollerLabel === "Standby", chip.pollerLabel);
 
 
+console.log("\n=== the chip renders the state, not its own vocabulary ===");
+
+/* CAUGHT BY A SCREENSHOT, TWICE, AND THE SECOND TIME WAS MY FIX BEING
+   INCOMPLETE.
+ *
+ * Round one: topbar "Sweeping" / card "Stalled" / row "standby".
+ * I replaced the model and updated headerState — and the TEMPLATE still
+ * had its own ternary, which read:
+ *
+ *   sweeping ? 'Sweeping'
+ *            : watchCount && !activeCount ? 'All held'
+ *            : activeCount ? 'Poller off' : 'Idle'
+ *
+ * Once `sweeping` came to mean "this process is WORKING right now",
+ * every other state — standby, idle, behind, offline — fell into the
+ * "Poller off" branch, because that was the only word left. Round two:
+ * topbar "Poller off" while the card said "Standby — another process is
+ * crawling".
+ *
+ * Unit-testing headerState could not catch that, because headerState was
+ * correct both times. So this renders the actual partial. */
+const ejs = await import("ejs");
+const { readFileSync: readChip } = await import("node:fs");
+const chipTpl = readChip("src/views/partials/readouts.ejs", "utf8");
+
+const renderChip = (locals) =>
+  ejs.render(chipTpl, {
+    oob: false, watchCount: 1, activeCount: 1, nextSweepAt: null, sweeping: false,
+    ...locals,
+  }, { filename: "src/views/partials/readouts.ejs" });
+
+const standbyChip = renderChip({ pollerLabel: "Standby", pollerHealthy: true });
+check("a standby poller does NOT render as 'Poller off'",
+  !/Poller off/.test(standbyChip) && /Standby/.test(standbyChip),
+  "that exact contradiction was on screen beside a card saying it was crawling");
+check("and a healthy standby shows a live dot, not a dead one",
+  /dot live/.test(standbyChip));
+
+const workingChip = renderChip({ sweeping: true, pollerLabel: "Sweeping", pollerHealthy: true });
+check("a working poller renders Sweeping", /Sweeping/.test(workingChip));
+
+const offlineChip = renderChip({ pollerLabel: "Offline", pollerHealthy: false });
+check("an offline poller says Offline, not 'Idle'",
+  /Offline/.test(offlineChip) && !/Idle/.test(offlineChip));
+check("and shows a dead dot", /dot off/.test(offlineChip));
+
+const behindChip = renderChip({ pollerLabel: "Behind", pollerHealthy: true });
+check("a poller that is behind schedule says so rather than 'Poller off'",
+  /Behind/.test(behindChip) && !/Poller off/.test(behindChip));
+
+/* The fallback must never be cheerful. A page that forgets the snapshot
+   shows Unknown and a dark dot — claiming health nobody measured is the
+   family of bug this model exists to end. */
+const bareChip = renderChip({});
+check("a page that forgets to pass the snapshot renders Unknown",
+  /Unknown/.test(bareChip));
+check("and does NOT show a live dot", !/dot live/.test(bareChip));
+
+/* Every label runtime.js can produce must survive the template. A state
+   the chip has no word for is how this broke both times. */
+const RT2 = await import("../src/services/poller/runtime.js");
+const everyState = [RT2.OFF, RT2.NEVER, RT2.OFFLINE, RT2.STANDBY,
+                    RT2.WORKING, RT2.OVERDUE, RT2.STALLED, RT2.IDLE];
+const rendered = everyState.map((st) => {
+  const snap = RT2.pollerRuntime(
+    { at: new Date(), lastTickAt: new Date(), state: "idle" }, null, { enabled: true });
+  return renderChip({ pollerLabel: snap.label, pollerHealthy: snap.healthy });
+});
+check("every runtime state renders without throwing", rendered.length === everyState.length);
+check("and none of them can produce the old guessed wording",
+  rendered.every((h) => !/Poller off|All held/.test(h)),
+  "the ternary is gone, so there is nothing left to guess with");
+
+
 console.log(failed ? `\n${failed} failed` : "\nall good");
 process.exit(failed ? 1 : 0);

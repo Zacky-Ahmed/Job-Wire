@@ -13,8 +13,30 @@
      TOP-LEVEL element of the fragment: htmx only looks for out-of-band
      markers among the response's own children. %>
 <div class="chips" id="shellReadouts"<%- oob ? ' hx-swap-oob="true"' : '' %>>
-  <span class="chip"><span class="dot <%= sweeping ? 'live' : 'off' %> live-dot"></span>
-    <b><%= sweeping ? 'Sweeping' : (watchCount && !activeCount ? 'All held' : (activeCount ? 'Poller off' : 'Idle')) %></b></span>
+  <%# THE CHIP PRINTS THE SNAPSHOT'S OWN LABEL.
+
+      It used to carry its own vocabulary — a ternary that read
+      "Sweeping" when sweeping, and otherwise guessed from the watch
+      counts. That was fine while `sweeping` meant "the poller is on and
+      somebody has a watch", and became wrong the moment it started
+      meaning something precise: this process is WORKING right now.
+
+      The result was a screenshot reading "Poller off" in the topbar
+      while the card below it said "Standby — another process is
+      crawling". Both were rendering the same snapshot by then; only one
+      of them was rendering its LABEL. Every non-working state — standby,
+      idle, behind — fell into the "Poller off" branch because that was
+      the only word the ternary had left.
+
+      So the fallbacks are gone. runtime.js names the state and this
+      prints the name. A state it has never heard of renders as that
+      state rather than as a guess. %>
+  <%# Guarded, and the fallback is deliberately NOT cheerful. A page
+      that forgets to pass the snapshot shows "Unknown" and a dark dot,
+      never a green one — claiming health nobody measured is the exact
+      bug this whole model replaced. %>
+  <span class="chip"><span class="dot <%= (typeof pollerHealthy !== 'undefined' && pollerHealthy) ? 'live' : 'off' %> live-dot"></span>
+    <b><%= typeof pollerLabel !== 'undefined' ? pollerLabel : 'Unknown' %></b></span>
   <span class="chip"><span class="k">Watches</span><b><%= activeCount %>/<%= watchCount %></b></span>
   <%# The countdown comes from the server. Deriving it from row
       elements meant it only worked on /watches, so the page people
