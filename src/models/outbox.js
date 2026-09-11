@@ -53,6 +53,22 @@ export const SENDING = "sending";
 export const SENT = "sent";
 /** Tried enough times, or refused for a reason retrying will not fix. */
 export const DEAD = "dead";
+/**
+ * Undeliverable until a PERSON changes something — a rejected
+ * credential, an unverified sender.
+ *
+ * Deliberately not DEAD. The first version settled these dead on the
+ * very first failure, which contradicted the comment right beside it
+ * saying obligations stay pending, and meant the first batch to discover
+ * a wrong API key was destroyed while every batch after it was correctly
+ * held. DEAD should mean "we have decided never to deliver this"; a
+ * typo in an environment variable is not that decision.
+ *
+ * Nothing retries a blocked row on a timer, because no amount of waiting
+ * fixes a wrong password. They are released in a batch once the provider
+ * answers again — see unblockAll().
+ */
+export const BLOCKED = "blocked";
 
 /**
  * Record what we owe, before anything is sent.
@@ -128,6 +144,47 @@ export async function enqueue(items) {
 }
 
 /**
+ * SEAL a batch: fix exactly which obligations one provider message
+ * carries, and give that message its own identity.
+ *
+ * THE BUG THIS EXISTS FOR. Every obligation was born with its own
+ * idempotency key, and the worker then grouped several obligations into
+ * one email and sent it under the FIRST row's key. Those two
+ * abstractions do not line up, and the gap is dangerous:
+ *
+ *   attempt 1   rows A+B, key = A's        provider ACCEPTS
+ *               the response is lost; A+B go back to pending
+ *   meanwhile   row C is queued for the same person
+ *   attempt 2   rows A+B+C, key = A's      provider says "seen A's key"
+ *
+ * We would read that as success and mark A, B and C delivered — but the
+ * message the provider actually accepted contained only A and B. C is
+ * marked sent and was never in any email.
+ *
+ * So the batch is sealed BEFORE the provider is called: the rows get a
+ * shared batchId and one batchKey, written durably. A retry regroups by
+ * batchId, so the message is byte-for-byte the one the key describes.
+ * C cannot join it; C forms the next batch with its own key.
+ *
+ *   one provider request  =  one immutable set of obligations  =  one key
+ */
+export async function sealBatch(rows, { now = new Date() } = {}) {
+  const existing = rows.find((r) => r.batchId);
+  /* An already-sealed batch keeps its identity. This is the whole point:
+     a retry must reuse the key the first attempt used, or the provider
+     sees a new message and delivers the same jobs twice. */
+  const batchId = existing?.batchId || randomUUID();
+  const batchKey = existing?.batchKey || randomUUID();
+
+  const ids = rows.map((r) => r._id);
+  await collections.outbox().updateMany(
+    { _id: { $in: ids } },
+    { $set: { batchId, batchKey, sealedAt: existing?.sealedAt || now } }
+  );
+  return { batchId, batchKey, ids };
+}
+
+/**
  * Take the next batch of work, marking it SENDING so a second worker
  * cannot take the same rows.
  *
@@ -197,6 +254,52 @@ export function settleRetry(ids, { error, nextAttemptAt, now = new Date() }) {
   return collections.outbox().updateMany(
     { _id: { $in: ids } },
     { $set: { status: PENDING, nextAttemptAt, lastTriedAt: now, lastError: String(error || "").slice(0, 300) } }
+  );
+}
+
+/**
+ * Held until somebody fixes the configuration.
+ *
+ * Not a retry — there is nothing to wait for — and not death. The rows
+ * keep their sealed batch, so when the credentials are corrected the
+ * same message goes out under the same key.
+ */
+export function settleBlocked(ids, { error, now = new Date() }) {
+  if (!ids.length) return Promise.resolve();
+  return collections.outbox().updateMany(
+    { _id: { $in: ids } },
+    { $set: { status: BLOCKED, blockedAt: now, lastError: String(error || "").slice(0, 300) } }
+  );
+}
+
+/**
+ * The configuration was fixed. Offer everything again.
+ *
+ * Called when the provider accepts a message after having refused one,
+ * so a corrected key drains the whole backlog rather than only the rows
+ * that happened to be claimed next.
+ */
+export async function unblockAll({ now = new Date() } = {}) {
+  const res = await collections.outbox().updateMany(
+    { status: BLOCKED },
+    { $set: { status: PENDING, nextAttemptAt: now, unblockedAt: now } }
+  );
+  return res.modifiedCount || 0;
+}
+
+/**
+ * No longer owed — the watch was paused or deleted, or the account went
+ * away between queueing and sending.
+ *
+ * Distinct from DEAD, which means we tried and failed. Nothing was
+ * wrong here; the obligation simply stopped existing, and saying so is
+ * worth more than deleting the row silently.
+ */
+export function cancel(ids, { reason, now = new Date() }) {
+  if (!ids.length) return Promise.resolve();
+  return collections.outbox().updateMany(
+    { _id: { $in: ids } },
+    { $set: { status: "cancelled", cancelledAt: now, cancelledReason: reason } }
   );
 }
 

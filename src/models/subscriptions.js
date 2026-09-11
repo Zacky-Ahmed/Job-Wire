@@ -5,6 +5,7 @@
 import { collections } from "../config/db.js";
 import * as Queries from "./queries.js";
 import * as Outbox from "./outbox.js";
+import { log } from "../utils/logger.js";
 
 export function listForUser(userId) {
   return collections.subscriptions()
@@ -71,6 +72,32 @@ export async function setActive(userId, id, active) {
   const sub = await collections.subscriptions().findOne({ _id: id, userId });
   if (!sub) return;
   await collections.subscriptions().updateOne({ _id: id, userId }, { $set: { active } });
+
+  /* HOLD HAS TO STOP THE EMAIL, not merely stop finding new jobs.
+
+     Pausing used to set a flag and re-time the shared query, and that is
+     all. Anything already queued still went out, because an outbox row
+     carries its own copy of the address and the job and never looked
+     back at the watch:
+
+       10:00  job found, notification queued
+       10:01  provider hits the daily ceiling
+       10:02  reader presses HOLD
+       next day, the reader is emailed about it anyway.
+
+     The button says Hold. Nobody reads that as "keep sending me the ones
+     already in the pipe". Rows already handed to the provider cannot be
+     recalled — that is honest and unavoidable — but everything still
+     pending is cancelled here. */
+  if (!active) {
+    const { deletedCount } = await Outbox.forgetSubscription(id);
+    if (deletedCount) {
+      log.info("held a watch — cancelled what it still owed", {
+        subscriptionId: String(id), cancelled: deletedCount,
+      });
+    }
+  }
+
   await syncSchedule(sub.queryId);
 }
 

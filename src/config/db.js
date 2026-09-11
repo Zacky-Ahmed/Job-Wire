@@ -84,5 +84,12 @@ export const collections = {
   // One document. The poller's own heartbeat, so "is it running?" is a
   // measurement rather than a restatement of POLLER_ENABLED.
   pollerState: () => getDb().collection("pollerState"),
+  /* WHO MAY CRAWL. Its own collection, deliberately not the poller
+     heartbeat row it used to share.
+
+     The heartbeat wrote leaseOwner on every tick, so a process that had
+     already lost the lease stamped its name back over the winner's.
+     Telemetry must not be able to write a field that decides authority. */
+  pollerLease: () => getDb().collection("pollerLease"),
   sessions: () => getDb().collection("sessions"),
 };

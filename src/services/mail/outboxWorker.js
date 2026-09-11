@@ -20,6 +20,7 @@
 
 import * as Outbox from "../../models/outbox.js";
 import * as EmailLog from "../../models/emailLog.js";
+import { collections } from "../../config/db.js";
 import { sendAlert } from "./send.js";
 import { dailyCap } from "./transport.js";
 import * as Provider from "./providerHealth.js";
@@ -38,11 +39,23 @@ const SCAN = 200;
 const BACKOFF_MINUTES = [1, 5, 20, 60, 240];
 const MAX_ATTEMPTS = BACKOFF_MINUTES.length;
 
-/** One row per recipient per job; one EMAIL per recipient per pass. */
-function groupBySubscription(rows) {
+/**
+ * One EMAIL per group.
+ *
+ * Grouped by SEALED BATCH where one exists, and only otherwise by
+ * subscription. That ordering is the fix for an exactly-once bug: a
+ * retry must send the same message the idempotency key describes, and
+ * regrouping purely by subscription would sweep newly-queued
+ * obligations into a batch the provider may already have accepted —
+ * marking them delivered when they were never in it.
+ *
+ * An unsealed row is one nobody has tried yet; those form new batches
+ * and get sealed before anything is sent.
+ */
+function groupForSending(rows) {
   const groups = new Map();
   for (const row of rows) {
-    const key = String(row.subscriptionId);
+    const key = row.batchId ? `batch:${row.batchId}` : `sub:${row.subscriptionId}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(row);
   }
@@ -101,7 +114,7 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
   const claimed = await Outbox.claimBatch({ limit: SCAN, now });
   if (!claimed.length) return { sent: 0, failed: 0, deferred: false };
 
-  const groups = groupBySubscription(claimed);
+  const groups = groupForSending(claimed);
 
   /* Each group is one email and therefore one unit of the cap. Groups
      beyond the budget go straight back to pending rather than being sent
@@ -126,6 +139,46 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
     const first = rows[0];
     const jobs = rows.map((r) => r.job);
 
+    /* IS THIS STILL OWED? Asked immediately before sending, not assumed
+       from the moment it was queued.
+
+       An outbox row carries its own copy of the address, the label and
+       the job — deliberately, so a retry three weeks later does not fail
+       because the fourteen-day cache dropped the title. The cost of that
+       independence is that the row cannot notice the watch being paused,
+       the watch being deleted, or the account being closed. Cancellation
+       covers those on the way out, but a row can be claimed in the
+       moment between a person pressing Hold and that cancellation
+       landing, and an admin deleting an account by a route that forgets
+       to cancel would otherwise still email them.
+
+       So the state is re-read once per message. One extra round trip per
+       email, against the alternative of mailing somebody who asked us
+       not to. */
+    const [subscription, user] = await Promise.all([
+      collections.subscriptions().findOne(
+        { _id: first.subscriptionId }, { projection: { active: 1, userId: 1 } }),
+      collections.users().findOne(
+        { _id: first.userId }, { projection: { email: 1, verified: 1 } }),
+    ]);
+
+    if (!subscription || !subscription.active || !user || !user.verified) {
+      const why = !subscription ? "the watch was deleted"
+        : !subscription.active ? "the watch is on hold"
+        : !user ? "the account was deleted"
+        : "the address is not verified";
+      await Outbox.cancel(ids, { reason: why, now });
+      log.info("dropped a queued alert — it is no longer owed", {
+        subscriptionId: String(first.subscriptionId), jobs: jobs.length, reason: why,
+      });
+      continue;
+    }
+
+    /* The CURRENT address, not the one copied in when the job was found.
+       Somebody who changed their email between discovery and delivery
+       should be mailed where they are now. */
+    const to = user.email || first.email;
+
     /* The email log still records the ATTEMPT. It is what the daily cap
        counts and what the admin page reports, and it is deliberately not
        the same table as the obligation: an obligation outlives its
@@ -137,11 +190,16 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
       jobIds: rows.map((r) => r.jobId),
     });
 
+    /* SEAL BEFORE SENDING. After this line the set of obligations this
+       message carries is fixed and written down, so a retry sends the
+       same message under the same key rather than a larger one. */
+    const { batchKey } = await Outbox.sealBatch(rows, { now });
+
     let res;
     try {
       res = await send({
-        to: first.email, label: first.label, jobs,
-        idempotencyKey: first.idempotencyKey,
+        to, label: first.label, jobs,
+        idempotencyKey: batchKey,
       });
     } catch (err) {
       res = { ok: false, error: err.message };
@@ -149,9 +207,17 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
     await EmailLog.settle(logId, { ok: res.ok, providerId: res.id, error: res.error });
 
     if (res.ok) {
+      const wasBroken = Provider.health().state !== Provider.READY;
       Provider.noteSuccess();
       await Outbox.settleSent(ids, { providerMessageId: res.id ?? null, now });
       sent++;
+      /* The credentials work again. Everything parked while they did not
+         goes back in the queue — all of it, not just whatever happens to
+         be claimed next, so fixing a key drains the whole backlog. */
+      if (wasBroken) {
+        const freed = await Outbox.unblockAll({ now });
+        if (freed) log.info("provider is answering again — releasing what was held", { freed });
+      }
       continue;
     }
 
@@ -167,12 +233,29 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
        password on a schedule produced 43 attempts in one evening for the
        same handful of jobs; the row is parked until somebody fixes the
        credentials, and the reason is written on it. */
+    /* A CONFIGURATION FAILURE IS HELD, NOT KILLED.
+
+       This settled the batch DEAD, which contradicted the comment beside
+       it and the commit message that introduced it. The effect was that
+       the first batch to discover a wrong API key was destroyed outright
+       while every batch after it was correctly held — the one case the
+       provider pause exists for was the one case it could not save.
+
+       DEAD means "we have decided never to deliver this". A typo in an
+       environment variable is not that decision. */
     const attempts = first.attempts || 1;
-    if (Provider.isConfigFailure(res.error) || attempts >= MAX_ATTEMPTS) {
+    if (Provider.isConfigFailure(res.error)) {
+      await Outbox.settleBlocked(ids, { error: res.error, now });
+      log.error("mail configuration rejected — holding this message until it is fixed", {
+        userId: String(first.userId),
+        error: String(res.error || "").slice(0, 160),
+      });
+      break;    // every remaining message would fail identically
+    }
+    if (attempts >= MAX_ATTEMPTS) {
       await Outbox.settleDead(ids, { error: res.error, now });
-      log.error("outbox message given up on", {
+      log.error("outbox message given up on after repeated failures", {
         userId: String(first.userId), attempts,
-        reason: Provider.isConfigFailure(res.error) ? "mail configuration" : "out of attempts",
         error: String(res.error || "").slice(0, 160),
       });
       if (fatal) break;

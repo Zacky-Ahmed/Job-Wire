@@ -63,6 +63,12 @@ const OWNER = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
    killing a sweep halfway through. Null when idle. */
 let inFlight = null;
 
+/* The lease this process currently holds, with its fencing token. Held
+   at module scope so shutdown can hand it back — and released
+   CONDITIONALLY on the token, so a process that already lost the lease
+   cannot take the crawl away from whoever legitimately took over. */
+let currentFence = null;
+
 export function pollerOwner() { return OWNER; }
 
 export function startPoller() {
@@ -107,7 +113,7 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
   }
 
   try {
-    if (await Lease.release(OWNER)) log.info("poller lease released");
+    if (currentFence && await Lease.release(currentFence)) log.info("poller lease released");
   } catch (err) {
     // Not worth blocking a shutdown for; the TTL will clear it.
     log.warn("could not release the poller lease", { message: err.message });
@@ -133,15 +139,46 @@ async function tick() {
      same queries from the same IP range. LinkedIn's answer to that is to
      stop answering, and the symptom is the one this project keeps
      having — no jobs, no error, indistinguishable from a quiet day. */
-  const held = await Lease.acquire(OWNER);
-  if (!held) {
+  let fence = await Lease.acquire(OWNER);
+  currentFence = fence;
+  if (!fence) {
     const holder = await Lease.current();
     log.info("another process holds the poller lease — standing by", {
       holder: holder?.owner, expiresAt: holder?.expiresAt,
     });
-    await beat({ state: "standby", leaseOwner: holder?.owner ?? null });
+    await beat({ state: "standby", leaseHolder: holder?.owner ?? null });
     return;
   }
+
+  /* RENEW WHILE WORKING, and stop the moment renewal fails.
+
+     The lease used to be taken once here and never touched again, with a
+     five-minute TTL — while a tick sweeping ten queries at 78-92 seconds
+     each runs thirteen to fifteen minutes. It expired around query four
+     and a second process took it, so both crawled: exactly the thing the
+     lease exists to prevent, roughly two thirds of the way through every
+     busy tick.
+
+     Renewal is conditional on the fencing token, so a process that has
+     been taken over cannot renew its way back in. holdsLease going false
+     is not a warning to log past — it means another process is
+     authoritative and this one must start no further network work. */
+  let holdsLease = true;
+  const renewal = setInterval(async () => {
+    if (!holdsLease) return;
+    try {
+      const renewed = await Lease.renew(fence);
+      if (renewed) { fence = renewed; currentFence = renewed; }
+      else { holdsLease = false; currentFence = null; }
+    } catch (err) {
+      /* A failed renewal is not proof of loss — Mongo may simply have
+         blinked — so it is not treated as one. The TTL is three times
+         the renewal interval precisely so two of these can happen
+         harmlessly before the lease actually lapses. */
+      log.warn("could not renew the poller lease — will try again", { message: err.message });
+    }
+  }, Lease.RENEW_EVERY_MS);
+  renewal.unref();
 
   running = true;
   const tickStarted = Date.now();
@@ -178,6 +215,15 @@ async function tick() {
     log.debug("tick", { due: due.length });
     for (const query of due) {
       if (stopped) break;
+      /* Checked before EVERY query, not once per tick. This is the rule
+         the whole lease exists to enforce: a worker without a valid
+         fenced lease may not start another fetch. */
+      if (!holdsLease) {
+        log.error("stopping mid-tick — this process no longer holds the poller lease", {
+          owner: OWNER, done: due.indexOf(query), of: due.length,
+        });
+        break;
+      }
       if ((query.failCount || 0) >= env.maxFailCount) {
         log.warn("query parked after repeated failures", {
           queryId: String(query._id), failCount: query.failCount,
@@ -205,7 +251,9 @@ async function tick() {
   } catch (err) {
     log.error("tick failed", { message: err.message });
   } finally {
+    clearInterval(renewal);
     running = false;
+    if (!holdsLease) currentFence = null;
     /* Closing the pass is what lets the NEXT one fetch fresh listings.
        Held open, a long pass would keep serving jobs from whenever it
        started; released on a timer instead, a long pass would refetch
@@ -233,7 +281,11 @@ async function tick() {
       state: "idle",
       currentQueryId: null,
       lastTickMs: Date.now() - tickStarted,
-      leaseOwner: OWNER,
+      /* The HOLDER, reported as telemetry — never written to the lease
+         itself. The heartbeat used to write leaseOwner into the same row
+         the lease lived in, so a process that had lost the lease stamped
+         its name back over the winner's at the end of its tick. */
+      leaseHolder: holdsLease ? OWNER : null,
       ...(utilisation ? {
         laneUtilisation: utilisation.U,
         laneMeasured: utilisation.measured,

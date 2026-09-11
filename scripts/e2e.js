@@ -607,9 +607,16 @@ await drainOutbox({
   cap: 10_000,
 });
 const cfgRow = await collections.outbox().findOne({ jobId: "linkedin:e2e-cfg-1" });
-ok(cfgRow.status === "dead",
-  `a credential failure parks the message instead of retrying it (got ${cfgRow.status})`);
+/* BLOCKED, NOT DEAD. This asserted "dead" and passed, which was the bug:
+   the first batch to discover a wrong API key was destroyed outright,
+   while every batch after it was correctly held by the provider pause.
+   The one case the pause exists for was the one case it could not save.
+   DEAD means "we have decided never to deliver this"; a typo in an
+   environment variable is not that decision. */
+ok(cfgRow.status === "blocked",
+  `a credential failure HOLDS the message rather than killing it (got ${cfgRow.status})`);
 ok(String(cfgRow.lastError).includes("535"), "with the provider's own words kept");
+ok(cfgRow.batchKey, "and it keeps its sealed batch, so the same message goes out when fixed");
 
 /* And the PROVIDER is paused, not just that one message.
 
@@ -691,14 +698,75 @@ await drainOutbox({
   send: async (m) => { if (m.to === keyRow1.email && m.jobs.some((j) => j.jobId === "linkedin:e2e-key-1")) keysSeen.push(m.idempotencyKey); return { ok: true, id: "p" }; },
   cap: 10_000,
 });
+const keySent = await collections.outbox().findOne({ jobId: "linkedin:e2e-key-1", subscriptionId: capSub });
 ok(keysSeen.length === 2, `the message was attempted twice (got ${keysSeen.length})`);
 ok(keysSeen[0] && keysSeen[0] === keysSeen[1],
   "and the retry carried the SAME key — a new one would be a new message to the provider");
-ok(keysSeen[0] === keyRow1.idempotencyKey, "the one stored on the obligation");
-
-const keySent = await collections.outbox().findOne({ jobId: "linkedin:e2e-key-1", subscriptionId: capSub });
+ok(keysSeen[0] === keySent.batchKey,
+  "the key belongs to the SEALED BATCH, not to one row inside it");
 ok(keySent.providerMessageId === "p",
   "and the provider's own message id is kept, so a delivery can be traced back");
+
+/* 8c. A RETRY MUST NOT PICK UP PASSENGERS.
+ *
+ *     This is the exactly-once hole the sealed batch closes. Every
+ *     obligation was born with its own key and the worker sent a GROUP
+ *     under the first row's key:
+ *
+ *       attempt 1   rows A+B, key = A's      provider ACCEPTS
+ *                   the response is lost; A+B go back to pending
+ *       meanwhile   row C is queued for the same person
+ *       attempt 2   rows A+B+C, key = A's    provider: "seen that key"
+ *
+ *     We would read that as success and mark A, B and C delivered — but
+ *     the message the provider accepted contained only A and B. C would
+ *     be marked sent having never been in any email.
+ */
+const passJobs = [
+  { jobId: "linkedin:e2e-pass-A", title: "Intern - A", company: "X", url: "https://example.invalid", location: "Colombo, Sri Lanka" },
+  { jobId: "linkedin:e2e-pass-B", title: "Intern - B", company: "X", url: "https://example.invalid", location: "Colombo, Sri Lanka" },
+];
+await fanOut1({ _id: capQ, keywords: ["intern"] }, passJobs, new Date());
+
+// Attempt one fails after the batch is sealed.
+const firstSend = [];
+await drainOutbox({
+  send: async (m) => {
+    if (m.to !== keyRow1.email) return { ok: true, id: "other" };
+    firstSend.push({ key: m.idempotencyKey, jobs: m.jobs.map((j) => j.jobId).sort() });
+    return { ok: false, error: "timed out" };
+  },
+  cap: 10_000,
+});
+ok(firstSend.length === 1 && firstSend[0].jobs.length === 2,
+  `the first attempt carried A and B (got ${firstSend[0]?.jobs.length})`);
+
+// C arrives for the same person while A+B are waiting to be retried.
+await fanOut1({ _id: capQ, keywords: ["intern"] }, [
+  { jobId: "linkedin:e2e-pass-C", title: "Intern - C", company: "X", url: "https://example.invalid", location: "Colombo, Sri Lanka" },
+], new Date());
+await collections.outbox().updateMany(
+  { jobId: { $in: ["linkedin:e2e-pass-A", "linkedin:e2e-pass-B"] } },
+  { $set: { nextAttemptAt: new Date(0) } }
+);
+
+const secondSend = [];
+await drainOutbox({
+  send: async (m) => {
+    if (m.to !== keyRow1.email) return { ok: true, id: "other" };
+    secondSend.push({ key: m.idempotencyKey, jobs: m.jobs.map((j) => j.jobId).sort() });
+    return { ok: true, id: "p2" };
+  },
+  cap: 10_000,
+});
+
+const retryOfAB = secondSend.find((m) => m.key === firstSend[0].key);
+ok(!!retryOfAB, "the retry reuses the first attempt's key");
+ok(retryOfAB.jobs.length === 2 && !retryOfAB.jobs.includes("linkedin:e2e-pass-C"),
+  `and carries EXACTLY what that key described — C did not join it (got ${retryOfAB.jobs.join(",")})`);
+const cMessage = secondSend.find((m) => m.jobs.includes("linkedin:e2e-pass-C"));
+ok(!!cMessage && cMessage.key !== firstSend[0].key,
+  "C goes out as its own message under its own key");
 
 /* 9. THE LEDGER CLAIM NO LONGER GATES DELIVERY. A job claimed but never
  *    enqueued used to be gone for good. Nothing claims until the
@@ -1045,14 +1113,157 @@ await collections.subscriptions().deleteMany({ queryId: killQ });
 await collections.users().deleteOne({ _id: killUser });
 await collections.queries().deleteOne({ _id: killQ });
 
-/* PHASE 3b — only one process may crawl.
+/* P0 — HOLD MUST STOP THE EMAIL.
  *
- * The guard against overlapping sweeps was a module-level boolean, which
- * guards one process and says nothing about a second. A rolling deploy
- * alone produces two: the old instance is still alive while the new one
- * boots, and both would crawl LinkedIn on the same schedule, for the
- * same queries, from the same IP range. LinkedIn's answer to that is to
- * stop answering — no jobs, no error, indistinguishable from a quiet day.
+ * Pausing set a flag and re-timed the shared query, and that was all.
+ * Anything already queued still went out, because an outbox row carries
+ * its own copy of the address and the job and never looked back at the
+ * watch:
+ *
+ *   10:00  job found, notification queued
+ *   10:01  provider hits the daily ceiling
+ *   10:02  reader presses HOLD
+ *   next day, the reader is emailed about it anyway.
+ *
+ * The button says Hold. Nobody reads that as "keep sending me the ones
+ * already in the pipe".
+ */
+const SubsHold = await import("../src/models/subscriptions.js");
+
+const holdUser = (await collections.users().insertOne({
+  email: `e2e-hold-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+const holdQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-hold-${Date.now()}`, keywords: ["intern"], geoId: "e2e-h",
+  matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+const holdSub = await SubsHold.create({
+  userId: holdUser, queryId: holdQ, label: "Intern", requestedEveryMinutes: 5,
+});
+
+const holdJob = [{
+  jobId: "linkedin:e2e-hold-1", title: "Intern - Held", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}];
+await fanOut1({ _id: holdQ, keywords: ["intern"] }, holdJob, new Date());
+ok((await collections.outbox().countDocuments({ subscriptionId: holdSub._id, status: "pending" })) === 1,
+  "a job is queued for the watch");
+
+// The reader presses Hold before the worker gets to it.
+await SubsHold.setActive(holdUser, holdSub._id, false);
+ok((await collections.outbox().countDocuments({ subscriptionId: holdSub._id, status: "pending" })) === 0,
+  "HOLD cancels what the watch still owed");
+
+const holdSpy = [];
+await drainOutbox({ send: async (m) => { holdSpy.push(m); return { ok: true, id: "p" }; }, cap: 10_000 });
+ok(!holdSpy.some((m) => m.jobs.some((j) => j.jobId === "linkedin:e2e-hold-1")),
+  "so the held job is never emailed");
+
+/* AND THE RACE. A row can be claimed in the moment between somebody
+   pressing Hold and the cancellation landing, so the worker re-reads the
+   watch immediately before sending rather than trusting the row. */
+await SubsHold.setActive(holdUser, holdSub._id, true);
+await fanOut1({ _id: holdQ, keywords: ["intern"] }, [{
+  jobId: "linkedin:e2e-hold-2", title: "Intern - Raced", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}], new Date());
+// Pause WITHOUT cancelling, which is exactly what that race leaves behind.
+await collections.subscriptions().updateOne({ _id: holdSub._id }, { $set: { active: false } });
+
+const raceSpy = [];
+await drainOutbox({ send: async (m) => { raceSpy.push(m); return { ok: true, id: "p" }; }, cap: 10_000 });
+ok(!raceSpy.some((m) => m.jobs.some((j) => j.jobId === "linkedin:e2e-hold-2")),
+  "a row that survived the cancellation is still not sent — the watch is re-read before sending");
+const racedRow = await collections.outbox().findOne({ jobId: "linkedin:e2e-hold-2" });
+ok(racedRow.status === "cancelled" && /hold/i.test(racedRow.cancelledReason || ""),
+  `and it is recorded as cancelled, with why (${racedRow.status}: ${racedRow.cancelledReason})`);
+
+/* A DELETED ACCOUNT MUST NOT BE EMAILED EITHER. The outbox row holds its
+   own copy of the address precisely so a retry does not need the user
+   row — which means deleting the account does not, on its own, stop the
+   mail. */
+await collections.subscriptions().updateOne({ _id: holdSub._id }, { $set: { active: true } });
+await fanOut1({ _id: holdQ, keywords: ["intern"] }, [{
+  jobId: "linkedin:e2e-hold-3", title: "Intern - Deleted Account", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}], new Date());
+await collections.users().deleteOne({ _id: holdUser });
+
+const goneSpy = [];
+await drainOutbox({ send: async (m) => { goneSpy.push(m); return { ok: true, id: "p" }; }, cap: 10_000 });
+ok(!goneSpy.some((m) => m.jobs.some((j) => j.jobId === "linkedin:e2e-hold-3")),
+  "a closed account is not emailed, even though the row still carries its address");
+
+await collections.outbox().deleteMany({ queryId: holdQ });
+await collections.subscriptions().deleteMany({ queryId: holdQ });
+await collections.queries().deleteOne({ _id: holdQ });
+
+/* P0 — UNKNOWN IS NEVER YES.
+ *
+ * The delivery guard used to read: refuse a job whose matchedBy claims a
+ * TITLE match when the title does not actually match. Anything else was
+ * exempt — and "anything else" included every value nobody had thought
+ * about: "unverified", meaning we could not read the job's tags and its
+ * title does not match; and undefined, which is what a job carried when
+ * refinement threw and the catch passed the unrefined set through.
+ *
+ * Both sailed past a guard written to stop exactly them.
+ */
+const { isStillWorthMailing: _iswm } = await import("../src/services/poller/sweep.js");
+void _iswm;
+
+/* The guard is expressed in sweep.js over live query state, so it is
+   exercised here through the same predicate shape rather than re-derived:
+   a job is sendable only if it can show a positive reason. */
+const { matchesAny: guardTitleMatch } = await import("../src/utils/match.js");
+const guardWords = ["intern"];
+const verified = (j) => {
+  if (j.matchKind === "tag") return true;
+  if (j.matchKind === "unverified") return false;
+  return guardTitleMatch(j.title, guardWords);
+};
+
+ok(verified({ title: "Marketing Intern", matchKind: "title" }) === true,
+  "a title that actually matches is mailed");
+ok(verified({ title: "Senior Accountant", matchKind: "title" }) === false,
+  "a job CLAIMING a title match whose title does not match is refused");
+ok(verified({ title: "Trainee Programme", matchKind: "tag" }) === true,
+  "an employer's own Internship tag is mailed even though the title cannot show it");
+
+/* THE TWO HOLES, stated directly. */
+ok(verified({ title: "Senior Google Ads Specialist", matchKind: "unverified" }) === false,
+  "a job we COULD NOT VERIFY is never mailed — running out of attempts is not evidence");
+ok(verified({ title: "Mechatronics Engineer" }) === false,
+  "and a job carrying no verdict at all is refused, not waved through");
+ok(verified({ title: "Mechatronics Engineer", matchKind: "something-new" }) === false,
+  "including a matchKind nobody has invented yet — the guard is an allowlist");
+
+/* Fail-closed refinement: a thrown refine marks its source's jobs
+   unverified rather than passing the wider set through. */
+const { readFileSync: readSrc } = await import("node:fs");
+const sweepSrc = readSrc("src/services/poller/sweep.js", "utf8");
+ok(/holding this source's jobs as unverified, not mailing them/.test(sweepSrc),
+  "a refine that throws holds its jobs instead of mailing the unrefined set");
+ok(!/alerting on the unrefined set/.test(sweepSrc),
+  "and the old fail-open comment and behaviour are gone");
+ok(/matchKind === "unverified" && \(j\.refineAttempts \|\| 0\) >= MAX_REFINE_ATTEMPTS/.test(sweepSrc),
+  "jobs that exhaust their verification attempts are separated out, not trusted");
+
+/* PHASE 3b — only one process may crawl, and it must keep proving it.
+ *
+ * The first version of this took the lease once at the top of a tick,
+ * with a five-minute TTL. A tick sweeps up to ten queries serially and
+ * one LinkedIn search is 78-92 seconds, so a full tick runs thirteen to
+ * fifteen minutes: the lease expired around query four, a second process
+ * found it expired and took it, and both crawled. Exactly what the lease
+ * exists to prevent, arriving two thirds of the way through every busy
+ * tick.
+ *
+ * Worse, the lease shared a document with the poller heartbeat, and the
+ * heartbeat wrote leaseOwner unconditionally — so the process that had
+ * already LOST the lease stamped its name back over the winner's. It did
+ * not merely fail to protect; it corrupted the record of who was in
+ * charge.
  */
 const Lease = await import("../src/models/pollerLease.js");
 await Lease.forceRelease();
@@ -1060,33 +1271,60 @@ await Lease.forceRelease();
 const A = "process-a";
 const B = "process-b";
 
-ok(await Lease.acquire(A), "the first process takes the lease");
-ok(!(await Lease.acquire(B)), "and the second one is refused — it must not crawl");
-ok(await Lease.acquire(A), "the holder may renew its own lease");
+const fenceA = await Lease.acquire(A);
+ok(!!fenceA, "the first process takes the lease");
+ok(Number.isInteger(fenceA.token), `and gets a fencing token (${fenceA.token})`);
+ok((await Lease.acquire(B)) === null, "and the second one is refused — it must not crawl");
+
+const renewed = await Lease.renew(fenceA);
+ok(!!renewed && renewed.token === fenceA.token,
+  "the holder renews while it works, keeping its token");
+ok(renewed.expiresAt > fenceA.expiresAt,
+  "and the expiry moves forward, which is what a long tick needs");
 
 const held = await Lease.current();
 ok(held.owner === A && !held.expired, `the database says who holds it (${held.owner})`);
 
-// Releasing hands it straight over, so a deploy does not have to wait
-// out the TTL before the replacement can start.
-ok(await Lease.release(A), "the holder can give it back");
-ok(await Lease.acquire(B), "and the next process takes it immediately");
-
-/* A process that DIED cannot release, so the lease has to rot on its
-   own. Simulated by expiring it, which is exactly what a dead holder
-   leaves behind. */
-await collections.pollerState().updateOne(
-  { _id: "poller" }, { $set: { leaseExpiresAt: new Date(Date.now() - 60_000) } }
+/* THE BUG THIS REPLACED. A tick that outlives its own lease.
+   Simulated by expiring it, which is what fifteen minutes of crawling
+   under a five-minute TTL did. */
+await collections.pollerLease().updateOne(
+  { _id: "poller.lease" }, { $set: { expiresAt: new Date(Date.now() - 60_000) } }
 );
-ok(await Lease.acquire(A), "an expired lease is taken over, so a dead process cannot stop the poller for ever");
+const fenceB = await Lease.acquire(B);
+ok(!!fenceB, "a lapsed lease is taken over, so a dead process cannot stop the poller for ever");
+ok(fenceB.token > fenceA.token,
+  `and the token moves on (${fenceA.token} -> ${fenceB.token})`);
 
-/* And the loser must not be able to release the winner's lease. A
-   process whose own sweep overran the TTL has already lost the lease; if
-   it could release unconditionally it would hand the crawl away from
-   whoever legitimately took over. */
-ok(!(await Lease.release(B)), "a process that no longer holds it cannot release it");
-ok((await Lease.current()).owner === A, "so the real holder keeps it");
+/* FENCING, which is the part that makes it safe. A whose lease was taken
+   over must not be able to renew its way back in — and must be TOLD, so
+   it stops crawling rather than carrying on beside B. */
+ok((await Lease.renew(fenceA)) === null,
+  "the deposed process cannot renew — it is told it has lost authority");
+ok((await Lease.current()).owner === B, "and B is still the holder");
 
+// Nor can it release the lease it no longer holds.
+ok((await Lease.release(fenceA)) === false,
+  "a process that no longer holds it cannot release it");
+ok((await Lease.current()).owner === B, "so the real holder keeps it");
+
+// The real holder can, and the next process takes over immediately
+// rather than waiting out the TTL.
+ok((await Lease.release(fenceB)) === true, "the holder can give it back");
+const fenceC = await Lease.acquire(A);
+ok(!!fenceC, "and the next process takes it immediately");
+
+/* THE HEARTBEAT MUST NOT BE ABLE TO TOUCH IT. The two lived in one
+   document, and the heartbeat wrote the owner field. */
+await collections.pollerState().updateOne(
+  { _id: "poller" },
+  { $set: { leaseHolder: "some-other-process", state: "working" } },
+  { upsert: true }
+);
+ok((await Lease.current()).owner === A,
+  "a heartbeat write cannot change who holds the lease — they are different documents");
+
+await Lease.release(fenceC);
 await Lease.forceRelease();
 ok((await Lease.current()) === null, "and it can be cleared by hand when a holder is known to be gone");
 

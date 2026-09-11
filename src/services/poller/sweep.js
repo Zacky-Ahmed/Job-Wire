@@ -577,23 +577,66 @@ export async function sweepQuery(query) {
         ...refined,
       ];
     } catch (err) {
-      // Refinement is a narrowing step. If it breaks, send the wider set
-      // rather than silently sending nothing.
-      log.warn("refine failed — alerting on the unrefined set", {
-        source: sourceId, message: err.message,
+      /* FAIL CLOSED. This used to keep the unrefined set and say so:
+         "refinement is a narrowing step, if it breaks send the wider
+         set rather than silently sending nothing."
+
+         That is backwards for this product. Refinement is what decides
+         whether a job whose TITLE DOES NOT MATCH belongs in somebody's
+         inbox — those are the only jobs it is asked about. Sending the
+         wider set means emailing precisely the jobs nobody could confirm
+         were wanted, which is the one thing a watch must never do.
+
+         So the source's jobs are marked unverified instead. Nothing is
+         lost: they keep their refinePending flag, a later sweep tries
+         again, and they show on the wire throughout. They simply are not
+         mailed on the strength of a request that failed. */
+      log.warn("refine failed — holding this source's jobs as unverified, not mailing them", {
+        source: sourceId, jobs: mine.length, message: err.message,
       });
+      wanted = [
+        ...wanted.filter((j) => !j.jobId.startsWith(sourceId + ":")),
+        ...mine.map((j) => ({ ...j, matchedBy: "unverified", matchKind: "unverified" })),
+      ];
     }
   }
 
-  // Split off the ones refine could not actually judge. A failed request
-  // is not evidence that a job matches: taking "unverified" as a yes put
-  // three plainly-wrong jobs into this user's inbox. Retry them on later
-  // sweeps instead, and only after several failures fall back to trusting
-  // them — because never deciding would lose the job entirely, which is
-  // the worse of the two errors.
+  /* Split off the ones refine could not judge, so a later sweep retries.
+
+     The old rule ended "...and only after several failures fall back to
+     trusting them — because never deciding would lose the job entirely,
+     which is the worse of the two errors." That was wrong, and the guard
+     below no longer honours it either way.
+
+     It is only ever reached for jobs whose TITLE DOES NOT MATCH — a
+     title match is decided for free and never refined. So "trust it
+     after three failed attempts" means: email somebody a job they did
+     not ask for, because we tried three times to find out whether they
+     wanted it and could not. Running out of attempts is not evidence.
+
+     Exhausted jobs stop being retried, stay on the wire, and are never
+     mailed. Nothing the reader asked for by title is lost, because
+     nothing here matched their title. */
   const undecided = wanted.filter(
-    (j) => j.matchedBy === "unverified" && (j.refineAttempts || 0) < MAX_REFINE_ATTEMPTS
+    (j) => j.matchKind === "unverified" && (j.refineAttempts || 0) < MAX_REFINE_ATTEMPTS
   );
+  const exhausted = wanted.filter(
+    (j) => j.matchKind === "unverified" && (j.refineAttempts || 0) >= MAX_REFINE_ATTEMPTS
+  );
+  if (exhausted.length) {
+    /* Recorded as NOT a match, with the reason. Marking them matched
+       would put a job on the reader's wire under a heading that says
+       their watch caught it, which is a claim we specifically failed to
+       establish. They stop carrying, so they cost no more requests. */
+    const exhaustedIds = new Set(exhausted.map((j) => j.jobId));
+    wanted = wanted.filter((j) => !exhaustedIds.has(j.jobId));
+    await SeenJobs.unmatch(query._id, [...exhaustedIds], "unverified");
+    await SeenJobs.clearPending(query._id, [...exhaustedIds]);
+    log.warn("gave up verifying some jobs — not mailed, and not claimed as matches", {
+      queryId: String(query._id), jobs: exhausted.length,
+      note: "their titles do not match this watch; running out of attempts is not evidence that they do",
+    });
+  }
   const undecidedIds = new Set(undecided.map((j) => j.jobId));
   wanted = wanted.filter((j) => !undecidedIds.has(j.jobId));
   if (undecided.length) {
@@ -720,10 +763,33 @@ export async function sweepQuery(query) {
      
      This is deliberately not where matching BELONGS. It is a guard, and a
      guard that fires means something above it is broken. */
-  const TITLE_CLAIMS = new Set(["title", "keyword"]);
-  const sendable = words.length
-    ? fresh.filter((j) => !TITLE_CLAIMS.has(j.matchedBy) || matchesAny(j.title, words))
-    : fresh;
+  /* AN ALLOWLIST, NOT A DENYLIST. This is the fix for a real hole.
+
+     It used to read: refuse a job whose matchedBy claims a TITLE match
+     when the title does not actually match. Anything else was exempt —
+     and "anything else" included every value the code had never thought
+     about:
+
+       · matchedBy "unverified", meaning we could not read the job's tags
+         and its title does NOT match;
+       · matchedBy undefined, which is what a job carries when refinement
+         threw and the catch below passed the unrefined set through.
+
+     Both sailed past a guard written to stop exactly them. A job reaches
+     an inbox now only if it can show one of two positive reasons:
+
+       its TITLE matches the words — checked here, not taken on trust;
+       or a VERIFIED employer tag matched, which is the whole point of
+       spending a request per job and is the one case a title cannot show.
+
+     Everything else is refused, including anything a future change
+     invents. Unknown is never yes. */
+  const verified = (j) => {
+    if (j.matchKind === "tag") return true;          // an employer's own field
+    if (j.matchKind === "unverified") return false;  // we could not tell — so no
+    return matchesAny(j.title, words);               // prove it, do not claim it
+  };
+  const sendable = words.length ? fresh.filter(verified) : fresh;
 
   if (sendable.length !== fresh.length) {
     const dropped = fresh.filter((j) => !sendable.includes(j));

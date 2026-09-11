@@ -372,7 +372,7 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
 
   for (const job of jobs) {
     if (matchesAny(job.title, words)) {
-      kept.push(strip({ ...job, matchedBy: "title" }));
+      kept.push(strip({ ...job, matchedBy: "title", matchKind: "title" }));
       continue;
     }
 
@@ -384,7 +384,14 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
       log.warn("could not read job criteria — returning it undecided", {
         jobId: job.jobId, message: err.message,
       });
-      kept.push(strip({ ...job, matchedBy: "unverified" }));
+      /* UNKNOWN, and unknown must never become yes.
+
+         This job's title does NOT match — that was checked above — so
+         the only thing that could justify emailing it is a tag we were
+         unable to read. It is kept so a later sweep can try again, and
+         matchKind is what stops anything downstream mistaking "we could
+         not tell" for "it matches". */
+      kept.push(strip({ ...job, matchedBy: "unverified", matchKind: "unverified" }));
       continue;
     }
 
@@ -407,9 +414,13 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
     const hit = fields.find(([, v]) => matchesAny(v, words));
 
     if (hit) {
-      // The tag's own value is the label the reader wants to see
-      // ("Internship"), not the name of the field it came from.
-      kept.push(strip({ ...job, matchedBy: hit[1] }));
+      /* A VERIFIED tag. matchedBy carries the tag's own value because
+         that is the label the reader wants to see ("Internship"), not
+         the name of the field it came from — but a display string is not
+         something a safety guard can reason about, so matchKind states
+         the kind separately. This is the one case where a job whose
+         title does not match may legitimately be emailed. */
+      kept.push(strip({ ...job, matchedBy: hit[1], matchKind: "tag", matchField: hit[0] }));
     } else {
       log.info("dropped a job LinkedIn's fuzzy search returned but the watch did not ask for", {
         jobId: job.jobId, title: job.title,
@@ -422,6 +433,9 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
 }
 
 function strip({ _matchedByLinkedIn, ...job }) {
+  /* matchKind survives the strip on purpose. _matchedByLinkedIn is
+     internal bookkeeping; matchKind is the evidence the delivery guard
+     is not allowed to proceed without. */
   return job;
 }
 

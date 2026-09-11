@@ -576,6 +576,20 @@ adminRoutes.post("/admin/users/:id/delete", ...guard, async (req, res, next) => 
     }
 
     const subs = await collections.subscriptions().find({ userId: id }).toArray();
+    /* CANCEL WHAT THEY ARE STILL OWED, FIRST.
+
+       An outbox row carries its own copy of the address so a retry does
+       not depend on the user row still being there — which means
+       deleting the account does NOT stop the mail. This route deleted
+       subscriptions directly rather than going through Subs.remove(),
+       so it skipped the cancellation that path does, and a closed
+       account could still be emailed about jobs found before it closed.
+
+       Before the deletes, not after: if this throws, the account still
+       exists and can be deleted again. Deleting first and failing here
+       would leave obligations pointing at a user nobody can look up. */
+    await Promise.all(subs.map((sub) => Outbox.forgetSubscription(sub._id)));
+
     /* Three deletes across three collections that do not depend on each
        other, so they go together instead of one after another. */
     await Promise.all([
@@ -715,6 +729,9 @@ adminRoutes.post("/admin/queries/:id/delete", ...guard, async (req, res, next) =
             .find({ _id: { $in: ids } }, { projection: { email: 1 } })
             .toArray()).map((u) => u.email)
         : [];
+      // Same rule as everywhere else: a watch that no longer exists
+      // cannot be owed anything. Cancelled before the rows go.
+      await Promise.all(rows.map((r) => Outbox.forgetSubscription(r._id)));
       await collections.subscriptions().deleteMany({ queryId: id });
       log.warn("ADMIN force-deleted a search that people were watching", {
         by: req.user.email, location: q.location,
@@ -767,6 +784,7 @@ adminRoutes.post("/admin/watches/:id/delete", ...guard, async (req, res, next) =
     const u = await collections.users().findOne(
       { _id: sub.userId }, { projection: { email: 1 } });
 
+    await Outbox.forgetSubscription(id);
     await collections.subscriptions().deleteOne({ _id: id });
     await Subs.syncSchedule(sub.queryId);
 
