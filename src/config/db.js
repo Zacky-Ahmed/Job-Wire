@@ -81,6 +81,16 @@ export const collections = {
      TTL: enough history to tell a quiet fortnight from a broken parser,
      which one aggregate count never could. */
   observations: () => getDb().collection("observations"),
+  /* Per-page crawl timings, so "was LinkedIn late or were we?" is a
+     query rather than an argument. One document per surface walk with
+     the pages inside it, and a 7-day TTL — a per-page collection is the
+     easiest unbounded write in the world to add by accident. */
+  crawlLog: () => getDb().collection("crawlLog"),
+  /* "I can see this on linkedin.com right now." The one timestamp the
+     system cannot observe for itself — by the time a delayed job is
+     noticed, LinkedIn exposing it at 10:01 and at 10:28 look identical
+     from outside. Written only by npm run trace-job -- <url> --seen-now. */
+  manualSightings: () => getDb().collection("manualSightings"),
   // One document. The poller's own heartbeat, so "is it running?" is a
   // measurement rather than a restatement of POLLER_ENABLED.
   pollerState: () => getDb().collection("pollerState"),

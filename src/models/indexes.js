@@ -12,6 +12,7 @@
 
 import { collections } from "../config/db.js";
 import { OBSERVATION_TTL_DAYS } from "./observations.js";
+import { CRAWL_LOG_TTL_DAYS } from "./crawlLog.js";
 import { env } from "../config/env.js";
 import { log } from "../utils/logger.js";
 
@@ -203,6 +204,36 @@ export async function ensureIndexes() {
     await idx(collections.observations(),
       { at: 1 },
       { name: "observation_ttl", expireAfterSeconds: OBSERVATION_TTL_DAYS * 86400 }
+    )
+  );
+
+  // ── crawlLog: where a sweep's time went ──────────────────────
+  /* The tracer's only lookup: which walks saw this job. Multikey over
+     the nested array, which is what makes "page 19 of the 10:20 sweep"
+     findable from a job id alone. */
+  created.push(
+    await idx(collections.crawlLog(),
+      { "pages.jobIds": 1, startedAt: 1 },
+      { name: "walks_that_saw" }
+    )
+  );
+  created.push(
+    await idx(collections.crawlLog(),
+      { source: 1, surface: 1, startedAt: -1 },
+      { name: "surface_recent" }
+    )
+  );
+  created.push(
+    await idx(collections.crawlLog(),
+      { at: 1 },
+      { name: "crawl_log_ttl", expireAfterSeconds: CRAWL_LOG_TTL_DAYS * 86400 }
+    )
+  );
+
+  created.push(
+    await idx(collections.manualSightings(),
+      { jobId: 1, seenAt: 1 },
+      { name: "sightings_by_job" }
     )
   );
 

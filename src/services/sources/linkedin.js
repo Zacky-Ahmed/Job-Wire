@@ -38,6 +38,8 @@ import { guardedFetch } from "../http/guardedFetch.js";
 import { parseJobs, parseCriteria, classifyResponse } from "../linkedin/parse.js";
 import { findGeo } from "../linkedin/geoIds.js";
 import { observer } from "./observe.js";
+import * as CrawlLog from "../../models/crawlLog.js";
+import { randomUUID } from "node:crypto";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
 import { log } from "../../utils/logger.js";
@@ -91,7 +93,10 @@ const MAX_PAGES = 40;
 // hiccup costs every job after it.
 const STALE_PAGES_BEFORE_STOP = 2;
 
-function pageUrlFor({ geoId, keywords, page }) {
+/* Exported so the latency probe builds the SAME urls the sweep does.
+   A probe with its own url is a probe measuring its own url — the
+   topjobs coverage probe made exactly that mistake with a selector. */
+export function pageUrlFor({ geoId, keywords, page }) {
   const geo = findGeo(geoId);
   if (!geo) throw new Error(`Unknown geoId: ${geoId}`);
   const p = new URLSearchParams({
@@ -104,7 +109,7 @@ function pageUrlFor({ geoId, keywords, page }) {
   return `${PAGE}?${p}`;
 }
 
-function urlFor({ geoId, keywords, page }) {
+export function urlFor({ geoId, keywords, page }) {
   const geo = findGeo(geoId);
   if (!geo) throw new Error(`Unknown geoId: ${geoId}`);
   const p = new URLSearchParams({
@@ -135,15 +140,24 @@ function urlFor({ geoId, keywords, page }) {
  */
 async function collect(makeUrl) {
   const found = new Map();
-  const tally = { requests: 0, pages: 0, stopReason: "budget", durationMs: 0 };
+  /* pages[] is what makes the latency question answerable: which page
+     carried the job, and how many seconds into the walk we reached it.
+     Measured on 2026-09-11, matching intern jobs were consistently
+     sitting on country-feed pages 18-21 — roughly a minute in — so
+     "which page" is not a detail, it is most of the answer. */
+  const tally = { requests: 0, pages: 0, stopReason: "budget", durationMs: 0, pageLog: [] };
   const startedAt = Date.now();
   let stale = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
     let html;
+    const pageStarted = Date.now();
     try {
       tally.requests++;
       html = await guardedFetch(makeUrl(page), hosts, { jitter: true });
     } catch (err) {
+      tally.pageLog.push({
+        page, atMs: pageStarted - startedAt, ms: Date.now() - pageStarted, error: err.message,
+      });
       tally.durationMs = Date.now() - startedAt;
       tally.stopReason = "error";
       err.tally = tally;
@@ -169,6 +183,14 @@ async function collect(makeUrl) {
 
     const before = found.size;
     jobs.forEach((j) => found.set(j.jobId, j));
+    tally.pageLog.push({
+      page,
+      atMs: pageStarted - startedAt,
+      ms: Date.now() - pageStarted,
+      returned: jobs.length,
+      fresh: found.size - before,
+      jobIds: jobs.map((j) => j.jobId),
+    });
     // sortBy is not honoured, so we cannot stop early on age — only when
     // the feed stops contributing, and only after it has done so twice.
     stale = found.size === before ? stale + 1 : 0;
@@ -211,8 +233,28 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
      working surfaces are worth more than none. */
   const obs = observer(id);
 
+  /* One id for the whole sweep, so the three surface walks can be lined
+     up against each other afterwards — "the guest surface had it at
+     10:07 and the country feed did not" is only answerable if they share
+     a key. */
+  const sweepId = randomUUID().slice(0, 8);
+  const walkStart = Date.now();
+
+  /* Writing the walk down is diagnostics, and diagnostics may never
+     break the crawl they describe. Failures here are swallowed inside
+     CrawlLog.record. */
+  const logWalk = (surface, startedAt, tally, { ok = true, error = null } = {}) =>
+    CrawlLog.record({
+      sweepId, queryId: null, source: id, surface, geoId,
+      scheduledFor: null, startedAt, finishedAt: Date.now(),
+      pages: tally?.pageLog || [], stopReason: tally?.stopReason || "unknown",
+      ok, error,
+    });
+
   // The complete feed, always.
+  const feedStart = Date.now();
   const everything = await collect((p) => urlFor({ geoId, page: p }));
+  await logWalk("countryFeed", feedStart, everything.tally);
   obs.surface("countryFeed", {
     ok: true,
     requests: everything.tally.requests, pages: everything.tally.pages,
@@ -227,7 +269,9 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
   let relevant = new Map();
   if (query && !matchAll) {
     try {
+      const guestStart = Date.now();
       relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }));
+      await logWalk("guestKeyword", guestStart, relevant.tally);
       obs.surface("guestKeyword", {
         ok: true,
         requests: relevant.tally.requests, pages: relevant.tally.pages,
@@ -258,7 +302,9 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
   let fromPage = new Map();
   if (!matchAll) {
     try {
+      const jserpStart = Date.now();
       fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }));
+      await logWalk("jserp", jserpStart, fromPage.tally);
       obs.surface("jserp", {
         ok: true,
         requests: fromPage.tally.requests, pages: fromPage.tally.pages,
@@ -335,6 +381,14 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
      explicable rather than alarming. */
   const droppedForCountry = merged.size - shaped.length;
   if (droppedForCountry) obs.raw(0);
+
+  /* WHEN, not just whether. The surface mask says which surfaces saw a
+     job; this says how far into the sweep we reached it. Measured, the
+     country feed takes 67-75 seconds and matching jobs sit on its pages
+     18-21, so a job can be a minute old before this process has looked
+     at the page carrying it — and that minute is ours, not LinkedIn's. */
+  const sweepMs = Date.now() - walkStart;
+  for (const j of shaped) j._sweepMs = sweepMs;
 
   return obs.done(shaped);
 }
