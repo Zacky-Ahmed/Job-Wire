@@ -33,7 +33,8 @@
     "analyse-surfaces": "node scripts/analyse-linkedin-surfaces.js",
     "probe-detail": "node scripts/probe-detail-duplication.js",
     "probe-linkedin": "node scripts/probe-linkedin-latency.js",
-    "trace-job": "node scripts/trace-job.js"
+    "trace-job": "node scripts/trace-job.js",
+    "probe-jserp": "node scripts/probe-jserp-pagination.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

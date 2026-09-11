@@ -25,6 +25,9 @@
 
 import "../src/config/env.js";
 import { connectDb, closeDb, collections } from "../src/config/db.js";
+import { guardedFetch } from "../src/services/http/guardedFetch.js";
+import { parseJobs, classifyResponse } from "../src/services/linkedin/parse.js";
+import { urlFor, pageUrlFor } from "../src/services/sources/linkedin.js";
 
 const arg = process.argv[2];
 const markSeen = process.argv.includes("--seen-now");
@@ -46,17 +49,102 @@ const jobId = `linkedin:${bare}`;
 await connectDb();
 
 const fmt = (d) => (d ? new Date(d).toISOString().replace("T", " ").slice(0, 19) : "—");
+const discoveredAt = (rs) => (rs.length ? rs.map((r) => r.firstSeenAt).sort()[0] : null);
 const gap = (a, b) =>
   a && b ? `${Math.round((new Date(b) - new Date(a)) / 1000)}s` : "—";
 
 console.log(`\nTracing ${jobId}\n${"=".repeat(60)}`);
 
 if (markSeen) {
+  const seenAt = new Date();
+  console.log(`\nRecorded: you can see this on linkedin.com at ${fmt(seenAt)}`);
+
+  /* THE SYNCHRONISED COMPARISON, which is the whole point of the flag.
+
+     Recording only "the operator saw it at 14:02" leaves the question
+     open, because we would not know what OUR surfaces held at 14:02 —
+     only what they held at the last scheduled sweep, minutes either
+     side. So the moment a sighting is reported, ask all three public
+     surfaces right now, and the posting page itself.
+
+     Then the two observations are seconds apart and the comparison is
+     real:
+
+       you see it  +  a public surface has it   -> OUR delay
+       you see it  +  no public surface has it  -> THEIR exposure lag
+
+     Those have opposite fixes, which is exactly why guessing between
+     them ends with crawling harder against a lag that was never ours.
+
+     DIAGNOSTIC ONLY. Nothing here writes seenJobs, touches the ledger,
+     claims a job, or can cause an email. It reads four pages and writes
+     one marker. */
+  const geo = process.env.TRACE_GEO || "100446352";
+  const kw = process.env.TRACE_KEYWORDS || "intern";
+  const probe = {};
+
+  const look = async (url) => {
+    const startedAt = Date.now();
+    try {
+      const html = await guardedFetch(url, ["www.linkedin.com", "linkedin.com"], { jitter: true });
+      const shape = classifyResponse(html);
+      if (shape === "empty" || shape === "unrecognised") {
+        return { present: false, shape, ms: Date.now() - startedAt };
+      }
+      const ids = parseJobs(html, new Date()).map((j) => j.jobId);
+      return { present: ids.includes(jobId), rows: ids.length, shape, ms: Date.now() - startedAt };
+    } catch (err) {
+      return { present: null, error: err.message, ms: Date.now() - startedAt };
+    }
+  };
+
+  console.log("\nAsking our public surfaces the same question, right now...\n");
+  /* Page 0 only. This is a spot check against a reported sighting, not a
+     crawl — walking 22 pages here would spend a whole sweep's requests
+     every time a job is reported. A "not on page 0" is reported as such
+     rather than as "not present". */
+  probe.countryFeed = await look(urlFor({ geoId: geo, page: 0 }));
+  probe.guestKeyword = await look(urlFor({ geoId: geo, keywords: kw, page: 0 }));
+  probe.jserp = await look(pageUrlFor({ geoId: geo, keywords: kw, page: 0 }));
+
+  try {
+    const detail = await guardedFetch(
+      "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/" + encodeURIComponent(bare),
+      ["www.linkedin.com", "linkedin.com"], { jitter: true }
+    );
+    probe.detailPage = { present: detail.length > 500, bytes: detail.length };
+  } catch (err) {
+    probe.detailPage = { present: null, error: err.message };
+  }
+
+  for (const [name, r] of Object.entries(probe)) {
+    const verdict = r.present === true ? "HAS IT"
+      : r.present === false ? "not on page 0"
+      : "could not tell";
+    console.log(
+      `  ${name.padEnd(13)} ${verdict.padEnd(16)}` +
+      (r.rows !== undefined ? ` ${r.rows} rows` : "") +
+      (r.bytes !== undefined ? ` ${r.bytes} bytes` : "") +
+      (r.error ? `  ${String(r.error).slice(0, 50)}` : "")
+    );
+  }
+
+  const anySurface = ["countryFeed", "guestKeyword", "jserp"].some((k) => probe[k]?.present === true);
+  console.log(
+    anySurface
+      ? "\n  -> A public surface HAS this job while you are looking at it.\n" +
+        "     Any delay from here is OURS: scheduling, crawl depth, or a degraded sweep."
+      : "\n  -> No public surface has it on PAGE 0 while you are looking at it.\n" +
+        "     Either it sits deeper than page 0 — matching jobs live on country-feed\n" +
+        "     pages 18-21, measured — or the guest endpoints have not exposed it yet.\n" +
+        "     The logged-in site is ranked with your own member data and is not the\n" +
+        "     same result set; no scheduler can fix that half."
+  );
+
   await collections.manualSightings().insertOne({
-    jobId, seenAt: new Date(), note: "operator saw this on linkedin.com",
+    jobId, seenAt, note: "operator saw this on linkedin.com", probe, geo, keywords: kw,
   });
-  console.log(`\nRecorded: you can see this on linkedin.com at ${fmt(new Date())}`);
-  console.log("That is the timestamp nothing else can supply. Thank you.\n");
+  console.log("");
 }
 
 const [rows, sightings, outbox, mail, walks] = await Promise.all([
@@ -125,7 +213,50 @@ if (!walks.length) {
 // ── WHAT YOU SAW ───────────────────────────────────────────────
 if (sightings.length) {
   console.log(`\n-- when YOU saw it on linkedin.com --`);
-  for (const s of sightings) console.log(`  ${fmt(s.seenAt)}`);
+  for (const s of sightings) {
+    console.log(`  ${fmt(s.seenAt)}`);
+    if (!s.probe) continue;
+    for (const [name, r] of Object.entries(s.probe)) {
+      console.log(
+        `      ${name.padEnd(13)} ` +
+        (r.present === true ? "HAD IT" : r.present === false ? "not on page 0" : "could not tell")
+      );
+    }
+  }
+}
+
+/* EVERY SWEEP IN BETWEEN, AND WHETHER IT WAS WORTH ANYTHING.
+
+   "The scheduler ran every five minutes" and "we had five-minute
+   information" are different claims. A sweep that started on time and
+   came back degraded is not an observation, and a job that survived
+   four degraded sweeps before being found on the fifth looks identical
+   to a scheduler that was never running. This is what tells them
+   apart — and it is the difference between fixing the crawler and
+   fixing the schedule. */
+const windowFrom = sightings.length ? sightings[0].seenAt : (job?.postedAt || null);
+const windowTo = discoveredAt(rows);
+if (windowFrom && windowTo) {
+  const between = await collections.crawlLog()
+    .find(
+      { source: "linkedin", startedAt: { $gte: new Date(windowFrom), $lte: new Date(windowTo) } },
+      { projection: { pages: 0 } }
+    )
+    .sort({ startedAt: 1 })
+    .toArray();
+  console.log(`\n-- every LinkedIn walk between then and discovery (${between.length}) --`);
+  if (!between.length) {
+    console.log("  none. The crawler did not walk LinkedIn at all in that window,");
+    console.log("  which is a scheduling answer rather than an exposure one.");
+  }
+  for (const w of between) {
+    console.log(
+      `  ${fmt(w.startedAt)}  ${String(w.surface).padEnd(13)} ` +
+      `${String(w.requests).padStart(2)} req  ${String(Math.round(w.serviceMs / 1000)).padStart(3)}s  ` +
+      `${w.ok ? "ok" : "FAILED"}  stopped: ${w.stopReason}` +
+      (w.queueDelayMs ? `  (${Math.round(w.queueDelayMs / 1000)}s late)` : "")
+    );
+  }
 }
 
 // ── OUR PIPELINE ───────────────────────────────────────────────
@@ -151,7 +282,7 @@ for (const m of mail) {
 // ── THE DECOMPOSITION ──────────────────────────────────────────
 console.log(`\n-- where the time went --`);
 const posted = job?.postedAt;
-const discovered = rows.length ? rows.map((r) => r.firstSeenAt).sort()[0] : null;
+const discovered = discoveredAt(rows);
 const queued = outbox.length ? outbox[0].createdAt : null;
 const sent = outbox.find((o) => o.sentAt)?.sentAt || (mail.length ? mail[0].sentAt : null);
 const sighting = sightings.length ? sightings[0].seenAt : null;
