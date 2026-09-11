@@ -260,7 +260,31 @@ export async function reschedule(id, { everyMinutes, primed, tracked, timing }) 
   //
   // The same race fires whenever anyone deletes or pauses their last watch
   // mid-sweep, so this is not merely a migration artefact.
-  const next = new Date(Date.now() + everyMinutes * 60000);
+  /* FIXED SLOTS, NOT "FIVE MINUTES FROM NOW".
+
+     This used to be Date.now() + everyMinutes, evaluated after the sweep
+     finished. A LinkedIn crawl takes 78-92 seconds, so a watch set to
+     five minutes actually ran every six and a half — and the drift
+     compounds with however long the board takes on the day. "Every five
+     minutes" quietly meant "five minutes after the last one finished",
+     which is not what the form says and not what the utilisation model
+     assumes either: U = Σ(service/interval) only holds if the interval
+     is the interval.
+
+     So the next slot is computed from the one this sweep was DUE at, not
+     from when it happened to end. A sweep that overran lands in the next
+     future slot rather than dragging every later one with it.
+
+     And it advances to a FUTURE slot rather than catching up. A query
+     that was parked for a day would otherwise come back owing 288 sweeps
+     and try to run them all — the classic catch-up storm, aimed at the
+     one board that responds to being hammered by going silent. */
+  const step = everyMinutes * 60000;
+  const from = timing?.scheduledFor ? new Date(timing.scheduledFor).getTime() : Date.now();
+  const now = Date.now();
+  const slotsMissed = Math.max(1, Math.ceil((now - from) / step));
+  const next = new Date(from + slotsMissed * step);
+
   return collections.queries().updateOne(
     { _id: id, nextFetchAt: { $ne: null } },
     { $set: { nextFetchAt: next } },
@@ -294,13 +318,45 @@ export async function reschedule(id, { everyMinutes, primed, tracked, timing }) 
  */
 export async function setInterval(id, everyMinutes) {
   if (!Number.isFinite(everyMinutes) || everyMinutes <= 0) return;
+
+  /* A FASTER CADENCE HAS TO PULL THE DEADLINE FORWARD.
+
+     This used to change everyMinutes and deliberately leave nextFetchAt
+     alone, reasoning that a pause-and-resume loop should not be able to
+     trigger an immediate fetch on demand. The reasoning was sound and
+     the consequence was not: a query on a sixty-minute clock with its
+     next sweep at 10:55 would accept a new subscriber at 10:01 asking
+     for five minutes, record the five, and leave them waiting
+     fifty-four. They asked for five-minute monitoring and got one sweep
+     an hour, with nothing anywhere saying so.
+
+     So a shorter interval moves the deadline to where the new cadence
+     says it belongs — one interval from the LAST sweep — but never
+     earlier than that, which is what stops a resume loop turning into a
+     fetch button. A longer interval leaves the pending sweep alone: a
+     query that is about to run should run.  */
+  const q = await collections.queries().findOne(
+    { _id: id },
+    { projection: { everyMinutes: 1, nextFetchAt: 1, lastFetchedAt: 1 } }
+  );
+  if (!q || q.everyMinutes === everyMinutes) return 0;
+
+  const faster = everyMinutes < (q.everyMinutes ?? Infinity);
+  const patch = { everyMinutes };
+  if (faster && q.nextFetchAt) {
+    const since = q.lastFetchedAt ? q.lastFetchedAt.getTime() : Date.now();
+    const wanted = new Date(since + everyMinutes * 60000);
+    if (wanted < q.nextFetchAt) patch.nextFetchAt = wanted;
+  }
+
   const res = await collections.queries().updateOne(
     { _id: id, everyMinutes: { $ne: everyMinutes } },
-    { $set: { everyMinutes } }
+    { $set: patch }
   );
   if (res.modifiedCount) {
     log.info("shared query cadence recomputed from its watchers", {
       queryId: String(id), everyMinutes,
+      ...(patch.nextFetchAt ? { deadlinePulledForwardTo: patch.nextFetchAt } : {}),
     });
   }
   return res.modifiedCount || 0;
@@ -340,9 +396,37 @@ export function recordFailure(id, backoffMinutes) {
  * that skipped a parked query pushed its failCount higher, climbing
  * without limit for a query nobody was even attempting to fetch.
  */
-export function park(id, minutes) {
+/**
+ * Park a query that keeps failing, and let it PROVE it has recovered.
+ *
+ * This used to move nextFetchAt and nothing else, which made the park
+ * permanent. failCount stayed at the threshold, so when the 24 hours
+ * were up the loop looked at the query, saw it was still over the
+ * limit, and parked it for another 24 hours. For ever. A source outage
+ * that lasted an afternoon killed the search that met it, silently, and
+ * nothing would ever have started it again.
+ *
+ * What it needs is the third state of a circuit breaker. OPEN means "do
+ * not call"; HALF-OPEN means "allow exactly one attempt and see". So the
+ * park drops failCount to one below the threshold: the query becomes due,
+ * gets its single probe, and either succeeds — reschedule() clears the
+ * count entirely — or fails once more and is parked again with a longer
+ * wait.
+ *
+ * One probe, not a reset to zero: a full reset would give a genuinely
+ * dead source the whole failure budget again every day.
+ */
+export function park(id, minutes, { probeAt = null } = {}) {
   return collections.queries().updateOne(
     { _id: id },
-    { $set: { nextFetchAt: new Date(Date.now() + minutes * 60000) } }
+    {
+      $set: {
+        nextFetchAt: new Date(Date.now() + minutes * 60000),
+        parkedAt: new Date(),
+        parkedForMinutes: minutes,
+        // One below the threshold — the single attempt that decides.
+        failCount: Math.max(0, (probeAt ?? 1) - 1),
+      },
+    }
   );
 }

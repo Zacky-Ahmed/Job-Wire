@@ -68,17 +68,33 @@ export function setReset(id, { resetHash, resetExpiresAt }) {
 }
 
 /**
- * Set a new password and retire the reset code in one write.
+ * Set a new password, retire the reset code, and sign out everywhere.
  *
- * passwordChangedAt is recorded so a session issued before the change can
- * be told apart from one issued after — the hook a "sign out everywhere"
- * would need, and a cheap thing to write now rather than backfill later.
+ * passwordChangedAt was already being written, with a comment saying it
+ * was "the hook a sign out everywhere would need". Nothing read it. So
+ * the sequence that matters worked out badly:
+ *
+ *   somebody's session is stolen
+ *   the owner notices and resets their password
+ *   the thief's session keeps working until it expires on its own
+ *
+ * Changing a password is the single clearest way a person says "lock
+ * this account down", and it has to mean it. sessionVersion is bumped
+ * here and compared on every authenticated request, so every session
+ * issued before this moment stops working — including the one making
+ * this very request, which then has to sign in again. That is the
+ * correct behaviour and the expected behaviour.
+ *
+ * A counter rather than a timestamp comparison: clocks between the app
+ * and the database need not agree, and a session issued in the same
+ * second as the change should not be a coin toss.
  */
 export function setPassword(id, passHash) {
   return collections.users().updateOne(
     { _id: id },
     {
       $set: { passHash, passwordChangedAt: new Date() },
+      $inc: { sessionVersion: 1 },
       $unset: { resetHash: "", resetExpiresAt: "", resetAttempts: "" },
     }
   );

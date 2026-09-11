@@ -17,6 +17,26 @@ export async function requireAuth(req, res, next) {
     { projection: { passHash: 0, otpHash: 0 } } // never load secrets we don't need
   );
 
+  /* THE PASSWORD CHANGED SINCE THIS SESSION WAS ISSUED.
+
+     Resetting a password is the clearest way somebody says "lock this
+     account down", and until this check existed it did not mean that: a
+     stolen session went on working until it expired on its own, which is
+     precisely the window the owner was trying to close.
+
+     Absent on both sides is treated as equal, so accounts that predate
+     the counter are not all signed out on deploy. A session that carries
+     no version against a user who now has one has, by definition, been
+     issued before the change. */
+  if (user) {
+    const issued = req.session.sessionVersion ?? 0;
+    const current = user.sessionVersion ?? 0;
+    if (issued !== current) {
+      req.session.destroy(() => {});
+      return bounce(req, res, "/signin?err=stale");
+    }
+  }
+
   // Session outlived the account (deleted user, wiped database).
   if (!user) {
     req.session.destroy(() => {});

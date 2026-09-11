@@ -1113,6 +1113,151 @@ await collections.subscriptions().deleteMany({ queryId: killQ });
 await collections.users().deleteOne({ _id: killUser });
 await collections.queries().deleteOne({ _id: killQ });
 
+/* P1 — a parked query has to be able to come back.
+ *
+ * The park moved nextFetchAt and nothing else, so failCount stayed at
+ * the threshold: when the 24 hours were up the loop saw it was still
+ * over the limit and parked it for another 24. For ever. A source
+ * outage that lasted an afternoon killed the search that met it,
+ * silently, and nothing would ever have restarted it.
+ */
+const QueriesP1 = await import("../src/models/queries.js");
+const envP1 = (await import("../src/config/env.js")).env;
+
+const parkQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-park-${Date.now()}`, keywords: ["parked"], geoId: "e2e-p",
+  matchAll: false, createdAt: new Date(0), primed: true,
+  nextFetchAt: new Date(), everyMinutes: 5, failCount: envP1.maxFailCount,
+})).insertedId;
+
+await QueriesP1.park(parkQ, 24 * 60, { probeAt: envP1.maxFailCount });
+const parkedRow = await collections.queries().findOne({ _id: parkQ });
+ok(parkedRow.nextFetchAt > new Date(Date.now() + 20 * 60 * 60_000),
+  "parking pushes the query a day out");
+ok(parkedRow.failCount < envP1.maxFailCount,
+  `and leaves it BELOW the threshold, so it gets one probe (${parkedRow.failCount} < ${envP1.maxFailCount})`);
+ok(parkedRow.failCount === envP1.maxFailCount - 1,
+  "exactly one below — a reset to zero would hand a dead source the whole budget again every day");
+
+/* One more failure re-parks it; a success clears it entirely. */
+await QueriesP1.recordFailure(parkQ, 10);
+const failedAgain = await collections.queries().findOne({ _id: parkQ });
+ok(failedAgain.failCount >= envP1.maxFailCount,
+  "a failed probe puts it straight back over the threshold");
+
+await QueriesP1.reschedule(parkQ, { everyMinutes: 5, tracked: 3 });
+const recovered = await collections.queries().findOne({ _id: parkQ });
+ok((recovered.failCount || 0) === 0,
+  "and a successful sweep clears the count — the circuit closes");
+
+/* P1 — "every five minutes" has to mean every five minutes.
+ *
+ * nextFetchAt was Date.now() + interval, evaluated AFTER the sweep. A
+ * LinkedIn crawl is 78-92 seconds, so a five-minute watch actually ran
+ * every six and a half, drifting further the slower the board was.
+ */
+const slotQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-slot-${Date.now()}`, keywords: ["slot"], geoId: "e2e-p",
+  matchAll: false, createdAt: new Date(0), primed: true,
+  nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+
+// Due at 10:00, the crawl took 85 seconds, so it finishes at 10:01:25.
+const dueAt = new Date("2026-09-11T10:00:00Z");
+await QueriesP1.reschedule(slotQ, {
+  everyMinutes: 5, tracked: 10,
+  timing: {
+    scheduledFor: dueAt,
+    startedAt: dueAt.getTime(),
+    finishedAt: dueAt.getTime() + 85_000,
+  },
+});
+const slotted = await collections.queries().findOne({ _id: slotQ });
+const minutesAfterDue = (slotted.nextFetchAt - dueAt) / 60_000;
+ok(minutesAfterDue % 5 === 0,
+  `the next sweep lands on a 5-minute slot from when it was DUE (+${minutesAfterDue}m)`);
+ok(minutesAfterDue !== 6.416666666666667,
+  "not five minutes after the crawl happened to finish, which is what drifted");
+
+/* And a long outage must not come back owing hundreds of sweeps. */
+const longAgo = new Date(Date.now() - 24 * 60 * 60_000);
+await QueriesP1.reschedule(slotQ, {
+  everyMinutes: 5, tracked: 10,
+  timing: { scheduledFor: longAgo, startedAt: Date.now() - 1000, finishedAt: Date.now() },
+});
+const afterOutage = await collections.queries().findOne({ _id: slotQ });
+ok(afterOutage.nextFetchAt > new Date(),
+  "a query returning from a day's outage schedules forward, not 288 sweeps of catch-up");
+
+/* P1 — asking for a faster cadence must pull the deadline forward. */
+const cadenceQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-cad-${Date.now()}`, keywords: ["cadence"], geoId: "e2e-p",
+  matchAll: false, createdAt: new Date(0), primed: true,
+  everyMinutes: 60,
+  lastFetchedAt: new Date(Date.now() - 60_000),
+  nextFetchAt: new Date(Date.now() + 54 * 60_000),
+})).insertedId;
+
+await QueriesP1.setInterval(cadenceQ, 5);
+const pulled = await collections.queries().findOne({ _id: cadenceQ });
+ok(pulled.everyMinutes === 5, "the interval is recorded");
+ok(pulled.nextFetchAt < new Date(Date.now() + 10 * 60_000),
+  `and the deadline moves forward — a new 5-minute watcher does not wait 54 (${Math.round((pulled.nextFetchAt - Date.now()) / 60_000)}m)`);
+
+// Going the other way must not cancel a sweep that is about to happen.
+const imminent = pulled.nextFetchAt;
+await QueriesP1.setInterval(cadenceQ, 60);
+const slowed = await collections.queries().findOne({ _id: cadenceQ });
+ok(slowed.everyMinutes === 60, "a slower interval is recorded too");
+ok(slowed.nextFetchAt.getTime() === imminent.getTime(),
+  "but the pending sweep still runs — a query about to run should run");
+
+await collections.queries().deleteMany({ geoId: "e2e-p" });
+
+/* P1 — a broken surface must not get a vote on what working looks like.
+ *
+ * The rolling baseline averaged everything recorded, degraded
+ * observations included. Healthy 200/205/198, then a collapse to 2 or 3
+ * repeatedly, and within a day the median walks down to ~2 — at which
+ * point two jobs stops looking unusual and the monitor has quietly
+ * agreed that the outage is the new normal.
+ */
+const Obs = await import("../src/models/observations.js");
+await collections.observations().deleteMany({ source: "e2e-baseline" });
+
+const obsRow = (status, parsed, ok_ = true) => ({
+  source: "e2e-baseline", geoId: "e2e-b", queryId: null, status,
+  parsedCount: parsed,
+  surfaces: [{ name: "feed", ok: ok_, parsedCount: parsed }],
+  warnings: [], notes: [], reported: true, at: new Date(),
+});
+
+await collections.observations().insertMany([
+  obsRow("healthy", 200), obsRow("healthy", 205), obsRow("healthy", 198),
+  obsRow("healthy", 202), obsRow("healthy", 201),
+]);
+const healthyBase = await Obs.baseline({ source: "e2e-baseline", surface: "feed" });
+ok(healthyBase.median === 201, `a healthy week reads ~201 (${healthyBase.median})`);
+
+// The collapse. Eight degraded sweeps, which used to drag the median down.
+await collections.observations().insertMany([
+  obsRow("degraded", 2, false), obsRow("degraded", 3, false), obsRow("degraded", 1, false),
+  obsRow("degraded", 4, false), obsRow("degraded", 2, false), obsRow("degraded", 2, false),
+  obsRow("degraded", 3, false), obsRow("degraded", 1, false),
+]);
+const afterCollapse = await Obs.baseline({ source: "e2e-baseline", surface: "feed" });
+ok(afterCollapse.median === 201,
+  `the baseline is UNMOVED by the outage (${afterCollapse.median}) — it learns nothing from broken samples`);
+ok(Obs.isAnomalous(2, afterCollapse) === true,
+  "so two jobs is still flagged as a collapse on the ninth bad sweep, not shrugged at");
+ok(afterCollapse.degraded === 8,
+  `while still reporting how much went wrong (${afterCollapse.degraded} degraded)`);
+
+const degradedStreak = await Obs.consecutiveDegraded({ source: "e2e-baseline" });
+ok(degradedStreak === 8, `and an independent streak counter the baseline cannot erase (${degradedStreak})`);
+
+await collections.observations().deleteMany({ source: "e2e-baseline" });
+
 /* P0 — HOLD MUST STOP THE EMAIL.
  *
  * Pausing set a flag and re-timed the shared query, and that was all.

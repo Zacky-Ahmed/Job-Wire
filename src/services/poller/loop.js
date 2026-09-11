@@ -225,13 +225,26 @@ async function tick() {
         break;
       }
       if ((query.failCount || 0) >= env.maxFailCount) {
-        log.warn("query parked after repeated failures", {
-          queryId: String(query._id), failCount: query.failCount,
+        /* Park it, and arm ONE probe for when the wait is over.
+
+           The park used to leave failCount at the threshold, so the next
+           time round this branch fired again and parked it for another
+           day — for ever. A source outage that lasted an afternoon
+           killed the search that met it, and nothing would have brought
+           it back.
+
+           Each successive park waits longer, so a source that is
+           genuinely gone is not probed hourly, while one that was merely
+           having a bad afternoon recovers on its own. */
+        const parks = (query.parkedForMinutes || 0) >= 24 * 60 ? 2 : 1;
+        const wait = Math.min(24 * 60 * parks, 72 * 60);
+        log.warn("query parked after repeated failures — one probe when the wait is over", {
+          queryId: String(query._id), failCount: query.failCount, waitMinutes: wait,
         });
         // Push it far out rather than deleting — a human can inspect it.
         // park(), not recordFailure(): the latter increments failCount,
         // so merely skipping a parked query made it look worse each tick.
-        await Queries.park(query._id, 24 * 60);
+        await Queries.park(query._id, wait, { probeAt: env.maxFailCount });
         continue;
       }
       try {

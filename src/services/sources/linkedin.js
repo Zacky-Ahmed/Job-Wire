@@ -117,33 +117,65 @@ function urlFor({ geoId, keywords, page }) {
   return `${ENDPOINT}?${p}`;
 }
 
-/** Walk every page of one query until a page adds nothing new. */
+/**
+ * Walk every page of one query until a page adds nothing new.
+ *
+ * COUNTS WHAT IT ACTUALLY DID. The surfaces used to be recorded as
+ * "requests: 1, pages: 1" regardless — a flat lie, since this walks up
+ * to forty pages — and it made the one measurement Phase 8 exists for
+ * impossible. The question is unique actionable matches per hundred HTTP
+ * requests; with the denominator hardcoded to one, that ratio is
+ * meaningless and JSERP could not honestly be removed on the strength
+ * of it.
+ *
+ * The tally is attached to the thrown error as well as returned, so
+ * requests made BEFORE a failure still count. A surface that costs five
+ * requests and then breaks has cost five requests, and a cost model that
+ * only counts successes understates the expensive failures most.
+ */
 async function collect(makeUrl) {
   const found = new Map();
+  const tally = { requests: 0, pages: 0, stopReason: "budget", durationMs: 0 };
+  const startedAt = Date.now();
   let stale = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const html = await guardedFetch(makeUrl(page), hosts, { jitter: true });
+    let html;
+    try {
+      tally.requests++;
+      html = await guardedFetch(makeUrl(page), hosts, { jitter: true });
+    } catch (err) {
+      tally.durationMs = Date.now() - startedAt;
+      tally.stopReason = "error";
+      err.tally = tally;
+      throw err;
+    }
+    tally.pages++;
 
     const shape = classifyResponse(html);
-    if (shape === "empty") break;
+    if (shape === "empty") { tally.stopReason = "empty"; break; }
     if (shape === "unrecognised") {
       const err = new Error("LinkedIn returned markup we do not recognise");
       err.code = "UNRECOGNISED";
+      tally.durationMs = Date.now() - startedAt;
+      tally.stopReason = "unrecognised";
+      err.tally = tally;
       throw err;
     }
 
     // Resolve ages against the instant THIS page arrived, not against
     // whenever the sweep happens to finish.
     const jobs = parseJobs(html, new Date());
-    if (!jobs.length) break;
+    if (!jobs.length) { tally.stopReason = "noJobs"; break; }
 
     const before = found.size;
     jobs.forEach((j) => found.set(j.jobId, j));
     // sortBy is not honoured, so we cannot stop early on age — only when
     // the feed stops contributing, and only after it has done so twice.
     stale = found.size === before ? stale + 1 : 0;
-    if (stale >= STALE_PAGES_BEFORE_STOP) break;
+    if (stale >= STALE_PAGES_BEFORE_STOP) { tally.stopReason = "stale"; break; }
   }
+  tally.durationMs = Date.now() - startedAt;
+  found.tally = tally;
   return found;
 }
 
@@ -182,7 +214,10 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
   // The complete feed, always.
   const everything = await collect((p) => urlFor({ geoId, page: p }));
   obs.surface("countryFeed", {
-    ok: true, requests: 1, pages: 1, rawCount: everything.size, parsedCount: everything.size,
+    ok: true,
+    requests: everything.tally.requests, pages: everything.tally.pages,
+    rawCount: everything.size, parsedCount: everything.size,
+    note: everything.tally.stopReason,
   });
 
   // LinkedIn's own matching, which sees descriptions and job type — the
@@ -194,14 +229,21 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
     try {
       relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }));
       obs.surface("guestKeyword", {
-        ok: true, requests: 1, pages: 1, rawCount: relevant.size, parsedCount: relevant.size,
+        ok: true,
+        requests: relevant.tally.requests, pages: relevant.tally.pages,
+        rawCount: relevant.size, parsedCount: relevant.size,
+        note: relevant.tally.stopReason,
       });
     } catch (err) {
       /* Recorded, not thrown. This surface failing is exactly the case
          the union exists to survive — but it must not then look like a
          normal sweep, which is what happened before: the error went to a
          log line nobody reads and the jobs count stayed plausible. */
-      obs.surface("guestKeyword", { ok: false, requests: 1, error: err.message });
+      // The requests it made before failing still count. See collect().
+      obs.surface("guestKeyword", {
+        ok: false, requests: err.tally?.requests ?? 1, pages: err.tally?.pages ?? 0,
+        error: err.message,
+      });
       log.warn("linkedin guest keyword surface failed — continuing on the others", {
         message: err.message,
       });
@@ -218,10 +260,16 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
     try {
       fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }));
       obs.surface("jserp", {
-        ok: true, requests: 1, pages: 1, rawCount: fromPage.size, parsedCount: fromPage.size,
+        ok: true,
+        requests: fromPage.tally.requests, pages: fromPage.tally.pages,
+        rawCount: fromPage.size, parsedCount: fromPage.size,
+        note: fromPage.tally.stopReason,
       });
     } catch (err) {
-      obs.surface("jserp", { ok: false, requests: 1, error: err.message });
+      obs.surface("jserp", {
+        ok: false, requests: err.tally?.requests ?? 1, pages: err.tally?.pages ?? 0,
+        error: err.message,
+      });
       log.warn("linkedin search page failed — continuing on the guest API alone", {
         message: err.message,
       });

@@ -166,6 +166,10 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
       req.session.regenerate((err) => {
         if (err) return next(err);
         req.session.userId = String(user._id);
+      /* Stamped at sign-in and compared on every request. A password
+         change bumps the user's counter, so every session issued before
+         it stops working — see models/users.js setPassword. */
+      req.session.sessionVersion = user.sessionVersion ?? 0;
         req.session.save((err2) => {
           if (err2) return next(err2);
           log.info("verified", { email: user.email });
@@ -243,6 +247,10 @@ authRoutes.post("/signin", redirectIfAuthed, signinLimiter, async (req, res, nex
     req.session.regenerate((err) => {
       if (err) return next(err);
       req.session.userId = String(user._id);
+      /* Stamped at sign-in and compared on every request. A password
+         change bumps the user's counter, so every session issued before
+         it stops working — see models/users.js setPassword. */
+      req.session.sessionVersion = user.sessionVersion ?? 0;
       // save() before redirecting — see the note in /verify.
       req.session.save((err2) => {
         if (err2) return next(err2);
@@ -380,6 +388,10 @@ authRoutes.post("/reset", resetLimiter, async (req, res, next) => {
     req.session.regenerate((err) => {
       if (err) return next(err);
       req.session.userId = String(user._id);
+      /* Stamped at sign-in and compared on every request. A password
+         change bumps the user's counter, so every session issued before
+         it stops working — see models/users.js setPassword. */
+      req.session.sessionVersion = user.sessionVersion ?? 0;
       req.session.save((err2) => (err2 ? next(err2) : res.redirect("/wire")));
     });
   } catch (err) {
