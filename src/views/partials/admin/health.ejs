@@ -20,23 +20,24 @@
     </div>
     <div class="row r-admin">
       <div class="role">
-        <div class="a">
-          <% if (!poller.configured) { %>Disabled by POLLER_ENABLED
-          <% } else if (poller.never) { %>No tick has ever been recorded
-          <% } else if (poller.stale) { %><%= poller.detail %> — wedged
-          <% } else if (poller.sweeping) { %>Sweeping now · started <%= poller.tickAgeSec %>s ago
-          <% } else { %>Ticked <%= poller.tickAgeSec %>s ago<% } %>
-        </div>
+        <%# One snapshot decides the wording, so this row cannot
+            contradict the chip in the shell or the tile above it. It
+            did: "Sweeping" up there, "Stalled" on the tile, "standby"
+            here and "Not ticking" in the pill, on one page load. %>
+        <div class="a"><%= poller.detail %></div>
         <div class="b">
           state <%= poller.state %><% if (poller.queueDepth !== null) { %> ·
-          queue <%= poller.queueDepth %><% } %><% if (poller.lastTickMs !== null) { %> ·
-          last pass <%= (poller.lastTickMs / 1000).toFixed(1) %>s<% } %>
+          queue <%= poller.queueDepth %><% if (poller.dueTotal && poller.dueTotal > poller.queueDepth) { %>
+          of <%= poller.dueTotal %> due<% } %><% } %><% if (poller.lastTickMs !== null) { %> ·
+          last pass <%= (poller.lastTickMs / 1000).toFixed(1) %>s<% } %><% if (poller.progressAgeSec !== null) { %> ·
+          progress <%= poller.progressAgeSec %>s ago<% } %>
         </div>
       </div>
       <span>
-        <% if (!poller.configured) { %><span class="pill off">Off</span>
-        <% } else if (poller.stale || poller.never) { %><span class="pill sig">Not ticking</span>
-        <% } else { %><span class="pill go"><%= poller.label %></span><% } %>
+        <%# The pill says what the snapshot says. "Not ticking" used to
+            fire on STANDBY, which is a healthy state meaning another
+            process holds the crawl lease. %>
+        <span class="pill <%= poller.tone === 'go' ? 'go' : poller.tone === 'amber' ? 'off' : 'sig' %>"><%= poller.label %></span>
       </span>
       <span class="muted hide"></span><span class="muted hide"></span>
     </div>

@@ -4,6 +4,7 @@
 // newest first. /wire/rows is the fragment HTMX re-polls.
 
 import { Router } from "express";
+import { pollerSnapshot } from "../services/poller/snapshotFor.js";
 import { page } from "../utils/render.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import * as Subs from "../models/subscriptions.js";
@@ -164,7 +165,7 @@ async function gather(user, show = PAGE, only = "", t = null) {
 
   return {
     watches,
-    ...headerState(watches, env.pollerEnabled),
+    ...headerState(watches, await pollerSnapshot()),
     dispatches: filtered,
     sources,
     only,

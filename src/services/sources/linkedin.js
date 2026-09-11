@@ -138,7 +138,7 @@ export function urlFor({ geoId, keywords, page }) {
  * requests and then breaks has cost five requests, and a cost model that
  * only counts successes understates the expensive failures most.
  */
-async function collect(makeUrl) {
+async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) {
   const found = new Map();
   /* pages[] is what makes the latency question answerable: which page
      carried the job, and how many seconds into the walk we reached it.
@@ -191,6 +191,13 @@ async function collect(makeUrl) {
       fresh: found.size - before,
       jobIds: jobs.map((j) => j.jobId),
     });
+
+    /* A page finished, so the sweep is MOVING. Without this the only
+       evidence of life during an 80-second crawl was the moment it
+       started, and "has it been going a while" was being mistaken for
+       "has it stopped". Fire-and-forget: a diagnostic write must never
+       be able to fail a crawl or slow it down. */
+    onProgress?.({ source: id, surface: surfaceName, page });
     // sortBy is not honoured, so we cannot stop early on age — only when
     // the feed stops contributing, and only after it has done so twice.
     stale = found.size === before ? stale + 1 : 0;
@@ -271,7 +278,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   const feedStart = Date.now();
   let everything;
   try {
-    everything = await collect((p) => urlFor({ geoId, page: p }));
+    everything = await collect((p) => urlFor({ geoId, page: p }),
+      { onProgress: trace?.onProgress, surfaceName: "countryFeed" });
     await logWalk("countryFeed", feedStart, everything.tally);
   } catch (err) {
     await logWalk("countryFeed", feedStart, err.tally, { ok: false, error: err.message });
@@ -293,7 +301,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
     // Outside the try: the catch has to log how long the failed walk ran.
     const guestStart = Date.now();
     try {
-      relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }));
+      relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }),
+        { onProgress: trace?.onProgress, surfaceName: "guestKeyword" });
       await logWalk("guestKeyword", guestStart, relevant.tally);
       obs.surface("guestKeyword", {
         ok: true,
@@ -327,7 +336,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   if (!matchAll) {
     const jserpStart = Date.now();
     try {
-      fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }));
+      fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }),
+        { onProgress: trace?.onProgress, surfaceName: "jserp" });
       await logWalk("jserp", jserpStart, fromPage.tally);
       obs.surface("jserp", {
         ok: true,

@@ -5,6 +5,7 @@
 // one query row, so the poller fetches once and fans out.
 
 import { Router } from "express";
+import { pollerSnapshot } from "../services/poller/snapshotFor.js";
 import { page } from "../utils/render.js";
 import { str, keywords as cleanKeywords, int, oid } from "../utils/sanitize.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -31,7 +32,7 @@ async function render(req, res, extra = {}) {
     nav: "watches",
     user: req.user,
     watches,
-    ...headerState(watches, env.pollerEnabled),
+    ...headerState(watches, await pollerSnapshot()),
     pollerEnabled: env.pollerEnabled,
     countries: selectableCountries(),
     sources: listSources(),
@@ -86,7 +87,7 @@ async function respondList(req, res) {
   res.vary("HX-Target");
   return res.render("partials/watch-list-swap", {
     watches,
-    ...headerState(watches, env.pollerEnabled),
+    ...headerState(watches, await pollerSnapshot()),
     csrfToken: res.locals.csrfToken,
     tprFor, rel,
     sourceLabel: (id) => getSource(id)?.label || id,

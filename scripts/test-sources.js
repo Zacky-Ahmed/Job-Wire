@@ -300,5 +300,91 @@ check("and says which areas are failing rather than reporting them empty",
 Corpus.clearCorpus();
 
 
+console.log("\n=== the poller says ONE thing about itself ===");
+
+/* A real screenshot of the admin page showed all of this at once:
+ *
+ *   top bar        Sweeping
+ *   summary card   Stalled — no progress for 2 min
+ *   detail row     state standby · queue 1 · last pass 77.3s
+ *   badge          Not ticking
+ *
+ * Four labels, four definitions, one poller. These assert the states
+ * that produced it. */
+const RT = await import("../src/services/poller/runtime.js");
+const { headerState } = await import("../src/utils/header.js");
+const now = Date.parse("2026-09-11T10:00:00Z");
+const ago = (ms) => new Date(now - ms);
+
+/* STANDBY IS HEALTHY. Another process holds the lease and this one is
+   correctly not crawling. It was being judged on a tick age it never
+   updated, so it read as stale after ninety seconds. */
+const standby = RT.pollerRuntime(
+  { at: ago(3000), lastTickAt: ago(3000), state: "standby", queueDepth: 1, lastTickMs: 77300 },
+  { owner: "other-host:41:ab", expiresAt: new Date(now + 240_000) },
+  { enabled: true, now }
+);
+check("a standby poller is HEALTHY, not stalled", standby.status === RT.STANDBY && standby.healthy,
+  `${standby.status}`);
+check("and it says who is actually crawling", /other-host/.test(standby.detail), standby.detail);
+check("the shell does NOT claim to be sweeping while on standby",
+  headerState([{ active: true, q: {} }], standby).sweeping === false,
+  "the chip read POLLER_ENABLED && activeWatches, which is configuration");
+
+/* A LONG CRAWL IS NOT A STUCK ONE. A LinkedIn pass is 78-92 seconds
+   measured, and the old threshold was 120. */
+const longCrawl = RT.pollerRuntime(
+  { at: ago(2000), lastTickAt: ago(150_000), state: "working",
+    lastProgressAt: ago(4000), currentSource: "linkedin", currentSurface: "countryFeed", currentPage: 18 },
+  null, { enabled: true, now }
+);
+check("a crawl running 150s but completing pages is WORKING",
+  longCrawl.status === RT.WORKING && longCrawl.healthy, longCrawl.status);
+check("and the detail says where it has got to",
+  /linkedin/.test(longCrawl.detail) && /page 18/.test(longCrawl.detail), longCrawl.detail);
+check("the shell agrees, because it reads the same snapshot",
+  headerState([{ active: true, q: {} }], longCrawl).sweeping === true);
+
+/* STALLED means an active operation stopped MOVING. */
+const stuck = RT.pollerRuntime(
+  { at: ago(2000), lastTickAt: ago(900_000), state: "working",
+    lastProgressAt: ago(7 * 60_000), currentSource: "linkedin" },
+  null, { enabled: true, now }
+);
+check("no page completing for seven minutes IS stalled",
+  stuck.status === RT.STALLED && !stuck.healthy, stuck.status);
+check("and it names the source it is stuck on", /linkedin/.test(stuck.detail), stuck.detail);
+
+/* The worker itself going away is a different failure from the work
+   stopping, and must not be reported as the same thing. */
+const workerGone = RT.pollerRuntime(
+  { at: ago(5 * 60_000), lastTickAt: ago(5 * 60_000), state: "working" },
+  null, { enabled: true, now }
+);
+check("a heartbeat that stopped is OFFLINE, not merely stalled",
+  workerGone.status === RT.OFFLINE, workerGone.status);
+
+/* Configuration is not evidence, in either direction. */
+const pollerOff = RT.pollerRuntime({ at: ago(1000), state: "idle" }, null, { enabled: false, now });
+check("POLLER_ENABLED false reads as Off", pollerOff.status === RT.OFF);
+check("and the shell does not claim to sweep with the poller off",
+  headerState([{ active: true, q: {} }], pollerOff).sweeping === false);
+
+const neverBeat = RT.pollerRuntime(null, null, { enabled: true, now });
+check("no heartbeat at all is NEVER, not healthy", neverBeat.status === RT.NEVER && !neverBeat.healthy);
+check("and an unreadable snapshot does not render as healthy either",
+  headerState([{ active: true, q: {} }], null).sweeping === false,
+  "claiming health we cannot observe is the whole family of bug this ends");
+
+/* THE SCREENSHOT, ASSERTED. The exact state that produced four
+   contradictory labels must now produce one. */
+const chip = headerState([{ active: true, q: {} }], standby);
+check("shell and admin now agree on the same state",
+  chip.sweeping === false && standby.status === RT.STANDBY,
+  `chip sweeping=${chip.sweeping}, runtime=${standby.status}`);
+check("and the shell carries the snapshot's own label",
+  chip.pollerLabel === "Standby", chip.pollerLabel);
+
+
 console.log(failed ? `\n${failed} failed` : "\nall good");
 process.exit(failed ? 1 : 0);

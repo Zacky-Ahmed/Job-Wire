@@ -32,6 +32,7 @@
 // guarantee can be made once instead of trusted everywhere.
 
 import { Router } from "express";
+import { pollerSnapshot } from "../services/poller/snapshotFor.js";
 import { page } from "../utils/render.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdmin } from "../middleware/requireAdmin.js";
@@ -346,70 +347,51 @@ async function adminData(req, res) {
       lastSentAt: lastSend ? rel(lastSend.sentAt) : "never",
     };
 
-    /* Liveness, measured. "Poller: Running" was computed from
-       POLLER_ENABLED and a count of active watches — configuration, not
-       evidence. A loop that threw on startup or wedged mid-sweep still
-       reported Running. The heartbeat the loop writes each tick makes
-       staleness observable. */
-    /* A sweep walks every page of every source plus a detail request per
-       new job, and a tick does up to ten of them in a row. Fifteen
-       minutes on ONE query is not slow, it is wedged. */
-    const STALL_MINUTES = 15;
+    /* Liveness, from the ONE authoritative snapshot.
 
+       This block used to derive its own verdict from the heartbeat, and
+       utils/header.js derived a different one from POLLER_ENABLED plus a
+       count of watches. A real screenshot caught them disagreeing on a
+       single page load: the chip said "Sweeping", this card said
+       "Stalled — no progress for 2 min", the row beneath said "state
+       standby", and a badge said "Not ticking".
 
-    const tickAgeMs = beat?.lastTickAt ? Date.now() - new Date(beat.lastTickAt) : null;
-    const state = beat?.state || "unknown";
-    const never = !beat?.lastTickAt;
+       Three of those were wrong. Standby is a healthy state — another
+       process holds the crawl lease — and a standby process was being
+       judged on a tick age it never updated. The chip was reading
+       configuration. And the stall threshold was ninety seconds against
+       a LinkedIn pass measured at 78-92, so it could fire on a perfectly
+       healthy crawl.
 
-    /* lastTickAt is stamped when a tick STARTS, so judging staleness on
-       it alone declared the poller dead in the middle of a long pass —
-       ten queries at a couple of minutes each is twenty times the old
-       90-second threshold. Harmless while it was one line in a panel;
-       not harmless now that the headline tile reads the same verdict.
-       A working tick is therefore measured from whichever is newer, the
-       tick's start or the query it most recently claimed: the first
-       covers the retry phase before any query is claimed, the second
-       covers the sweeps after it. Only an idle poller is judged on
-       missed ticks, where three in a row is not a blip. */
-    const progressAt = Math.max(
-      beat?.currentSince ? new Date(beat.currentSince).getTime() : 0,
-      beat?.lastTickAt ? new Date(beat.lastTickAt).getTime() : 0
-    );
-    const stale = never ? false
-      : state === "working"
-        ? Date.now() - progressAt > STALL_MINUTES * 60000
-        : tickAgeMs > env.pollTickSeconds * 3000;
-
+       services/poller/runtime.js decides now, and every surface renders
+       what it says. They cannot contradict each other again because
+       there is only one of them. */
+    const runtime = await pollerSnapshot();
     const poller = {
-      configured: env.pollerEnabled,
+      configured: runtime.enabled,
+      status: runtime.status,
+      label: runtime.label,
+      detail: runtime.detail,
+      tone: runtime.tone,
+      alive: runtime.healthy,
+      /* Kept for the existing template, which still asks these
+         questions. `stale` now means genuinely stuck rather than
+         "has been running a while". */
+      stale: runtime.status === "STALLED" || runtime.status === "OFFLINE",
+      never: runtime.status === "NEVER",
+      sweeping: runtime.status === "WORKING",
+      state: runtime.state,
+      queueDepth: runtime.queueDepth,
+      dueTotal: runtime.dueTotal,
+      lastTickMs: runtime.lastPassMs,
       lastTickAt: beat?.lastTickAt || null,
-      tickAgeSec: tickAgeMs == null ? null : Math.round(tickAgeMs / 1000),
-      stale,
-      never,
-      state,
-      sweeping: state === "working" && !stale,
-      queueDepth: beat?.queueDepth ?? null,
-      lastTickMs: beat?.lastTickMs ?? null,
+      tickAgeSec: runtime.heartbeatAge == null ? null : Math.round(runtime.heartbeatAge / 1000),
+      progressAgeSec: runtime.progressAge == null ? null : Math.round(runtime.progressAge / 1000),
+      currentSource: runtime.currentSource,
+      currentSurface: runtime.currentSurface,
+      currentPage: runtime.currentPage,
+      leaseHolder: runtime.leaseHolder,
     };
-
-    /* Computed once, here, because the tile and the panel disagreeing on
-       the same page load is the defect: the tile printed POLLER_ENABLED
-       and said "Running" while the panel underneath it, reading the
-       heartbeat, said "Not ticking". Configuration is not evidence, and
-       the two must never be able to contradict each other again. */
-    poller.alive = poller.configured && !poller.never && !poller.stale;
-    poller.label =
-      !poller.configured ? "Off" :
-      poller.never       ? "No tick" :
-      poller.stale       ? "Stalled" :
-      poller.sweeping    ? "Sweeping" : "Alive";
-    poller.tone = !poller.configured ? "amber" : poller.alive ? "go" : "sig";
-    poller.detail =
-      !poller.configured ? "POLLER_ENABLED is false" :
-      poller.never       ? "no heartbeat recorded yet" :
-      poller.stale       ? `no progress for ${Math.round((Date.now() - progressAt) / 60000)} min` :
-      poller.sweeping    ? `working · ${poller.queueDepth ?? 0} queued` :
-                           `ticked ${poller.tickAgeSec}s ago`;
 
     /* sourceHealth is written on every sweep but was never displayed, so
        a board could be failing for weeks while the query showed healthy —
@@ -464,7 +446,7 @@ async function adminData(req, res) {
       nav: "admin",
       user: req.user,
       isAdmin: true,
-      ...headerState(myWatches, env.pollerEnabled),
+      ...headerState(myWatches, await pollerSnapshot()),
       people,
       queryRows,
       packs: listPacks(),

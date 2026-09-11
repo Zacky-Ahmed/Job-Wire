@@ -71,6 +71,28 @@ let currentFence = null;
 
 export function pollerOwner() { return OWNER; }
 
+/**
+ * Something completed. Called from inside a crawl so a long sweep can
+ * be told apart from a stuck one.
+ *
+ * Throttled to once every ten seconds, because a beat per HTTP request
+ * is 28 writes per LinkedIn sweep to say something that only changes
+ * the answer once. Staleness is judged in minutes; ten-second
+ * resolution is far more than enough.
+ */
+let lastProgressWrite = 0;
+export async function noteProgress(where = {}) {
+  const now = Date.now();
+  if (now - lastProgressWrite < 10_000) return;
+  lastProgressWrite = now;
+  await beat({
+    lastProgressAt: new Date(),
+    currentSource: where.source ?? null,
+    currentSurface: where.surface ?? null,
+    currentPage: where.page ?? null,
+  });
+}
+
 export function startPoller() {
   if (timer) return;
   stopped = false;
@@ -146,7 +168,20 @@ async function tick() {
     log.info("another process holds the poller lease — standing by", {
       holder: holder?.owner, expiresAt: holder?.expiresAt,
     });
-    await beat({ state: "standby", leaseHolder: holder?.owner ?? null });
+    /* Stamps lastTickAt even though no crawling happens.
+
+       It did not, and so a standby process's tick age grew without
+       bound and the admin page declared it "Stalled — no progress for
+       2 min" after ninety seconds. Standby is a CORRECT state: another
+       process holds the lease and this one is deliberately not
+       crawling. It still has to prove it is alive, which is what the
+       heartbeat is for. */
+    await beat({
+      state: "standby",
+      lastTickAt: new Date(),
+      leaseHolder: holder?.owner ?? null,
+      leaseExpiresAt: holder?.expiresAt ?? null,
+    });
     return;
   }
 

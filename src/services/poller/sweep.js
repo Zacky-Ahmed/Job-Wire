@@ -210,7 +210,16 @@ export async function sweepQuery(query, { queuePosition = null, dueTotal = null 
   });
 
   try {
-    const result = await runSweep(query, { sweepId, started, scheduledFor });
+    /* Imported lazily so sweep.js does not depend on the loop that calls
+       it — the poller imports the sweep, and a static import back would
+       be a cycle. A sweep run outside the poller (a script, a test)
+       simply reports no progress, which is correct: nothing is watching. */
+    let onProgress = null;
+    try {
+      ({ noteProgress: onProgress } = await import("./loop.js"));
+    } catch { /* not running under the poller */ }
+
+    const result = await runSweep(query, { sweepId, started, scheduledFor, onProgress });
     await SweepRuns.close({
       sweepId, status: result?.ok === false ? "failed" : "ok",
       fetched: result?.fetched, alerted: result?.alerted,
@@ -225,7 +234,7 @@ export async function sweepQuery(query, { queuePosition = null, dueTotal = null 
   }
 }
 
-async function runSweep(query, { sweepId, started, scheduledFor }) {
+async function runSweep(query, { sweepId, started, scheduledFor, onProgress = null }) {
   /* scheduledFor and started come from the wrapper above, which opened
      the sweep record before any of this could fail. */
 
@@ -302,7 +311,13 @@ async function runSweep(query, { sweepId, started, scheduledFor }) {
           // Scheduler context, so a crawl row can be joined to the query
           // and the slot it was meant to run in. Adapters that do not
           // care simply ignore it.
-          trace: { sweepId, queryId: query._id, scheduledFor, sweepStartedAt: started },
+          trace: {
+            sweepId, queryId: query._id, scheduledFor, sweepStartedAt: started,
+            /* So a long crawl can prove it is moving. Without it the only
+               sign of life during an 80-second sweep was the moment it
+               started, and the admin page read that as a stall. */
+            onProgress,
+          },
           // A shared fetch asks for the WHOLE listing. matchAll is how
           // every one of these adapters is told to skip its own keyword
           // filter, and skipping it is the point: the cached result has to
