@@ -196,20 +196,62 @@ async function tick() {
   const passId = openPass();
   try {
     await beat({ lastTickAt: new Date(), state: "working" });
-    /* Deliver what is already owed before looking for more.
 
-       A caught job the reader never received is worth more than a new
-       one, and now that the sweep only writes obligations, this is where
-       the mail actually leaves. Draining first also means a tick that
-       dies partway through the crawl has still delivered the backlog it
-       started with. */
+    /* MEASURE WHAT THE MAIL WORK COSTS THE CRAWLER.
+
+       Discovery and delivery are decoupled in the data model — the
+       outbox saw to that — but they still run in one serial tick, and
+       the crawl cannot start until the mail work above it finishes. A
+       slow provider or a large backlog therefore delays the next
+       LinkedIn observation even though they use entirely different
+       external resources.
+
+       That is a real coupling and the obvious fix is two independent
+       lanes. But "obvious" is how this project has repeatedly optimised
+       the wrong thing, so measure it first: if mail work costs
+       milliseconds, moving it buys nothing and adds a second scheduler
+       to reason about. */
+    const mailStart = Date.now();
     await drainOutbox();
+    const mailDrainMs = Date.now() - mailStart;
+
+    const legacyStart = Date.now();
     // The old failed-send queue, still draining emailLog rows written
     // before the outbox existed. Removed once none are left.
     await retryFailedSends();
+    const legacyRetryMs = Date.now() - legacyStart;
 
-    const due = await Queries.findDue(10);
-    await beat({ queueDepth: due.length });
+    /* HOW MANY WERE ACTUALLY DUE, not just how many we took.
+
+       findDue(10) is a snapshot capped at ten. With ten LinkedIn
+       searches at ~81s each, a pass runs 13 minutes, and an eleventh
+       due query is not even considered until it finishes — a
+       five-minute cadence becoming a fifteen-minute gap with LinkedIn
+       doing nothing wrong. Recording both numbers is what will show
+       whether that is happening before anything is restructured. */
+    const [due, dueTotal] = await Promise.all([
+      Queries.findDue(10),
+      Queries.countDue(),
+    ]);
+
+    const blockedMs = mailDrainMs + legacyRetryMs;
+    if (blockedMs > 2000) {
+      log.warn("mail work delayed the start of this crawl", {
+        mailDrainMs, legacyRetryMs, dueQueries: dueTotal,
+        note: "discovery and delivery share one serial tick; this is the cost of that",
+      });
+    }
+    await beat({
+      queueDepth: due.length, dueTotal,
+      lastMailDrainMs: mailDrainMs, lastLegacyRetryMs: legacyRetryMs,
+      lastCrawlBlockedMs: blockedMs,
+    });
+    if (dueTotal > due.length) {
+      log.warn("more searches are due than this pass will take", {
+        due: dueTotal, taking: due.length,
+        note: "the rest wait for the whole pass to finish, however long it runs",
+      });
+    }
     if (!due.length) return;
 
     log.debug("tick", { due: due.length });
@@ -249,7 +291,10 @@ async function tick() {
       }
       try {
         await beat({ currentQueryId: String(query._id), currentSince: new Date() });
-        await sweepQuery(query);
+        await sweepQuery(query, {
+          queuePosition: due.indexOf(query) + 1,
+          dueTotal,
+        });
       } catch (err) {
         log.error("sweep threw", { queryId: String(query._id), message: err.message });
         await Queries.recordFailure(query._id, query.everyMinutes * 2);

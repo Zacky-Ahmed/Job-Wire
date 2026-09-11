@@ -21,6 +21,8 @@ import { collections } from "../../config/db.js";
 import { matchesAny } from "../../utils/match.js";
 import { passesPack } from "../packs.js";
 import { env } from "../../config/env.js";
+import { randomUUID } from "node:crypto";
+import * as SweepRuns from "../../models/sweepRuns.js";
 import { log } from "../../utils/logger.js";
 
 
@@ -184,13 +186,48 @@ export function isStillWorthMailing(j) {
     return !at || Date.now() - at.getTime() <= ALERT_MAX_AGE_MIN * 60000;
 }
 
-export async function sweepQuery(query) {
+/**
+ * Sweep one query, and leave a record of having done so whatever
+ * happens.
+ *
+ * A thin wrapper over the real work, and the wrapping is the point:
+ * runSweep has six exits and any of them could be the last thing that
+ * happens before a crash. A record written only on the happy path
+ * cannot describe a sweep that died, and "no record" then reads as
+ * "never ran" — which is the exact wrong inference, and one this
+ * project's own tracer has already drawn out loud.
+ */
+export async function sweepQuery(query, { queuePosition = null, dueTotal = null } = {}) {
+  const sweepId = randomUUID();
   const started = Date.now();
-  /* When this sweep was DUE, captured before anything else touches the
-     row. The gap between it and `started` is queue delay — the part of
-     "my five-minute watch told me twenty minutes late" that belongs to
-     us rather than to the board. */
   const scheduledFor = query.nextFetchAt || null;
+
+  /* Opened BEFORE any fetching. Same reasoning as the outbox: what you
+     write before the risky part is what survives it. */
+  await SweepRuns.open({
+    sweepId, queryId: query._id, scheduledFor, startedAt: started,
+    queuePosition, dueTotal,
+  });
+
+  try {
+    const result = await runSweep(query, { sweepId, started, scheduledFor });
+    await SweepRuns.close({
+      sweepId, status: result?.ok === false ? "failed" : "ok",
+      fetched: result?.fetched, alerted: result?.alerted,
+    });
+    return result;
+  } catch (err) {
+    /* The sweep threw. The row says so, rather than simply never being
+       settled — "crashed" and "still running" are different answers to
+       a delayed-job question. */
+    await SweepRuns.close({ sweepId, status: "threw", error: err.message });
+    throw err;
+  }
+}
+
+async function runSweep(query, { sweepId, started, scheduledFor }) {
+  /* scheduledFor and started come from the wrapper above, which opened
+     the sweep record before any of this could fail. */
 
   // Every source that covers this country, resolved fresh each sweep
   // rather than read off the row — a watch created before an adapter
@@ -221,6 +258,7 @@ export async function sweepQuery(query) {
   const words = query.matchAll ? [] : (query.keywords || []);
 
   await Promise.all(sourceIds.map(async (sourceId) => {
+    const sourceStarted = Date.now();
     const source = getSource(sourceId);
     if (!source) {
       log.warn("watch names a source that no longer exists", { sourceId });
@@ -261,6 +299,10 @@ export async function sweepQuery(query) {
       const out = new Map();
       for (let p = 0; p < MAX_PAGES; p++) {
         const raw = await source.fetchJobs({
+          // Scheduler context, so a crawl row can be joined to the query
+          // and the slot it was meant to run in. Adapters that do not
+          // care simply ignore it.
+          trace: { sweepId, queryId: query._id, scheduledFor, sweepStartedAt: started },
           // A shared fetch asks for the WHOLE listing. matchAll is how
           // every one of these adapters is told to skip its own keyword
           // filter, and skipping it is the point: the cached result has to
@@ -321,6 +363,11 @@ export async function sweepQuery(query) {
          observation would flood the baseline with duplicates of one real
          measurement and make a genuine collapse look like a rounding
          error. */
+      await SweepRuns.noteSource({
+        sweepId, source: sourceId, status: observed?.status || "healthy",
+        startedAt: sourceStarted, finishedAt: Date.now(), jobs: mine.length,
+      });
+
       if (observed) {
         await Observations.record({
           source: sourceId, geoId: query.geoId, queryId: query._id,
@@ -375,6 +422,16 @@ export async function sweepQuery(query) {
       mine.forEach((j) => fetchedMap.set(j.jobId, j));
     } catch (err) {
       failures.push({ sourceId, err });
+      /* A FAILED source is recorded as attempted-and-failed, not omitted.
+
+         The query as a whole is only counted failed when EVERY board
+         fails, which is right — the others still returned jobs. But it
+         meant a LinkedIn failure left no trace at the query level at
+         all, and a delayed job could not be explained. */
+      await SweepRuns.noteSource({
+        sweepId, source: sourceId, status: "failed",
+        startedAt: sourceStarted, finishedAt: Date.now(), error: err.message,
+      });
       log.warn("source failed", {
         queryId: String(query._id), source: sourceId,
         reason: err.name, message: err.message,

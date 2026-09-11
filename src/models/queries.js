@@ -159,6 +159,23 @@ export function findById(id) {
   return collections.queries().findOne({ _id: id });
 }
 
+/**
+ * How many are due RIGHT NOW, regardless of how many a pass will take.
+ *
+ * findDue caps at ten. With ten LinkedIn searches at ~81s each a pass
+ * runs about thirteen minutes, and an eleventh due query is not even
+ * considered until it finishes — a five-minute cadence quietly becoming
+ * a fifteen-minute gap with LinkedIn doing nothing wrong at all.
+ *
+ * Nothing recorded that, because the loop only ever saw the ten it took.
+ * The same filter as findDue, deliberately: a count that measured
+ * something slightly different would be worse than no count.
+ */
+export function countDue() {
+  return collections.queries()
+    .countDocuments({ nextFetchAt: { $lte: new Date(), $type: "date" } });
+}
+
 export function findDue(limit = 20) {
   return collections.queries()
     // $type:"date" is load-bearing. Mongo orders null BEFORE dates, so a

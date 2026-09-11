@@ -28,6 +28,8 @@ import { connectDb, closeDb, collections } from "../src/config/db.js";
 import { guardedFetch } from "../src/services/http/guardedFetch.js";
 import { parseJobs, classifyResponse } from "../src/services/linkedin/parse.js";
 import { urlFor, pageUrlFor } from "../src/services/sources/linkedin.js";
+import * as Coverage from "../src/models/telemetryCoverage.js";
+import * as SweepRuns from "../src/models/sweepRuns.js";
 
 const arg = process.argv[2];
 const markSeen = process.argv.includes("--seen-now");
@@ -244,10 +246,31 @@ if (windowFrom && windowTo) {
     )
     .sort({ startedAt: 1 })
     .toArray();
+  /* CAN ABSENCE MEAN ANYTHING HERE?
+
+     This block previously printed "the crawler did not walk LinkedIn at
+     all in that window" whenever it found no rows. The first real job it
+     was run against had a window six hours older than the crawl log
+     itself, so there could not have been a row — and the sentence went
+     upward as a scheduling finding. A diagnostic that cannot tell "it
+     did not happen" from "nobody was writing it down" is worse than no
+     diagnostic, because it manufactures confident wrong answers. */
+  const cov = await Coverage.coverage("crawlLog", windowFrom, windowTo);
+  const runs = await SweepRuns.inWindow(windowFrom, windowTo);
+
   console.log(`\n-- every LinkedIn walk between then and discovery (${between.length}) --`);
-  if (!between.length) {
-    console.log("  none. The crawler did not walk LinkedIn at all in that window,");
-    console.log("  which is a scheduling answer rather than an exposure one.");
+  if (!cov.covered) {
+    console.log(`  INCONCLUSIVE — ${cov.reason}.`);
+    console.log("  Nothing can be concluded about this window. It is not evidence that");
+    console.log("  the crawler did or did not run; we simply were not recording.");
+  } else if (!between.length && !runs.length) {
+    console.log("  none, and telemetry DID cover this window.");
+    console.log("  No query sweep started either, so the scheduler never selected this");
+    console.log("  search — a cadence or subscription answer, not an exposure one.");
+  } else if (!between.length && runs.length) {
+    console.log(`  none — but ${runs.length} query sweep(s) DID run in this window.`);
+    console.log("  So the scheduler was working and LinkedIn was never attempted, or was");
+    console.log("  attempted and failed before any page was walked. See the sweeps below.");
   }
   for (const w of between) {
     console.log(
@@ -256,6 +279,24 @@ if (windowFrom && windowTo) {
       `${w.ok ? "ok" : "FAILED"}  stopped: ${w.stopReason}` +
       (w.queueDelayMs ? `  (${Math.round(w.queueDelayMs / 1000)}s late)` : "")
     );
+  }
+
+  /* THE LEVEL ABOVE THE SURFACES. Crawl rows cannot distinguish "the
+     query was never selected" from "it was selected and LinkedIn failed
+     before a page was walked" — both are simply no rows. */
+  if (runs.length) {
+    console.log(`\n-- query sweeps in the same window (${runs.length}) --`);
+    for (const r of runs) {
+      const li = r.sources?.linkedin;
+      console.log(
+        `  ${fmt(r.startedAt)}  query ${String(r.queryId).slice(-6)}  ` +
+        `${String(r.status).padEnd(8)}` +
+        (r.queueDelayMs != null ? `  ${Math.round(r.queueDelayMs / 1000)}s late` : "") +
+        (r.queuePosition != null ? `  #${r.queuePosition} of ${r.dueTotal} due` : "") +
+        `  linkedin: ${li ? li.status : "NOT ATTEMPTED"}` +
+        (li?.error ? `  ${String(li.error).slice(0, 40)}` : "")
+      );
+    }
   }
 }
 

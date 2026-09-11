@@ -211,7 +211,7 @@ async function collect(makeUrl) {
  * Paging is internal — the two queries must be reconciled before anything
  * downstream sees them — so `page > 0` returns nothing.
  */
-export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false }) {
+export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, trace = null }) {
   if (page > 0) return { jobs: [], observation: observer(id).done([]).observation };
 
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
@@ -237,7 +237,13 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
      up against each other afterwards — "the guest surface had it at
      10:07 and the country feed did not" is only answerable if they share
      a key. */
-  const sweepId = randomUUID().slice(0, 8);
+  /* The POLLER'S identity for this sweep, not one invented here.
+
+     This used to mint its own random id and log queryId: null and
+     scheduledFor: null, which made the crawl log unable to answer the
+     one question it exists for — "was this watch due at 10:05 and did
+     it not start until 10:17?" A local id cannot be joined to anything. */
+  const sweepId = trace?.sweepId || randomUUID().slice(0, 8);
   const walkStart = Date.now();
 
   /* Writing the walk down is diagnostics, and diagnostics may never
@@ -245,16 +251,32 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
      CrawlLog.record. */
   const logWalk = (surface, startedAt, tally, { ok = true, error = null } = {}) =>
     CrawlLog.record({
-      sweepId, queryId: null, source: id, surface, geoId,
-      scheduledFor: null, startedAt, finishedAt: Date.now(),
+      sweepId,
+      queryId: trace?.queryId ?? null,
+      source: id, surface, geoId,
+      scheduledFor: trace?.scheduledFor ?? null,
+      startedAt, finishedAt: Date.now(),
       pages: tally?.pageLog || [], stopReason: tally?.stopReason || "unknown",
       ok, error,
     });
 
   // The complete feed, always.
+  /* EVERY ATTEMPT WRITES A ROW, including the ones that throw.
+
+     This was `await collect(); await logWalk()`, so a walk that made
+     five requests and then failed left NO record — and the tracer read
+     that silence as "the crawler did not run". A failed crawl is not an
+     absent crawl, and telling them apart is the entire point of having
+     the log. err.tally carries the pages already walked. */
   const feedStart = Date.now();
-  const everything = await collect((p) => urlFor({ geoId, page: p }));
-  await logWalk("countryFeed", feedStart, everything.tally);
+  let everything;
+  try {
+    everything = await collect((p) => urlFor({ geoId, page: p }));
+    await logWalk("countryFeed", feedStart, everything.tally);
+  } catch (err) {
+    await logWalk("countryFeed", feedStart, err.tally, { ok: false, error: err.message });
+    throw err;   // the country feed failing is still a failed sweep
+  }
   obs.surface("countryFeed", {
     ok: true,
     requests: everything.tally.requests, pages: everything.tally.pages,
@@ -268,8 +290,9 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
   // add anything the feed above does not already have.
   let relevant = new Map();
   if (query && !matchAll) {
+    // Outside the try: the catch has to log how long the failed walk ran.
+    const guestStart = Date.now();
     try {
-      const guestStart = Date.now();
       relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }));
       await logWalk("guestKeyword", guestStart, relevant.tally);
       obs.surface("guestKeyword", {
@@ -284,6 +307,7 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
          normal sweep, which is what happened before: the error went to a
          log line nobody reads and the jobs count stayed plausible. */
       // The requests it made before failing still count. See collect().
+      await logWalk("guestKeyword", guestStart, err.tally, { ok: false, error: err.message });
       obs.surface("guestKeyword", {
         ok: false, requests: err.tally?.requests ?? 1, pages: err.tally?.pages ?? 0,
         error: err.message,
@@ -301,8 +325,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
      recorded as degraded when it does not. */
   let fromPage = new Map();
   if (!matchAll) {
+    const jserpStart = Date.now();
     try {
-      const jserpStart = Date.now();
       fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }));
       await logWalk("jserp", jserpStart, fromPage.tally);
       obs.surface("jserp", {
@@ -312,6 +336,7 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false })
         note: fromPage.tally.stopReason,
       });
     } catch (err) {
+      await logWalk("jserp", jserpStart, err.tally, { ok: false, error: err.message });
       obs.surface("jserp", {
         ok: false, requests: err.tally?.requests ?? 1, pages: err.tally?.pages ?? 0,
         error: err.message,

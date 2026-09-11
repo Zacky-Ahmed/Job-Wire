@@ -13,6 +13,7 @@
 import { collections } from "../config/db.js";
 import { OBSERVATION_TTL_DAYS } from "./observations.js";
 import { CRAWL_LOG_TTL_DAYS } from "./crawlLog.js";
+import { SWEEP_RUN_TTL_DAYS } from "./sweepRuns.js";
 import { env } from "../config/env.js";
 import { log } from "../utils/logger.js";
 
@@ -228,6 +229,21 @@ export async function ensureIndexes() {
       { at: 1 },
       { name: "crawl_log_ttl", expireAfterSeconds: CRAWL_LOG_TTL_DAYS * 86400 }
     )
+  );
+
+  // ── sweepRuns: was the query even selected? ──────────────────
+  created.push(
+    await idx(collections.sweepRuns(), { sweepId: 1 }, { name: "sweep_id", unique: true })
+  );
+  created.push(
+    await idx(collections.sweepRuns(), { startedAt: -1 }, { name: "sweeps_recent" })
+  );
+  created.push(
+    await idx(collections.sweepRuns(), { queryId: 1, startedAt: -1 }, { name: "sweeps_by_query" })
+  );
+  created.push(
+    await idx(collections.sweepRuns(), { at: 1 },
+      { name: "sweep_run_ttl", expireAfterSeconds: SWEEP_RUN_TTL_DAYS * 86400 })
   );
 
   created.push(

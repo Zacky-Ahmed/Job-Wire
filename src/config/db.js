@@ -86,6 +86,16 @@ export const collections = {
      the pages inside it, and a 7-day TTL — a per-page collection is the
      easiest unbounded write in the world to add by accident. */
   crawlLog: () => getDb().collection("crawlLog"),
+  /* One row per QUERY sweep, above the per-surface crawl log.
+     Surface rows alone cannot tell "the query was never selected" from
+     "it was selected and LinkedIn failed before anything was written" —
+     different bugs with different fixes. */
+  sweepRuns: () => getDb().collection("sweepRuns"),
+  /* From when each kind of telemetry is allowed to speak. Without this,
+     "no rows" reads as "it did not happen" even when the collection did
+     not exist yet — which is exactly the wrong conclusion this tracer
+     has already drawn once. */
+  telemetryCoverage: () => getDb().collection("telemetryCoverage"),
   /* "I can see this on linkedin.com right now." The one timestamp the
      system cannot observe for itself — by the time a delayed job is
      noticed, LinkedIn exposing it at 10:01 and at 10:28 look identical

@@ -213,6 +213,21 @@ async function main() {
     });
   }
 
+  /* From when telemetry is allowed to speak.
+
+     Stamped on the first boot that carries each instrumentation, so a
+     later question about an earlier window can be answered "we were not
+     recording then" instead of "it did not happen". That distinction is
+     not academic: the job tracer printed "the crawler did not walk
+     LinkedIn at all in that window" about a window six hours BEFORE the
+     crawl log existed, and it was reported upward as a scheduling
+     finding. */
+  if (indexed) {
+    const Coverage = await import("./models/telemetryCoverage.js");
+    await Coverage.markAvailable("crawlLog");
+    await Coverage.markAvailable("sweepRuns");
+  }
+
   /* Held so the shutdown handler can stop it. Undefined when the poller
      never started, which the handler treats as nothing to stop. */
   let poller = null;

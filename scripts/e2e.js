@@ -1113,6 +1113,87 @@ await collections.subscriptions().deleteMany({ queryId: killQ });
 await collections.users().deleteOne({ _id: killUser });
 await collections.queries().deleteOne({ _id: killQ });
 
+/* DIAGNOSTIC HONESTY — absence is only evidence inside coverage.
+ *
+ * The job tracer printed "the crawler did not walk LinkedIn at all in
+ * that window" about a window six hours OLDER than the crawl log
+ * itself. There could not have been a row. That sentence was reported
+ * upward as a scheduling finding.
+ *
+ * A diagnostic that cannot tell "it did not happen" from "nobody was
+ * writing it down" is worse than no diagnostic, because it manufactures
+ * confident wrong answers — which is the same failure this whole
+ * project keeps having, turned inward.
+ */
+const Coverage = await import("../src/models/telemetryCoverage.js");
+await collections.telemetryCoverage().deleteMany({ _id: "e2e-kind" });
+
+const never = await Coverage.coverage("e2e-kind", new Date(Date.now() - 3600_000));
+ok(never.covered === false, "a kind that was never recorded covers nothing");
+ok(/never been recorded/.test(never.reason), `and says why (${never.reason})`);
+
+// It starts being recorded NOW.
+await Coverage.markAvailable("e2e-kind");
+
+const coveredBefore = await Coverage.coverage("e2e-kind", new Date(Date.now() - 3600_000));
+ok(coveredBefore.covered === false,
+  "a window from BEFORE instrumentation shipped is still not covered");
+ok(/only started/.test(coveredBefore.reason), `and says so rather than implying silence means absence (${coveredBefore.reason})`);
+
+const coveredAfter = await Coverage.coverage("e2e-kind", new Date(Date.now() + 1000), new Date(Date.now() + 2000));
+ok(coveredAfter.covered === true, "a window after it shipped IS covered — absence then means something");
+
+/* Re-marking must not move the horizon forward, or every restart would
+   make older windows look uncovered when they were fine. */
+const firstSince = (await collections.telemetryCoverage().findOne({ _id: "e2e-kind" })).since;
+await Coverage.markAvailable("e2e-kind");
+const secondSince = (await collections.telemetryCoverage().findOne({ _id: "e2e-kind" })).since;
+ok(firstSince.getTime() === secondSince.getTime(),
+  "restarting does not re-stamp the horizon — $setOnInsert, not $set");
+
+await collections.telemetryCoverage().deleteMany({ _id: "e2e-kind" });
+
+/* A SWEEP THAT DIED STILL LEAVES A RECORD.
+ *
+ * The row is opened before any fetching, so "started and never settled"
+ * is distinguishable from "never ran" — which the crawl log alone cannot
+ * do, because both are simply no rows. */
+const SweepRuns = await import("../src/models/sweepRuns.js");
+const runId = `e2e-run-${Date.now()}`;
+const runQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-run-${Date.now()}`, keywords: ["run"], geoId: "e2e-r2",
+  matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+
+const dueAtRun = new Date(Date.now() - 90_000);
+await SweepRuns.open({
+  sweepId: runId, queryId: runQ, scheduledFor: dueAtRun,
+  startedAt: Date.now(), queuePosition: 3, dueTotal: 11,
+});
+const opened = await collections.sweepRuns().findOne({ sweepId: runId });
+ok(opened.status === "running", "a sweep record exists the moment the sweep starts");
+ok(opened.queueDelayMs >= 89_000,
+  `carrying how late the scheduler was (${Math.round(opened.queueDelayMs / 1000)}s)`);
+ok(opened.queuePosition === 3 && opened.dueTotal === 11,
+  "and where it sat in the queue — 11 due, this one third");
+
+await SweepRuns.noteSource({
+  sweepId: runId, source: "linkedin", status: "failed",
+  startedAt: Date.now() - 5000, finishedAt: Date.now(), error: "429 from the guest API",
+});
+const withSource = await collections.sweepRuns().findOne({ sweepId: runId });
+ok(withSource.sources.linkedin.attempted === true,
+  "a FAILED source is recorded as attempted-and-failed, not omitted");
+ok(/429/.test(withSource.sources.linkedin.error),
+  "with the reason, so a delayed job can be explained rather than guessed at");
+
+await SweepRuns.close({ sweepId: runId, status: "ok", fetched: 12, alerted: 1 });
+ok((await collections.sweepRuns().findOne({ sweepId: runId })).status === "ok",
+  "and it settles when the sweep finishes");
+
+await collections.sweepRuns().deleteMany({ sweepId: runId });
+await collections.queries().deleteOne({ _id: runQ });
+
 /* P1 — a parked query has to be able to come back.
  *
  * The park moved nextFetchAt and nothing else, so failCount stayed at
