@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "test-deployment": "node --test scripts/test-deployment.js",
     "test-mail": "node scripts/test-mail.js",
     "test-db": "node scripts/test-db.js",
     "measure-lag": "node scripts/measure-lag.js",
@@ -35,7 +36,9 @@
     "probe-linkedin": "node scripts/probe-linkedin-latency.js",
     "trace-job": "node scripts/trace-job.js",
     "probe-jserp": "node scripts/probe-jserp-pagination.js",
-    "simulate": "node scripts/simulate-scheduler.js"
+    "simulate": "node scripts/simulate-scheduler.js",
+    "test-policy": "node scripts/test-source-policy.js",
+    "test-offline": "npm run test-policy && npm run simulate -- 1"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -43,6 +43,8 @@ import { randomUUID } from "node:crypto";
 import { qualify } from "./index.js";
 import { matchesAny } from "../../utils/match.js";
 import { log } from "../../utils/logger.js";
+import { env } from "../../config/env.js";
+import { SourcePolicyError } from "../http/sourcePolicy.js";
 
 export const id = "linkedin";
 export const label = "LinkedIn";
@@ -219,6 +221,16 @@ async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) 
  * downstream sees them — so `page > 0` returns nothing.
  */
 export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, trace = null }) {
+  // Adapter-level fail-closed gate. This check mirrors the one in the source
+  // registry (sources/index.js) so a direct fetchJobs() call cannot bypass
+  // the policy — even in scripts or tests — without explicit confirmation.
+  if (!env.linkedinAccessConfirmed) {
+    throw new SourcePolicyError(
+      "linkedin",
+      "LINKEDIN_ACCESS_CONFIRMED is not set — written authorization required before any network call"
+    );
+  }
+
   if (page > 0) return { jobs: [], observation: observer(id).done([]).observation };
 
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);

@@ -25,6 +25,7 @@ import { log } from "../../utils/logger.js";
 const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
 
 export function providerName() {
+  if (!env.mailEnabled) return "disabled";
   return env.brevoApiKey ? "brevo(http)" : "gmail(smtp)";
 }
 
@@ -156,6 +157,13 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
   const cleanSubject = String(subject).replace(/[\r\n]+/g, " ").slice(0, 200);
   const started = Date.now();
 
+  // When MAIL_ENABLED=false the app acts as a read-only/staging instance.
+  // Obligations are still written to the outbox but never dispatched.
+  if (!env.mailEnabled) {
+    log.info("mail suppressed (MAIL_ENABLED=false)", { to, subject: cleanSubject });
+    return { ok: false, error: "mail disabled" };
+  }
+
   /* GMAIL SMTP CANNOT DO THIS, and pretending otherwise would be worse
      than not trying. SMTP has no idempotency concept: once the message
      is handed to the server it is sent, and a connection that drops
@@ -189,6 +197,12 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
 
 /** Proves credentials at boot so a misconfiguration is loud, not silent. */
 export async function verifyTransport() {
+  // When mail is disabled, skip all provider contact. Boot continues
+  // without requiring any mail credentials.
+  if (!env.mailEnabled) {
+    log.info("mail disabled — skipping transport verification");
+    return;
+  }
   if (env.brevoApiKey) {
     const res = await fetch("https://api.brevo.com/v3/account", {
       headers: { "api-key": env.brevoApiKey, accept: "application/json" },

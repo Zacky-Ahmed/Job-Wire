@@ -15,13 +15,19 @@ services:
     region: singapore # closest to Sri Lanka; keep the Atlas cluster in the same region
     buildCommand: npm ci
     startCommand: npm start
-    healthCheckPath: /healthz
-    autoDeploy: true
+    healthCheckPath: /readyz
+    autoDeploy: false
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "24"
       - key: POLLER_ENABLED
-        value: "true"
+        value: "false"
+      - key: SOURCES_DISABLED
+        value: linkedin
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       # Set the rest in the Render dashboard, not here:
       #   MONGODB_URI, SESSION_SECRET, GMAIL_USER,
       #   GMAIL_APP_PASSWORD, MAIL_FROM, APP_URL
@@ -29,9 +35,7 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      - key: GMAIL_USER
-        sync: false
-      - key: GMAIL_APP_PASSWORD
+      - key: BREVO_API_KEY
         sync: false
       - key: MAIL_FROM
         sync: false

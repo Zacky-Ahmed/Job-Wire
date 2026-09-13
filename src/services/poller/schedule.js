@@ -138,7 +138,7 @@ export function nextSlot({ scheduledFor, intervalMs, now }) {
   const anchor = scheduledFor ? new Date(scheduledFor).getTime() : now;
   const step = Math.max(1, intervalMs);
   const elapsed = now - anchor;
-  const slotsPassed = elapsed <= 0 ? 1 : Math.ceil(elapsed / step);
+  const slotsPassed = Math.max(1, Math.floor(elapsed / step) + 1);
   return {
     at: new Date(anchor + slotsPassed * step),
     /* How many grid slots went by unswept. Zero on a healthy cadence;

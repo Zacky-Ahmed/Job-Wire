@@ -8,21 +8,19 @@ import dns from "dns";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-
-// Resolve IPv4 before IPv6, process-wide, before anything opens a socket.
-//
-// Railway's containers get an IPv6 address with no working route out. Node
-// 18+ defaults to "verbatim" DNS ordering, so smtp.gmail.com's AAAA record
-// wins and every send dies with ENETUNREACH 2607:f8b0:... — Google's IPv6.
-//
-// nodemailer's own `family: 4` option did NOT prevent this in production
-// (43 consecutive failures on a deploy that already had it), so the
-// ordering has to be forced here, where it applies to every lookup the
-// process makes rather than one library's socket options.
-dns.setDefaultResultOrder("ipv4first");
-
 import { env } from "./config/env.js";
-import { connectDb, closeDb } from "./config/db.js";
+
+// Apply DNS result ordering from DNS_RESULT_ORDER env var (default: "verbatim").
+// Use "ipv4first" on hosts without outbound IPv6 routing; this can also be set
+// via NODE_OPTIONS=--dns-result-order=ipv4first in the Dockerfile or environment.
+//
+// The old version hardcoded "ipv4first" globally. That fixed Railway's broken
+// IPv6 but is wrong for hosts that do route IPv6. Making it configurable means
+// each provider gets the right setting without code changes.
+dns.setDefaultResultOrder(env.dnsResultOrder);
+
+import { connectDb, closeDb, getDb } from "./config/db.js";
+import { mountHealth } from "./routes/health.js";
 import { ensureIndexes } from "./models/indexes.js";
 import { buildSession } from "./middleware/session.js";
 import { csrf } from "./middleware/csrf.js";
@@ -48,7 +46,8 @@ export async function buildApp() {
   // proxy for everyone (so IP rate limits protect nobody) and `secure`
   // cookies are never set. 1 = trust exactly one hop, not "true",
   // which would let a client forge X-Forwarded-For.
-  app.set("trust proxy", 1);
+  app.set("trust proxy", env.trustProxyHops);
+  mountHealth(app, { ping: () => getDb().command({ ping: 1 }, { timeoutMS: 2000 }) });
 
   app.disable("x-powered-by"); // stop advertising the stack
 
@@ -115,7 +114,6 @@ export async function buildApp() {
 
      Nothing below needs a token: /healthz returns text, and the landing
      page, robots.txt and sitemap.xml carry no form and no HTMX post. */
-  app.get("/healthz", (req, res) => res.type("text/plain").send("ok"));
   app.use(landingRoutes); // public "/" — must come before wireRoutes
 
   app.use(csrf);
@@ -167,7 +165,7 @@ async function main() {
   // serve a request, and blocking the listen on an SMTP handshake meant
   // ~12s before /healthz answered — a platform with a tighter healthcheck
   // than Railway's would call that a failed deploy.
-  const server = app.listen(env.port, () => {
+  const server = app.listen(env.port, env.host, () => {
     log.info("listening", { port: env.port, env: env.nodeEnv });
   });
 
@@ -206,6 +204,7 @@ async function main() {
   try {
     await ensureIndexes();
     indexed = true;
+    app.locals.ready = true;
   } catch (err) {
     log.error("ensureIndexes failed — serving, but NOT sweeping", {
       message: err.message,
@@ -270,6 +269,7 @@ async function main() {
   const shutdown = async (signal) => {
     if (shuttingDown) return;                    // a second SIGTERM is not news
     shuttingDown = true;
+    app.locals.shuttingDown = true;
     log.info("shutting down", { signal });
 
     /* The hard deadline. Platforms send SIGKILL some seconds after
@@ -283,23 +283,24 @@ async function main() {
     }, env.shutdownGraceMs);
     hard.unref();
 
-    server.close();                              // stop taking new requests
+    const httpClosed = new Promise((resolve) => server.close(resolve));
 
     try {
-      if (poller) await poller.stopPoller();
+      if (poller && await poller.stopPoller() === false) process.exit(1);
     } catch (err) {
       log.warn("poller did not stop cleanly", { message: err.message });
     }
 
     try {
       const { drainOutbox } = await import("./services/mail/outboxWorker.js");
-      const { sent } = await drainOutbox();
+      const { sent } = poller ? await drainOutbox() : { sent: 0 };
       if (sent) log.info("delivered what was owed before exiting", { sent });
     } catch (err) {
       // Everything is still pending; the next process will send it.
       log.warn("could not drain the outbox on the way out", { message: err.message });
     }
 
+    await httpClosed;
     await closeDb();
     log.info("shutdown complete", { signal });
     process.exit(0);

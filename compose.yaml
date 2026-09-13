@@ -1,0 +1,24 @@
+# Run behind a TLS reverse proxy. This deployment starts with workers OFF.
+services:
+  job-wire:
+    build: .
+    image: job-wire:local
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      POLLER_ENABLED: ${POLLER_ENABLED:-false}
+      SOURCES_DISABLED: ${SOURCES_DISABLED:-linkedin}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      LINKEDIN_REQUESTS_PER_HOUR: ${LINKEDIN_REQUESTS_PER_HOUR:-600}
+    ports:
+      - "127.0.0.1:3000:3000"
+    stop_grace_period: 130s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

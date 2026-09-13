@@ -1,4 +1,4 @@
-// guardedFetch.js
+﻿// guardedFetch.js
 //
 // The only place this app makes an outbound HTTP request.
 //
@@ -18,16 +18,14 @@
 
 import dns from "dns/promises";
 import net from "net";
-import { env } from "../../config/env.js";
+import { env, outboundUserAgent } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
+import { sourcePolicy } from "./sourcePolicy.js";
+import { readBody } from "./readBody.js";
 
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 15000;
 const MAX_BYTES = 5 * 1024 * 1024;
-
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 export class BlockedBySource extends Error {
   constructor(status, host) {
@@ -95,12 +93,14 @@ export async function guardedFetch(
 ) {
   let url = assertAllowed(rawUrl, allowHosts);
 
-  // Random delay so a schedule does not look like a metronome.
+  // Spread request starts to reduce synchronized load.
+  // This is burst-spreading, not an identity-evasion mechanism.
   if (jitter && env.fetchJitterMs > 0) {
     await sleep(Math.floor(Math.random() * env.fetchJitterMs));
   }
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    sourcePolicy.beforeRequest(url.hostname);
     await assertPublicHost(url.hostname);
 
     const ac = new AbortController();
@@ -118,48 +118,52 @@ export async function guardedFetch(
         // request without widening where it can go.
         ...(body === undefined ? {} : { body }),
         headers: {
-          "User-Agent": UA,
+          // Honest application identifier, configurable via OUTBOUND_USER_AGENT.
+          // Not a browser impersonation string.
+          "User-Agent": outboundUserAgent(),
           Accept: accept || "text/html,application/xhtml+xml",
           "Accept-Language": "en-US,en;q=0.9",
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
       });
+
+      if (res.status === 429 || res.status === 403) {
+        sourcePolicy.blocked(url.hostname, res.headers.get("retry-after"));
+        log.warn("source blocked us", { status: res.status, host: url.hostname });
+        throw new BlockedBySource(res.status, url.hostname);
+      }
+
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
+        url = assertAllowed(new URL(loc, url).toString(), allowHosts); // revalidate the hop
+        // A redirected POST is not replayed. Browsers turn 301/302 into a
+        // GET and 307/308 keep the method, and guessing wrong either loses
+        // the query or repeats a write. No source here needs it, so refuse
+        // rather than invent a rule.
+        if (method !== "GET") {
+          throw new Error(`${url.hostname} redirected a ${method}; not replaying it`);
+        }
+        continue;
+      }
+
+      if (!res.ok) throw new Error(`${url.hostname} returned ${res.status}`);
+
+      const len = Number(res.headers.get("content-length") || 0);
+      if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
+
+      // res.text() always decodes as UTF-8 in Node, whatever the response
+      // declares. topjobs serves iso-8859-1, so every en-dash and accented
+      // character came back as "?" — "Intern ? Human Resources Operations".
+      // A source that knows its own encoding can say so.
+      const buf = await readBody(res, MAX_BYTES);
+      if (buf.length > MAX_BYTES) throw new Error("Response too large");
+      const text = new TextDecoder(charset || "utf-8").decode(buf);
+      return text;
     } finally {
       clearTimeout(timer);
+      await res?.body?.cancel().catch(() => {});
     }
-
-    if (res.status === 429 || res.status === 403) {
-      log.warn("source blocked us", { status: res.status, host: url.hostname });
-      throw new BlockedBySource(res.status, url.hostname);
-    }
-
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
-      url = assertAllowed(new URL(loc, url).toString(), allowHosts); // revalidate the hop
-      // A redirected POST is not replayed. Browsers turn 301/302 into a
-      // GET and 307/308 keep the method, and guessing wrong either loses
-      // the query or repeats a write. No source here needs it, so refuse
-      // rather than invent a rule.
-      if (method !== "GET") {
-        throw new Error(`${url.hostname} redirected a ${method}; not replaying it`);
-      }
-      continue;
-    }
-
-    if (!res.ok) throw new Error(`${url.hostname} returned ${res.status}`);
-
-    const len = Number(res.headers.get("content-length") || 0);
-    if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
-
-    // res.text() always decodes as UTF-8 in Node, whatever the response
-    // declares. topjobs serves iso-8859-1, so every en-dash and accented
-    // character came back as "?" — "Intern ? Human Resources Operations".
-    // A source that knows its own encoding can say so.
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_BYTES) throw new Error("Response too large");
-    const text = new TextDecoder(charset || "utf-8").decode(buf);
-    return text;
   }
 
   throw new Error("Too many redirects");

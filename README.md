@@ -738,3 +738,8 @@ scrape. If you fork this, that decision is yours to make and yours to own.
 Built because good applications lose to early ones.
 
 </div>
+
+
+Deployment migration: read [the forensic findings](docs/DEPLOYMENT-FORENSICS.md) and
+[the provider-neutral deployment guide](docs/DEPLOYMENT.md). The migration templates
+start with workers off and LinkedIn disabled pending permitted access.

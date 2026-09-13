@@ -119,4 +119,10 @@ export const collections = {
      Telemetry must not be able to write a field that decides authority. */
   pollerLease: () => getDb().collection("pollerLease"),
   sessions: () => getDb().collection("sessions"),
+  /* Deployment-wide source request budgets and blocked-source circuit state.
+     ONE document per source (keyed by source id). Additive: older code that
+     does not know about this collection ignores it safely. Do not delete
+     this collection on rollback — doing so resets the safety budget/circuit
+     history. */
+  sourceTraffic: () => getDb().collection("sourceTraffic"),
 };

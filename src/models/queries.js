@@ -5,6 +5,7 @@
 
 import { collections } from "../config/db.js";
 import { log } from "../utils/logger.js";
+import { nextSlot } from "../services/poller/schedule.js";
 
 /** Find the shared query row or create it. Never creates a duplicate. */
 /**
@@ -296,11 +297,8 @@ export async function reschedule(id, { everyMinutes, primed, tracked, timing }) 
      that was parked for a day would otherwise come back owing 288 sweeps
      and try to run them all — the classic catch-up storm, aimed at the
      one board that responds to being hammered by going silent. */
-  const step = everyMinutes * 60000;
-  const from = timing?.scheduledFor ? new Date(timing.scheduledFor).getTime() : Date.now();
-  const now = Date.now();
-  const slotsMissed = Math.max(1, Math.ceil((now - from) / step));
-  const next = new Date(from + slotsMissed * step);
+  const { at: next } = nextSlot({ scheduledFor: timing?.scheduledFor,
+    intervalMs: everyMinutes * 60000, now: Date.now() });
 
   return collections.queries().updateOne(
     { _id: id, nextFetchAt: { $ne: null } },

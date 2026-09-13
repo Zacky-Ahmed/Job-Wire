@@ -21,6 +21,8 @@ import dns from "dns/promises";
 import net from "net";
 import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
+import { sourcePolicy } from "../http/sourcePolicy.js";
+import { readBody } from "../http/readBody.js";
 
 const ALLOWED_SUFFIX = ".linkedin.com";
 const ALLOWED_EXACT = new Set(["linkedin.com", "www.linkedin.com"]);
@@ -94,12 +96,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function fetchLinkedIn(rawUrl, { jitter = true } = {}) {
   let url = assertLinkedInUrl(rawUrl);
 
-  // Random delay so the cadence does not look like a metronome.
+  // Spread request starts to reduce synchronized load.
   if (jitter && env.fetchJitterMs > 0) {
     await sleep(Math.floor(Math.random() * env.fetchJitterMs));
   }
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    sourcePolicy.beforeRequest(url.hostname);
     await assertPublicHost(url.hostname);
 
     const ac = new AbortController();
@@ -115,30 +118,32 @@ export async function fetchLinkedIn(rawUrl, { jitter = true } = {}) {
           "Accept-Language": "en-US,en;q=0.9",
         },
       });
+
+      if (res.status === 429 || res.status === 403) {
+        sourcePolicy.blocked(url.hostname, res.headers.get("retry-after"));
+        log.warn("linkedin blocked us", { status: res.status, host: url.hostname });
+        throw new BlockedByLinkedIn(res.status);
+      }
+
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
+        url = assertLinkedInUrl(new URL(loc, url).toString()); // revalidate the hop
+        continue;
+      }
+
+      if (!res.ok) throw new Error(`LinkedIn returned ${res.status}`);
+
+      const len = Number(res.headers.get("content-length") || 0);
+      if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
+
+      const text = (await readBody(res, MAX_BYTES)).toString("utf8");
+      if (text.length > MAX_BYTES) throw new Error("Response too large");
+      return text;
     } finally {
       clearTimeout(timer);
+      await res?.body?.cancel().catch(() => {});
     }
-
-    if (res.status === 429 || res.status === 403) {
-      log.warn("linkedin blocked us", { status: res.status, host: url.hostname });
-      throw new BlockedByLinkedIn(res.status);
-    }
-
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
-      url = assertLinkedInUrl(new URL(loc, url).toString()); // revalidate the hop
-      continue;
-    }
-
-    if (!res.ok) throw new Error(`LinkedIn returned ${res.status}`);
-
-    const len = Number(res.headers.get("content-length") || 0);
-    if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
-
-    const text = await res.text();
-    if (text.length > MAX_BYTES) throw new Error("Response too large");
-    return text;
   }
 
   throw new Error("Too many redirects");

@@ -1,4 +1,4 @@
-// sources/index.js
+﻿// sources/index.js
 //
 // The registry of places we look for jobs.
 //
@@ -68,18 +68,32 @@ const ALL_SOURCES = { linkedin, keells, topjobs, mas, itpro, xpress, rooster };
  * That distinction matters when the reason for disabling is a host
  * saying "not on our infrastructure": a flag checked in one place is
  * a flag somebody forgets in another.
+ *
+ * LinkedIn is additionally removed unless LINKEDIN_ACCESS_CONFIRMED=true.
+ * Even if it is not in SOURCES_DISABLED, the adapter will not appear in
+ * the registry without an explicit operator attestation of written
+ * authorization. This is a second, independent gate so that a deployment
+ * mistake (forgetting to add linkedin to SOURCES_DISABLED) cannot silently
+ * re-enable the source.
  */
 export const SOURCES = Object.fromEntries(
-  Object.entries(ALL_SOURCES).filter(([id]) => !env.disabledSources.includes(id))
+  Object.entries(ALL_SOURCES).filter(([id]) => {
+    if (env.disabledSources.includes(id)) return false;
+    if (id === "linkedin" && !env.linkedinAccessConfirmed) return false;
+    return true;
+  })
 );
 
 export const DISABLED_SOURCES = Object.keys(ALL_SOURCES)
-  .filter((id) => env.disabledSources.includes(id));
+  .filter((id) => !SOURCES[id]);
 
-if (DISABLED_SOURCES.length) {
+if (env.disabledSources.length || !env.linkedinAccessConfirmed) {
   log.warn("sources disabled for this deployment", {
-    disabled: DISABLED_SOURCES.join(","),
-    active: Object.keys(SOURCES).join(","),
+    byConfig: env.disabledSources.join(",") || "(none)",
+    linkedinGate: env.linkedinAccessConfirmed
+      ? "confirmed"
+      : "excluded — LINKEDIN_ACCESS_CONFIRMED is not set",
+    active: Object.keys(SOURCES).join(",") || "(none)",
   });
 }
 

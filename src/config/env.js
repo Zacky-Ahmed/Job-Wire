@@ -1,4 +1,4 @@
-// env.js
+﻿// env.js
 //
 // Reads and validates process.env. Throws loudly at boot if anything
 // required is missing — never fail silently at 3am.
@@ -34,21 +34,51 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   isProd: process.env.NODE_ENV === "production",
   port: num("PORT", 3000),
+  host: process.env.HOST || "0.0.0.0",
+  trustProxyHops: num("TRUST_PROXY_HOPS", 1),
   appUrl: process.env.APP_URL || "http://localhost:3000",
 
-  // Search Console's ownership token. Public by design — it is meant to be
-  // read by anyone who fetches the page — so it is not a secret, it just
-  // does not belong hardcoded in a template. Accepts either the bare token
-  // or the whole `google-site-verification=...` string people paste, since
-  // pasting the full line is the usual way this gets entered wrong.
+  // ── LinkedIn source policy ────────────────────────────────────
+  //
+  // LINKEDIN_ACCESS_CONFIRMED is an operator attestation — not a technical
+  // permission grant — that written LinkedIn authorization or a licensed
+  // arrangement covers the intended collection, storage, display, alerting
+  // and volume. Default false: LinkedIn is excluded from the source registry
+  // and the adapter itself refuses network calls unless this is set to true.
+  linkedinAccessConfirmed: bool("LINKEDIN_ACCESS_CONFIRMED", false),
+
+  // Deployment-wide HTTP transaction ceiling for LinkedIn, including redirect
+  // hops. 300 is a conservative safety ceiling close to the calculated
+  // pre-scheduler envelope (~265 listing calls/hour plus ~11 detail/hour);
+  // NOT a claim about an approved rate or actual past traffic. Any authorized
+  // integration limit overrides it downward. Do not raise to defeat a block.
+  linkedinRequestBudgetPerHour: num("LINKEDIN_REQUEST_BUDGET_PER_HOUR", 300),
+
+  // Exponential circuit breaker for LinkedIn 403/429 responses.
+  // First block pauses BACKOFF_MINUTES (default 60). Each subsequent block in
+  // the same process lifetime doubles the pause, capped at BACKOFF_MAX_MINUTES
+  // (default 1440 = 24h). Risk control, not a way to defeat enforcement.
+  linkedinBlockedBackoffMinutes: num("LINKEDIN_BLOCKED_BACKOFF_MINUTES", 60),
+  linkedinBlockedBackoffMaxMinutes: num("LINKEDIN_BLOCKED_BACKOFF_MAX_MINUTES", 1440),
+
+  // ── Outbound HTTP identification ──────────────────────────────
+  // Honest, configurable application identifier for permitted integrations.
+  // Not a browser impersonation string. Jitter is burst-spreading only.
+  // Resolved lazily via outboundUserAgent() so appUrl is available.
+  _outboundUserAgentRaw: (process.env.OUTBOUND_USER_AGENT || "").trim(),
+
+  // ── Mail ──────────────────────────────────────────────────────
+  // When false: verifyTransport() and sendMail() are no-ops; provider
+  // credentials are not required at boot. Use for read-only staging or
+  // offline tests. Set true on any instance that must send alerts.
+  mailEnabled: bool("MAIL_ENABLED", true),
+
+  // Search Console ownership token. Public by design.
   googleSiteVerification: (process.env.GOOGLE_SITE_VERIFICATION || "")
     .trim()
     .replace(/^google-site-verification=/i, ""),
 
-  // Who may open /admin. Deliberately an env var, not a database flag:
-  // admin then cannot be granted by anything that can write to Mongo, and
-  // there is no bootstrap problem of "who makes the first admin".
-  // Comma-separated, compared case-insensitively.
+  // Who may open /admin. Env var, not a DB flag.
   adminEmails: (process.env.ADMIN_EMAILS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
@@ -59,135 +89,67 @@ export const env = {
 
   sessionSecret: required("SESSION_SECRET"),
 
-  // Optional. When present, mail goes over Brevo's HTTPS API instead of
-  // Gmail SMTP — required on hosts that block outbound SMTP ports.
+  // Controls dns.setDefaultResultOrder(). "verbatim" preserves the resolver
+  // order. "ipv4first" for hosts without outbound IPv6 routing. Change only
+  // for a documented host constraint.
+  dnsResultOrder: (process.env.DNS_RESULT_ORDER || "verbatim").trim(),
+
+  // Optional Brevo HTTPS API key. When set, mail uses HTTPS instead of SMTP.
   brevoApiKey: (process.env.BREVO_API_KEY || "").trim(),
 
-  // Only required when Gmail is the transport. With BREVO_API_KEY set,
-  // transport.js never touches these — but boot refused to start without
-  // them anyway, so a Brevo-only deploy had to invent a Gmail account to
-  // satisfy a check for credentials it would never use.
-  gmailUser: (process.env.BREVO_API_KEY || "").trim()
-    ? (process.env.GMAIL_USER || "").trim()
-    : required("GMAIL_USER"),
-  // Google displays the app password as 4 groups of 4; the secret is the 16 chars.
-  gmailAppPassword: ((process.env.BREVO_API_KEY || "").trim()
-    ? (process.env.GMAIL_APP_PASSWORD || "")
-    : required("GMAIL_APP_PASSWORD")).replace(/\s+/g, ""),
+  // Gmail credentials only required when MAIL_ENABLED=true and no Brevo key.
+  gmailUser: (() => {
+    if (!bool("MAIL_ENABLED", true)) return (process.env.GMAIL_USER || "").trim();
+    if ((process.env.BREVO_API_KEY || "").trim()) return (process.env.GMAIL_USER || "").trim();
+    return required("GMAIL_USER");
+  })(),
+  gmailAppPassword: (() => {
+    const raw = process.env.GMAIL_APP_PASSWORD || "";
+    if (!bool("MAIL_ENABLED", true)) return raw.replace(/\s+/g, "");
+    if ((process.env.BREVO_API_KEY || "").trim()) return raw.replace(/\s+/g, "");
+    return required("GMAIL_APP_PASSWORD").replace(/\s+/g, "");
+  })(),
   mailFrom: process.env.MAIL_FROM || process.env.GMAIL_USER,
 
   pollTickSeconds: num("POLL_TICK_SECONDS", 30),
   defaultSweepMinutes: num("DEFAULT_SWEEP_MINUTES", 5),
-  /* The floor on how often a watch may be swept, and the slider's left
-     end. Five, not two.
-     
-     Below five it is a promise the boards will not keep: LinkedIn's own
-     public index runs a measured median of 19 minutes behind, so a two
-     minute sweep asks seven and a half times as often to see the same
-     jobs. It is also how searches get throttled — five searches in one
-     country was already enough for LinkedIn to start refusing us, and a
-     shorter interval multiplies that directly. Offering 1-4 on the slider
-     invited people to pick a number that costs everyone coverage and buys
-     them nothing. */
   minSweepMinutes: num("MIN_SWEEP_MINUTES", 5),
   fetchJitterMs: num("FETCH_JITTER_MS", 4000),
   maxFailCount: num("MAX_FAIL_COUNT", 6),
   pollerEnabled: bool("POLLER_ENABLED", true),
-  /* Sources this deployment must NOT use, comma separated.
-
-     Exists because a host can forbid a source that the code is
-     perfectly capable of reading. Railway restricted this
-     workspace under an acceptable-use policy that prohibits
-     running scrapers against a service whose terms disallow them,
-     and LinkedIn's user agreement disallows them.
-
-     So "can Job Wire read it" and "may this deployment read it" are
-     different questions, and until now only the first had an answer
-     in the code. SOURCES_DISABLED=linkedin removes the adapter from
-     the registry entirely: not skipped at fetch time, not filtered
-     later — absent, so nothing can reach it by any path.
-
-     The other six sources carry the product on their own. topjobs
-     alone is 5,261 vacancies across 31 areas, measured. */
   disabledSources: (process.env.SOURCES_DISABLED || "")
     .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
-  /* The delivery lane runs on its own clock, faster than the crawl.
-
-     Mail used to run inside the crawl tick, so an alert written at the
-     start of an 80-second sweep waited for that sweep plus everything
-     after it. Fifteen seconds is well under the time a crawl takes and
-     costs one cheap Mongo query when there is nothing to send. */
   deliveryTickSeconds: num("DELIVERY_TICK_SECONDS", 15),
-  /* How long shutdown may take before the process exits anyway.
-
-     Generous, because a LinkedIn sweep runs about eighty seconds and
-     killing one mid-crawl used to lose every job it had claimed and not
-     yet delivered. It does not any more — obligations are durable — so
-     this buys tidiness rather than correctness, and a platform that
-     SIGKILLs sooner costs a delay and nothing else. */
   shutdownGraceMs: num("SHUTDOWN_GRACE_MS", 120000),
 
-  // How long a job stays in seenJobs before it can be "new" again.
-  // Must outlive any realistic posting, or you re-alert on old jobs.
   seenJobTtlDays: num("SEEN_JOB_TTL_DAYS", 14),
-
-  // How long we remember having SEEN a job. This is the only thing
-  // stopping a long-lived listing being rediscovered and mailed again, so
-  // it must outlive the longest a board leaves a posting up: Keells serves
-  // live pages printed 672 days old and MAS 288, which makes two years a
-  // floor rather than an aim. It stores ids only, so length is cheap.
   alertTtlDays: num("ALERT_TTL_DAYS", 1095),
-
-  /* The oldest a posting can PRINT and still be worth an email.
-   *
-   * Day-precision boards skip the four hour freshness gate, because a date
-   * with no time resolves to midnight and a job put up this morning
-   * already reads as hours old. That exemption had no upper bound, so
-   * Rooster — which carries years of listings — mailed one printed 1,024
-   * days old and another 747.
-   *
-   * Deliberately generous. Keells stamps a listing with the date the
-   * vacancy was RAISED and leaves it up for months, so a genuinely new
-   * Keells posting can print 56 days old and must still arrive; that case
-   * is the whole reason the old fourteen day rule was removed. This is a
-   * sanity ceiling on absurdity, not a freshness rule. */
   staleAlertDays: num("STALE_ALERT_DAYS", 90),
 
-  /* The watch a new account starts with.
-   *
-   * Signing up used to land on an empty wire and a form, which asks
-   * someone to configure a thing before they have seen it do anything.
-   * The first sweep after that is also the priming one, so the reward for
-   * filling the form in correctly was a second wait.
-   *
-   * Comma-separated, matched on the title like any other watch. Set
-   * STARTER_WATCH_KEYWORDS to an empty string to turn it off; the geo is
-   * a LinkedIn geoId and must be one the app knows, or no watch is made. */
   starterWatchKeywords: (process.env.STARTER_WATCH_KEYWORDS ?? "intern").trim(),
   starterWatchGeoId: (process.env.STARTER_WATCH_GEO_ID ?? "100446352").trim(),
   starterWatchLabel: (process.env.STARTER_WATCH_LABEL ?? "Intern").trim(),
 };
 
-// True when Gmail SMTP is the transport. Every Gmail-specific check
-// below is conditioned on it: with Brevo configured these credentials are
-// legitimately absent, and asserting on them turned an unused setting
-// into a boot failure.
+/** Honest outbound User-Agent, resolved after appUrl is populated. */
+export function outboundUserAgent() {
+  if (env._outboundUserAgentRaw) return env._outboundUserAgentRaw;
+  return `JobWire/0.1 (+${env.appUrl})`;
+}
+
+// ── Validation ────────────────────────────────────────────────────────────────
+
 const usingGmail = !env.brevoApiKey;
 
-// Catch the mistakes that produce confusing failures much later.
-if (usingGmail && env.gmailAppPassword.length !== 16) {
+if (env.mailEnabled && usingGmail && env.gmailAppPassword.length !== 16) {
   throw new Error(
     `GMAIL_APP_PASSWORD should be 16 characters after removing spaces, ` +
     `got ${env.gmailAppPassword.length}. Is it a real app password?`
   );
 }
-// Gmail silently rewrites a From that does not match the authenticated
-// account, so a mismatch does not fail loudly — it just breaks DMARC
-// alignment, which is exactly what pushes mail into spam. Warn rather
-// than throw: a legitimately configured "Send mail as" alias is valid.
 const fromAddress = ((env.mailFrom || "").match(/<([^>]+)>/)?.[1] || env.mailFrom || "")
   .trim().toLowerCase();
-if (usingGmail && fromAddress !== env.gmailUser.toLowerCase()) {
+if (env.mailEnabled && usingGmail && fromAddress !== (env.gmailUser || "").toLowerCase()) {
   console.warn(
     `WARNING  MAIL_FROM address (${fromAddress}) does not match GMAIL_USER ` +
     `(${env.gmailUser}). Gmail will rewrite the From header, and the ` +
@@ -196,14 +158,6 @@ if (usingGmail && fromAddress !== env.gmailUser.toLowerCase()) {
   );
 }
 
-// Brevo hands out two credentials on the same screen and they are not
-// interchangeable. The HTTP API (/v3/smtp/email) needs the REST key:
-//
-//   xkeysib-...    API key      <- what this app uses
-//   xsmtpsib-...   SMTP key     <- username/password for the SMTP relay
-//
-// Pasting the SMTP key gives "401: Key not found" at send time, hours
-// after the deploy looked fine, so name the mistake at boot instead.
 if (env.brevoApiKey && env.brevoApiKey.startsWith("xsmtpsib-")) {
   throw new Error(
     "BREVO_API_KEY is an SMTP key (xsmtpsib-...), which the HTTP API rejects " +
@@ -218,18 +172,12 @@ if (env.brevoApiKey && !env.brevoApiKey.startsWith("xkeysib-")) {
   );
 }
 
-// Sending as a freemail address through a third party breaks DMARC
-// alignment: gmail.com's own policy says only Google may send as
-// gmail.com, so mail relayed by Brevo claims a domain it cannot prove.
-// Gmail recipients — which is nearly everyone here — filter it hardest.
-// Brevo flags this too, but a dashboard warning is easy to never revisit.
-const FREEMAIL = /@(gmail|googlemail|yahoo|outlook|hotmail|live|aol|icloud|proton(mail)?)\./i;
+const FREEMAIL = /@(gmail|googlemail|yahoo|outlook|hotmail|live|aol|icloud|proton(mail)?)\./ ;
 if (env.brevoApiKey && FREEMAIL.test(fromAddress)) {
   console.warn(
     `WARNING  MAIL_FROM (${fromAddress}) is a freemail address being relayed ` +
     `through Brevo. DMARC cannot align, so Gmail and Outlook will filter ` +
-    `these aggressively — including the verification codes new users need ` +
-    `to sign up at all. Fix: register a domain, authenticate it in Brevo ` +
+    `these aggressively. Fix: register a domain, authenticate it in Brevo ` +
     `(SPF + DKIM), and send as alerts@yourdomain.`
   );
 }
@@ -245,4 +193,37 @@ if (env.defaultSweepMinutes < env.minSweepMinutes) {
 }
 if (env.isProd && env.sessionSecret.length < 32) {
   throw new Error("SESSION_SECRET is too short for production. Use 32+ random characters.");
+}
+
+const validDnsOrders = ["verbatim", "ipv4first", "ipv6first"];
+if (!validDnsOrders.includes(env.dnsResultOrder)) {
+  throw new Error(`DNS_RESULT_ORDER must be one of: ${validDnsOrders.join(", ")}`);
+}
+
+for (const [name, value, min, max] of [
+  ["PORT", env.port, 1, 65535],
+  ["TRUST_PROXY_HOPS", env.trustProxyHops, 0, 10],
+  ["LINKEDIN_REQUEST_BUDGET_PER_HOUR", env.linkedinRequestBudgetPerHour, 1, 100000],
+  ["LINKEDIN_BLOCKED_BACKOFF_MINUTES", env.linkedinBlockedBackoffMinutes, 1, 1440],
+  ["LINKEDIN_BLOCKED_BACKOFF_MAX_MINUTES", env.linkedinBlockedBackoffMaxMinutes, 1, 10080],
+  ["POLL_TICK_SECONDS", env.pollTickSeconds, 1, 86400],
+  ["DELIVERY_TICK_SECONDS", env.deliveryTickSeconds, 1, 86400],
+  ["SHUTDOWN_GRACE_MS", env.shutdownGraceMs, 1000, 600000],
+]) {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+}
+if (env.linkedinBlockedBackoffMinutes > env.linkedinBlockedBackoffMaxMinutes) {
+  throw new Error(
+    `LINKEDIN_BLOCKED_BACKOFF_MINUTES (${env.linkedinBlockedBackoffMinutes}) ` +
+    `exceeds LINKEDIN_BLOCKED_BACKOFF_MAX_MINUTES (${env.linkedinBlockedBackoffMaxMinutes})`
+  );
+}
+const knownSources = ["linkedin", "keells", "topjobs", "mas", "itpro", "xpress", "rooster"];
+if (env.disabledSources.some((id) => !knownSources.includes(id))) {
+  throw new Error("SOURCES_DISABLED contains an unknown source; check spelling");
+}
+if (env.mailEnabled && !env.mailFrom?.trim()) {
+  throw new Error("MAIL_FROM is required when MAIL_ENABLED=true");
 }

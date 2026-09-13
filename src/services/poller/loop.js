@@ -148,7 +148,7 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
   stopped = true;
   /* Delivery first: it is quick, and stopping it means the drain in the
      shutdown handler is the only thing still sending. */
-  await stopDeliveryLoop();
+  if (!await stopDeliveryLoop()) return false;
   if (timer) clearInterval(timer);
   timer = null;
 
@@ -183,7 +183,7 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
       ttlMs: Lease.LEASE_MS,
     });
     await Workers.retire(OWNER);
-    return;
+    return false;
   }
 
   try {
@@ -193,6 +193,7 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
     log.warn("could not release the poller lease", { message: err.message });
   }
   await Workers.retire(OWNER);
+  return true;
 }
 
 /* ── THE DELIVERY LANE ────────────────────────────────────────

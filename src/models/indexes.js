@@ -263,6 +263,17 @@ export async function ensureIndexes() {
     )
   );
 
+  // ── sourceTraffic: deployment-wide request budgets and circuits ──
+  /* One document per source, keyed by source id. This index makes
+     findOneAndUpdate on { source: 1 } fast. Additive: older code that
+     does not know this collection silently ignores it. */
+  created.push(
+    await idx(collections.sourceTraffic(),
+      { source: 1 },
+      { name: "source_traffic_by_source", unique: true }
+    )
+  );
+
   log.info("indexes ensured", { count: created.length, ttlDays: env.seenJobTtlDays });
   return created;
 }
