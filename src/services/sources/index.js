@@ -51,10 +51,42 @@ import * as mas from "./mas.js";
 import * as itpro from "./itpro.js";
 import * as xpress from "./xpress.js";
 import * as rooster from "./rooster.js";
+import { env } from "../../config/env.js";
+import { log } from "../../utils/logger.js";
 
-export const SOURCES = { linkedin, keells, topjobs, mas, itpro, xpress, rooster };
+const ALL_SOURCES = { linkedin, keells, topjobs, mas, itpro, xpress, rooster };
 
-export const DEFAULT_SOURCE = "linkedin";
+/**
+ * The adapters this deployment may actually use.
+ *
+ * REMOVED, not skipped. A disabled source is absent from the
+ * registry, so getSource returns null, sourcesForCountry never names
+ * it, the watch form never offers it, and a query row that still
+ * lists it sweeps everything else and quietly leaves it alone. There
+ * is no code path that can reach an adapter that is not here.
+ *
+ * That distinction matters when the reason for disabling is a host
+ * saying "not on our infrastructure": a flag checked in one place is
+ * a flag somebody forgets in another.
+ */
+export const SOURCES = Object.fromEntries(
+  Object.entries(ALL_SOURCES).filter(([id]) => !env.disabledSources.includes(id))
+);
+
+export const DISABLED_SOURCES = Object.keys(ALL_SOURCES)
+  .filter((id) => env.disabledSources.includes(id));
+
+if (DISABLED_SOURCES.length) {
+  log.warn("sources disabled for this deployment", {
+    disabled: DISABLED_SOURCES.join(","),
+    active: Object.keys(SOURCES).join(","),
+  });
+}
+
+/* The fallback when a query names nothing usable. Falls through to
+   whatever IS enabled, so a LinkedIn-less deployment still has a
+   sensible default rather than a dangling id. */
+export const DEFAULT_SOURCE = SOURCES.linkedin ? "linkedin" : Object.keys(SOURCES)[0] || null;
 
 export function getSource(id) {
   return SOURCES[id] || null;

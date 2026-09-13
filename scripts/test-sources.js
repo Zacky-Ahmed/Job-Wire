@@ -585,5 +585,69 @@ check("and a parked query claims no capacity at all",
   SCH.utilisation([...three, q("parked", 5, null, { serviceMsAvg: 80_000 })]).U === u3.U);
 
 
+console.log("\n=== a deployment can refuse a source entirely ===");
+
+/* "Can Job Wire read it" and "may THIS deployment read it" are different
+   questions, and until now only the first had an answer in the code.
+   Railway restricted the production workspace under an acceptable-use
+   policy that prohibits running scrapers against services whose terms
+   disallow them; LinkedIn's user agreement disallows them.
+ *
+ * So the host's answer has to be expressible. SOURCES_DISABLED removes
+ * an adapter from the registry rather than skipping it at fetch time — a
+ * flag checked in one place is a flag somebody forgets in another. */
+const { execFileSync: runNode } = await import("node:child_process");
+
+const probe = `
+  const m = await import("./src/services/sources/index.js");
+  const SRC = await import("./src/services/sources/index.js");
+  console.log(JSON.stringify({
+    active: Object.keys(m.SOURCES),
+    disabled: m.DISABLED_SOURCES,
+    def: m.DEFAULT_SOURCE,
+    got: m.getSource("linkedin") === null,
+    forLK: m.sourcesForCountry("100446352"),
+    listed: m.listSources().map((s) => s.id),
+  }));
+`;
+
+const withLinkedIn = JSON.parse(runNode(
+  process.execPath, ["--input-type=module", "-e", probe],
+  { encoding: "utf8", env: { ...process.env, SOURCES_DISABLED: "" } }
+).trim().split("\n").pop());
+
+const withoutLinkedIn = JSON.parse(runNode(
+  process.execPath, ["--input-type=module", "-e", probe],
+  { encoding: "utf8", env: { ...process.env, SOURCES_DISABLED: "linkedin" } }
+).trim().split("\n").pop());
+
+check("by default every adapter is available",
+  withLinkedIn.active.includes("linkedin") && withLinkedIn.active.length === 7,
+  withLinkedIn.active.join(","));
+
+check("SOURCES_DISABLED removes it from the registry",
+  !withoutLinkedIn.active.includes("linkedin"),
+  withoutLinkedIn.active.join(","));
+check("getSource cannot return it", withoutLinkedIn.got === true,
+  "not skipped at fetch time — absent, so no code path can reach it");
+check("the country resolver never names it",
+  !withoutLinkedIn.forLK.includes("linkedin"),
+  withoutLinkedIn.forLK.join(","));
+check("the new-watch picker never offers it",
+  !withoutLinkedIn.listed.includes("linkedin"));
+check("and the default source falls through to one that is enabled",
+  withoutLinkedIn.def !== "linkedin" && withoutLinkedIn.active.includes(withoutLinkedIn.def),
+  `default is now ${withoutLinkedIn.def}`);
+
+/* THE PRODUCT SURVIVES THE LOSS. Six sources remain, and topjobs alone
+   is 5,261 vacancies across 31 functional areas — measured, not
+   estimated. A watch in Sri Lanka still has somewhere to look. */
+check("six sources still cover Sri Lanka without it",
+  withoutLinkedIn.forLK.length === 6,
+  withoutLinkedIn.forLK.join(","));
+check("including the boards that carry the most volume",
+  ["topjobs", "xpress", "rooster"].every((s) => withoutLinkedIn.forLK.includes(s)));
+
+
 console.log(failed ? `\n${failed} failed` : "\nall good");
 process.exit(failed ? 1 : 0);

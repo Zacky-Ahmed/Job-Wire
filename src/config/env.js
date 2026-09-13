@@ -93,6 +93,24 @@ export const env = {
   fetchJitterMs: num("FETCH_JITTER_MS", 4000),
   maxFailCount: num("MAX_FAIL_COUNT", 6),
   pollerEnabled: bool("POLLER_ENABLED", true),
+  /* Sources this deployment must NOT use, comma separated.
+
+     Exists because a host can forbid a source that the code is
+     perfectly capable of reading. Railway restricted this
+     workspace under an acceptable-use policy that prohibits
+     running scrapers against a service whose terms disallow them,
+     and LinkedIn's user agreement disallows them.
+
+     So "can Job Wire read it" and "may this deployment read it" are
+     different questions, and until now only the first had an answer
+     in the code. SOURCES_DISABLED=linkedin removes the adapter from
+     the registry entirely: not skipped at fetch time, not filtered
+     later — absent, so nothing can reach it by any path.
+
+     The other six sources carry the product on their own. topjobs
+     alone is 5,261 vacancies across 31 areas, measured. */
+  disabledSources: (process.env.SOURCES_DISABLED || "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   /* The delivery lane runs on its own clock, faster than the crawl.
 
      Mail used to run inside the crawl tick, so an alert written at the
