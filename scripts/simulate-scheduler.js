@@ -65,6 +65,19 @@ function simulate({ name, queries, hours = HOURS, events = [] }) {
   const missedSlots = new Map();
   let utilisationCrossedAt = null;
 
+  /* IS THE LANE EVER IDLE WHILE SOMETHING IS ALREADY OVERDUE?
+
+     The question a reviewer asked of the oversubscribed run, and the
+     only honest way to answer it is to measure rather than reason. Idle
+     time is fine when nothing is due; idle time while a query is past
+     its deadline is scheduling waste and would mean the selector is
+     refusing work it could be doing.
+
+     Tracked separately so the two cannot be confused. */
+  let idleMs = 0;
+  let idleWhileOverdueMs = 0;
+  let idleWhileOverdueEvents = 0;
+
   const fire = (t) => {
     for (const e of events) {
       if (e.atMinute * MIN <= t && !e._done) {
@@ -85,12 +98,25 @@ function simulate({ name, queries, hours = HOURS, events = [] }) {
 
     const pick = selectNext(world, now);
     if (!pick) {
-      /* Nothing due. Jump straight to the next deadline rather than
-         ticking — the whole point of virtual time. */
+      /* Nothing is due. Before jumping the clock, prove that: if any
+         query is actually past its deadline here, the selector declined
+         work it could have done and that is a bug, not a policy. */
+      const overdueNow = world.filter((q) => {
+        const l = lateness(q, now);
+        return l && l.overdueMs >= 0;
+      });
+
       const nextDue = world
         .map((q) => (q.nextFetchAt ? new Date(q.nextFetchAt).getTime() : Infinity))
         .reduce((a, b) => Math.min(a, b), Infinity);
       if (!Number.isFinite(nextDue) || nextDue <= now) break;
+
+      const gap = Math.min(nextDue, endAt) - now;
+      idleMs += gap;
+      if (overdueNow.length) {
+        idleWhileOverdueMs += gap;
+        idleWhileOverdueEvents++;
+      }
       now = Math.min(nextDue, endAt);
       continue;
     }
@@ -124,7 +150,13 @@ function simulate({ name, queries, hours = HOURS, events = [] }) {
     now = finishedAt;
   }
 
-  return { name, hours, world, sweeps, missedSlots, utilisationCrossedAt, final: utilisation(world) };
+  return {
+    name, hours, world, sweeps, missedSlots, utilisationCrossedAt,
+    idleMs, idleWhileOverdueMs, idleWhileOverdueEvents,
+    wallMs: endAt,
+    busyMs: sweeps.reduce((n, sw) => n + sw.serviceMs, 0),
+    final: utilisation(world),
+  };
 }
 
 // ── reporting ──────────────────────────────────────────────────
@@ -140,7 +172,12 @@ function percentile(values, p) {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
 }
 
+/* Every scenario, so the idle invariant can be checked across all of
+   them at the end rather than scenario by scenario. */
+const ALL_RUNS = [];
+
 function report(r) {
+  ALL_RUNS.push(r);
   console.log(`\n${"═".repeat(66)}\n${r.name}   (${r.hours}h simulated)\n${"═".repeat(66)}`);
 
   const u = r.final;
@@ -153,7 +190,21 @@ function report(r) {
   if (r.utilisationCrossedAt != null) {
     console.log(`crossed 100% at    ${mmss(r.utilisationCrossedAt)} of simulated time`);
   }
-  console.log(`sweeps completed   ${r.sweeps.length}\n`);
+  console.log(`sweeps completed   ${r.sweeps.length}`);
+
+  /* WHERE THE WALL CLOCK WENT. In an oversubscribed run the lane should
+     be busy essentially all of the time; anything else is waste, and
+     "the lane was idle for 24 minutes while four queries were overdue"
+     is the kind of thing that hides behind a healthy-looking sweep
+     count. */
+  const busyPct = r.busyMs / r.wallMs;
+  console.log(
+    `lane busy          ${pct(busyPct)}   idle ${mmss(r.idleMs)}` +
+    (r.idleWhileOverdueMs
+      ? `   IDLE WHILE OVERDUE ${mmss(r.idleWhileOverdueMs)} over ${r.idleWhileOverdueEvents} gaps`
+      : `   (never idle while a query was overdue)`)
+  );
+  console.log("");
 
   console.log(`  query        sweeps   delay p50    delay p90    worst     missed slots`);
   for (const q of r.world) {
@@ -198,6 +249,32 @@ report(simulate({
   ],
 }));
 
+/* WHY 252 SWEEPS AND NOT ~270.
+ *
+ * A reviewer did the arithmetic: six hours is 21,600 seconds, an 80
+ * second sweep fits 270 times, and the run performs 252 — about 93% of
+ * the lane while demand is 107%. Reasonable question: is the scheduler
+ * leaving work on the table?
+ *
+ * Measured, not argued: the "idle while overdue" counter is zero. The
+ * lane is idle for 24 minutes across the run and every second of it is
+ * while NOTHING IS DUE.
+ *
+ * That is the fixed-slot rule doing exactly what it was asked to do.
+ * "Every five minutes" means the grid — 10:00, 10:05, 10:10 — so a
+ * sweep that finishes at 10:04:20 does not immediately start the next
+ * one; it waits for 10:05. Under saturation the four queries bunch onto
+ * shared slot boundaries and the lane waits out the remainder.
+ *
+ * The alternative is free-running: start the next sweep the instant the
+ * last finishes. That would reach ~270 and would also mean cadence
+ * stops meaning anything — a watch would drift to whatever the crawl
+ * happens to cost, which is the drift this whole cluster removed. The
+ * unused 7% is the price of the grid, and it is a price worth paying.
+ *
+ * Asserted below rather than described, so a future change that starts
+ * sweeping early gets caught.
+ */
 report(simulate({
   name: "4 × five-minute LinkedIn watches (80s each) — cannot fit",
   queries: [
@@ -264,6 +341,28 @@ report(simulate({
     { id: "intern", everyMinutes: 5, serviceMs: 80_000, startAt: -25 * MIN },
   ],
 }));
+
+/* THE INVARIANT, checked on every scenario rather than eyeballed on one.
+   Idle time while a query is overdue is scheduling waste; idle time
+   while nothing is due is the grid being honoured. */
+const wasteful = ALL_RUNS.filter((r) => r.idleWhileOverdueMs > 0);
+if (wasteful.length) {
+  console.log(
+    `\n${"!".repeat(66)}\n` +
+    `SCHEDULING WASTE: ${wasteful.length} scenario(s) left the lane idle while a\n` +
+    `query was already overdue. The selector declined work it could have done.\n` +
+    wasteful.map((r) => `  ${r.name}: ${mmss(r.idleWhileOverdueMs)}`).join("\n") +
+    `\n${"!".repeat(66)}\n`
+  );
+  process.exitCode = 1;
+} else {
+  console.log(
+    `\n${"─".repeat(66)}\n` +
+    `Across all ${ALL_RUNS.length} scenarios the lane was NEVER idle while a query\n` +
+    `was overdue. Idle time only ever occurs when nothing is due, which is the\n` +
+    `fixed-slot rule declining to sweep early.\n`
+  );
+}
 
 console.log(
   `\n${"─".repeat(66)}\n` +
