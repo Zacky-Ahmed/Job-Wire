@@ -14,6 +14,7 @@ import { env } from "../../config/env.js";
 import { log } from "../../utils/logger.js";
 import { collections } from "../../config/db.js";
 import * as Lease from "../../models/pollerLease.js";
+import * as Workers from "../../models/pollerWorkers.js";
 import { reportUtilisation } from "./utilisation.js";
 import { openPass, closePass } from "./snapshot.js";
 import { randomUUID } from "node:crypto";
@@ -34,6 +35,20 @@ import { hostname } from "node:os";
  */
 async function beat(patch) {
   try {
+    /* THIS WORKER'S ROW, not the shared one.
+
+       Every process used to write _id:"poller". With two processes —
+       which a rolling deploy guarantees — a standby worker's
+       state:"standby" landed in the same document the crawling worker
+       was using, and noteProgress() then updated its page and source
+       without restoring the state. The row ended up describing no
+       process that existed, and since the UI had just been unified onto
+       one snapshot, every surface would have agreed on it. */
+    await Workers.beat(OWNER, patch);
+
+    /* The legacy shared row is still written so anything reading it
+       during a rolling deploy sees something sane. It is no longer the
+       source of truth and can be dropped once no old instance is left. */
     await collections.pollerState().updateOne(
       { _id: "poller" },
       { $set: { ...patch, at: new Date() } },
@@ -86,6 +101,10 @@ export async function noteProgress(where = {}) {
   if (now - lastProgressWrite < 10_000) return;
   lastProgressWrite = now;
   await beat({
+    /* state is restated, not assumed. A progress write that only set
+       the page left whatever state was last written standing — which,
+       on the old shared row, could be another process's "standby". */
+    state: "working",
     lastProgressAt: new Date(),
     currentSource: where.source ?? null,
     currentSurface: where.surface ?? null,
@@ -125,13 +144,38 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
   if (timer) clearInterval(timer);
   timer = null;
 
+  let finished = true;
   if (inFlight) {
     log.info("waiting for the sweep in flight before shutting the poller down");
     const raced = await Promise.race([
       inFlight.then(() => "finished"),
       new Promise((r) => setTimeout(() => r("timed out"), waitMs)),
     ]);
+    finished = raced === "finished";
     log.info("poller tick " + raced);
+  }
+
+  /* A PROCESS MUST NOT HAND OVER CRAWLING AUTHORITY WHILE IT IS STILL
+     CRAWLING.
+
+     This released the lease unconditionally after the wait — including
+     when the wait TIMED OUT, which is exactly the case where the old
+     process still has a LinkedIn request in the air. The replacement
+     would take the freed lease and start its own crawl beside it: two
+     crawlers on one IP range, which is the precise thing fencing exists
+     to prevent, arriving at the worst possible moment.
+
+     If the sweep did not finish, the lease is left to expire on its own.
+     That costs the replacement up to one TTL of waiting — and waiting is
+     the correct behaviour when the alternative is crawling alongside a
+     process you cannot see. */
+  if (!finished) {
+    log.warn("shutdown timed out with a sweep still running — NOT releasing the lease", {
+      note: "the replacement waits out the TTL rather than crawling beside an in-flight request",
+      ttlMs: Lease.LEASE_MS,
+    });
+    await Workers.retire(OWNER);
+    return;
   }
 
   try {
@@ -140,6 +184,7 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
     // Not worth blocking a shutdown for; the TTL will clear it.
     log.warn("could not release the poller lease", { message: err.message });
   }
+  await Workers.retire(OWNER);
 }
 
 export function stopPollerSync() {
@@ -292,15 +337,39 @@ async function tick() {
     log.debug("tick", { due: due.length });
     for (const query of due) {
       if (stopped) break;
-      /* Checked before EVERY query, not once per tick. This is the rule
-         the whole lease exists to enforce: a worker without a valid
-         fenced lease may not start another fetch. */
-      if (!holdsLease) {
+      /* ASSERTED AGAINST MONGO, not read off a local boolean.
+
+         This checked `holdsLease`, which is process memory updated by a
+         renewal timer that deliberately treats a FAILED renewal as
+         inconclusive — a Mongo blip should not surrender the crawl. The
+         gap: if renewals keep throwing for longer than the TTL, the
+         lease genuinely expires, another process takes it, and this one
+         still believes holdsLease === true because it never received a
+         definitive answer. It would then start another fetch.
+
+         So the invariant is made literal. A renewal that comes back null
+         means the database has given the lease to somebody else, and
+         this process stops. No valid {owner, token} match, no network
+         work. */
+      const stillOurs = await Lease.renew(fence).catch((err) => {
+        /* Unreachable database is not proof of loss, but it is not
+           permission either. Refusing to fetch is the safe reading:
+           worst case a crawl is delayed by one tick. */
+        log.warn("could not confirm the poller lease before a query — not fetching", {
+          message: err.message,
+        });
+        return null;
+      });
+      if (!stillOurs) {
+        holdsLease = false;
+        currentFence = null;
         log.error("stopping mid-tick — this process no longer holds the poller lease", {
           owner: OWNER, done: due.indexOf(query), of: due.length,
         });
         break;
       }
+      fence = stillOurs;
+      currentFence = stillOurs;
       if ((query.failCount || 0) >= env.maxFailCount) {
         /* Park it, and arm ONE probe for when the wait is over.
 

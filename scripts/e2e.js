@@ -582,8 +582,8 @@ const refusedDrain = await drainOutbox({
 ok(refusedDrain.failed >= 1, "a refusal is reported as a failure");
 const failRow = await collections.outbox().findOne({ jobId: "linkedin:e2e-fail-1" });
 ok(failRow.status === "pending", "the obligation survives the refusal");
-ok(failRow.attempts === 1 && failRow.lastError === "provider refused",
-  "carrying why, and how many times");
+ok(failRow.sendAttempts === 1 && failRow.lastError === "provider refused",
+  "carrying why, and how many PROVIDER attempts — claims are counted separately now");
 ok(failRow.nextAttemptAt > new Date(),
   "and scheduled forward, so it is not retried on the very next tick");
 
@@ -1282,6 +1282,104 @@ ok(plainDone.passHash === "already-set",
   "and an account with no staged password keeps the hash it had");
 
 await collections.users().deleteMany({ _id: { $in: [stagedUser, plainUser] } });
+
+
+/* WAITING FOR QUOTA IS NOT A DELIVERY ATTEMPT.
+ *
+ * claimBatch incremented `attempts` at claim time, before anything knew
+ * whether the daily cap could afford to send the row. Groups beyond the
+ * remaining quota go straight back to pending without touching a
+ * provider — but they kept the increment. With a nearly-exhausted cap
+ * and a drain after every query, a row could reach attempts: 5 without
+ * one real send, then be killed by the FIRST genuine transient failure
+ * because its retry budget was already spent.
+ */
+const quotaUser = (await collections.users().insertOne({
+  email: `e2e-quota-${Date.now()}@example.invalid`, verified: true, createdAt: new Date(0),
+})).insertedId;
+const quotaQ = (await collections.queries().insertOne({
+  keywordsKey: `e2e-quota-${Date.now()}`, keywords: ["intern"], geoId: "e2e-q",
+  matchAll: false, createdAt: new Date(0), primed: true, nextFetchAt: new Date(), everyMinutes: 5,
+})).insertedId;
+const quotaSub = (await collections.subscriptions().insertOne({
+  userId: quotaUser, queryId: quotaQ, label: "Intern", active: true, createdAt: new Date(0),
+})).insertedId;
+
+await fanOut1({ _id: quotaQ, keywords: ["intern"] }, [{
+  jobId: "linkedin:e2e-quota-1", title: "Intern - Capped Out", company: "X",
+  url: "https://example.invalid", location: "Colombo, Sri Lanka",
+}], new Date());
+
+/* Five drains against a cap of zero. Every one claims the row, finds it
+   cannot afford to send it, and puts it back. */
+for (let i = 0; i < 5; i++) {
+  await drainOutbox({
+    send: async () => { throw new Error("the provider must never be called at cap 0"); },
+    cap: 0,
+  });
+}
+const waited = await collections.outbox().findOne({ subscriptionId: quotaSub });
+ok(waited.status === "pending", "after five capped drains the obligation is still owed");
+ok((waited.sendAttempts || 0) === 0,
+  `and has made ZERO provider attempts (got ${waited.sendAttempts || 0})`);
+
+/* Now let it through, and fail it for real. That is attempt one — the
+   waiting must not have spent the budget. */
+await drainOutbox({ send: async () => ({ ok: false, error: "timed out" }), cap: 10_000 });
+const tried = await collections.outbox().findOne({ subscriptionId: quotaSub });
+ok(tried.sendAttempts === 1,
+  `a genuine failure is the FIRST attempt, not the sixth (got ${tried.sendAttempts})`);
+ok(tried.status === "pending",
+  "so it is still retryable rather than dead on its first real problem");
+
+await collections.outbox().deleteMany({ queryId: quotaQ });
+await collections.emailLog().deleteMany({ userId: quotaUser });
+await collections.subscriptions().deleteMany({ queryId: quotaQ });
+await collections.users().deleteOne({ _id: quotaUser });
+await collections.queries().deleteOne({ _id: quotaQ });
+
+/* A STANDBY WORKER MUST NOT DESCRIBE THE CRAWLING ONE.
+ *
+ * Every process wrote one shared row, _id:"poller". With two processes
+ * — which a rolling deploy guarantees — a standby worker's
+ * state:"standby" landed in the document the crawling worker was using,
+ * and its progress writes then updated page and source without
+ * restoring the state. The row described no process that existed, and
+ * because the UI had just been unified onto one snapshot, every surface
+ * would have agreed on it.
+ */
+const Workers = await import("../src/models/pollerWorkers.js");
+await collections.pollerWorkers().deleteMany({ _id: { $in: ["e2e-A", "e2e-B"] } });
+
+await Workers.beat("e2e-A", {
+  state: "working", lastTickAt: new Date(), lastProgressAt: new Date(),
+  currentSource: "linkedin", currentSurface: "countryFeed", currentPage: 18,
+});
+await Workers.beat("e2e-B", { state: "standby", lastTickAt: new Date() });
+
+const aRow = await Workers.forOwner("e2e-A");
+const bRow = await Workers.forOwner("e2e-B");
+ok(aRow.state === "working" && aRow.currentPage === 18,
+  "the crawling worker's row still says working, on page 18");
+ok(bRow.state === "standby",
+  "the standby worker's row says standby");
+ok(aRow.state !== bRow.state,
+  "they are DIFFERENT documents — a standby beat cannot overwrite a crawl");
+
+/* And the snapshot resolves through the lease, so it reports whoever is
+   actually authorised to crawl rather than whoever wrote last. */
+const RTx = await import("../src/services/poller/runtime.js");
+const viaLease = RTx.pollerRuntime(aRow, { owner: "e2e-A", expiresAt: new Date(Date.now() + 60000) },
+  { enabled: true });
+ok(viaLease.status === RTx.WORKING,
+  `resolving the lease owner's row reports WORKING (${viaLease.status})`);
+
+const viaWrongRow = RTx.pollerRuntime(bRow, { owner: "e2e-A", expiresAt: new Date(Date.now() + 60000) },
+  { enabled: true });
+ok(viaWrongRow.status === RTx.STANDBY,
+  "whereas reading the standby row would have said STANDBY — which is the bug");
+
+await collections.pollerWorkers().deleteMany({ _id: { $in: ["e2e-A", "e2e-B"] } });
 
 
 /* DIAGNOSTIC HONESTY — absence is only evidence inside coverage.

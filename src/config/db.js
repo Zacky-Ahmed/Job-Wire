@@ -96,6 +96,13 @@ export const collections = {
      not exist yet — which is exactly the wrong conclusion this tracer
      has already drawn once. */
   telemetryCoverage: () => getDb().collection("telemetryCoverage"),
+  /* ONE ROW PER WORKER, keyed by the worker's own id.
+
+     There was one shared row and every process wrote to it, so a
+     standby process could stamp state:"standby" over the state of the
+     process that actually held the lease and was mid-crawl. See
+     models/pollerWorkers.js. */
+  pollerWorkers: () => getDb().collection("pollerWorkers"),
   /* "I can see this on linkedin.com right now." The one timestamp the
      system cannot observe for itself — by the time a delayed job is
      noticed, LinkedIn exposing it at 10:01 and at 10:28 look identical

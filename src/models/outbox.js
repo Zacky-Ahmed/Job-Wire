@@ -127,7 +127,11 @@ export async function enqueue(items) {
              this the safe reading of a timeout would be "give up". */
           idempotencyKey: randomUUID(),
           status: PENDING,
-          attempts: 0,
+          /* Provider calls actually made. Distinct from `claims`, which
+             counts pick-ups — a row held back by the daily cap is
+             claimed and returned without ever being sent. */
+          sendAttempts: 0,
+          claims: 0,
           nextAttemptAt: now,
           createdAt: now,
           discoveredAt: it.discoveredAt || now,
@@ -203,7 +207,22 @@ export async function claimBatch({ limit = 25, now = new Date(), owner = "worker
   for (let i = 0; i < limit; i++) {
     const row = await collections.outbox().findOneAndUpdate(
       { status: PENDING, nextAttemptAt: { $lte: now } },
-      { $set: { status: SENDING, claimedAt: now, claimedBy: owner }, $inc: { attempts: 1 } },
+      /* CLAIMS ARE NOT ATTEMPTS.
+
+         This incremented `attempts` here, at claim time, before anything
+         knew whether the daily cap could afford to send the row. Groups
+         beyond the remaining quota are handed straight back to pending —
+         they never touch a provider — but they kept the increment. With
+         a nearly-exhausted cap and a drain after every query, a row
+         could reach attempts: 5 without one real send, and then be
+         killed by the FIRST genuine transient failure because the
+         attempt budget was already spent.
+
+         Waiting for quota is not a delivery attempt. sendAttempts is
+         incremented immediately before the provider call and nowhere
+         else; claims is kept because "how often has this been picked up
+         and put back" is a useful thing to see. */
+      { $set: { status: SENDING, claimedAt: now, claimedBy: owner }, $inc: { claims: 1 } },
       { sort: { discoveredAt: 1, _id: 1 }, returnDocument: "after" }
     );
     if (!row) break;
@@ -254,6 +273,17 @@ export function settleRetry(ids, { error, nextAttemptAt, now = new Date() }) {
   return collections.outbox().updateMany(
     { _id: { $in: ids } },
     { $set: { status: PENDING, nextAttemptAt, lastTriedAt: now, lastError: String(error || "").slice(0, 300) } }
+  );
+}
+
+/**
+ * About to call the provider. The only place an attempt is counted.
+ */
+export function noteAttempt(ids, { now = new Date() } = {}) {
+  if (!ids.length) return Promise.resolve();
+  return collections.outbox().updateMany(
+    { _id: { $in: ids } },
+    { $inc: { sendAttempts: 1 }, $set: { lastTriedAt: now } }
   );
 }
 

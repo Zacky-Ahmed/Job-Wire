@@ -14,6 +14,7 @@ import { collections } from "../config/db.js";
 import { OBSERVATION_TTL_DAYS } from "./observations.js";
 import { CRAWL_LOG_TTL_DAYS } from "./crawlLog.js";
 import { SWEEP_RUN_TTL_DAYS } from "./sweepRuns.js";
+import { WORKER_TTL_MINUTES } from "./pollerWorkers.js";
 import { env } from "../config/env.js";
 import { log } from "../utils/logger.js";
 
@@ -229,6 +230,15 @@ export async function ensureIndexes() {
       { at: 1 },
       { name: "crawl_log_ttl", expireAfterSeconds: CRAWL_LOG_TTL_DAYS * 86400 }
     )
+  );
+
+  // ── pollerWorkers: each process's own runtime ────────────────
+  /* Expiring, so a retired instance's row does not linger claiming to
+     be working. Authority is in pollerLease; this is only what each
+     worker says about itself. */
+  created.push(
+    await idx(collections.pollerWorkers(), { at: 1 },
+      { name: "worker_ttl", expireAfterSeconds: WORKER_TTL_MINUTES * 60 })
   );
 
   // ── sweepRuns: was the query even selected? ──────────────────

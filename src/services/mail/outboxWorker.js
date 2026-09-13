@@ -195,6 +195,11 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
        same message under the same key rather than a larger one. */
     const { batchKey } = await Outbox.sealBatch(rows, { now });
 
+    /* Counted HERE, immediately before the provider call, and nowhere
+       else. Counting at claim time meant a row held back by the daily
+       cap spent its retry budget waiting. */
+    await Outbox.noteAttempt(ids, { now });
+
     let res;
     try {
       res = await send({
@@ -243,7 +248,10 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
 
        DEAD means "we have decided never to deliver this". A typo in an
        environment variable is not that decision. */
-    const attempts = first.attempts || 1;
+    /* +1 because this attempt has just happened and `first` was read
+       before noteAttempt ran. Reading it back would be another round
+       trip to learn a number we already know. */
+    const attempts = (first.sendAttempts || 0) + 1;
     if (Provider.isConfigFailure(res.error)) {
       await Outbox.settleBlocked(ids, { error: res.error, now });
       log.error("mail configuration rejected — holding this message until it is fixed", {
