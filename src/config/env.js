@@ -93,6 +93,13 @@ export const env = {
   fetchJitterMs: num("FETCH_JITTER_MS", 4000),
   maxFailCount: num("MAX_FAIL_COUNT", 6),
   pollerEnabled: bool("POLLER_ENABLED", true),
+  /* The delivery lane runs on its own clock, faster than the crawl.
+
+     Mail used to run inside the crawl tick, so an alert written at the
+     start of an 80-second sweep waited for that sweep plus everything
+     after it. Fifteen seconds is well under the time a crawl takes and
+     costs one cheap Mongo query when there is nothing to send. */
+  deliveryTickSeconds: num("DELIVERY_TICK_SECONDS", 15),
   /* How long shutdown may take before the process exits anyway.
 
      Generous, because a LinkedIn sweep runs about eighty seconds and

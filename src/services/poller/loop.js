@@ -16,6 +16,7 @@ import { collections } from "../../config/db.js";
 import * as Lease from "../../models/pollerLease.js";
 import * as Workers from "../../models/pollerWorkers.js";
 import { reportUtilisation } from "./utilisation.js";
+import { selectNext, utilisation } from "./schedule.js";
 import { openPass, closePass } from "./snapshot.js";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
@@ -121,6 +122,10 @@ export function startPoller() {
   });
   timer = setInterval(tick, env.pollTickSeconds * 1000);
   tick(); // do not wait a full tick for the first pass
+
+  /* The other lane. Started here so one call still starts the poller,
+     but it runs on its own clock and never awaits the crawl. */
+  startDeliveryLoop();
 }
 
 /**
@@ -141,6 +146,9 @@ export function startPoller() {
  */
 export async function stopPoller({ waitMs = 90_000 } = {}) {
   stopped = true;
+  /* Delivery first: it is quick, and stopping it means the drain in the
+     shutdown handler is the only thing still sending. */
+  await stopDeliveryLoop();
   if (timer) clearInterval(timer);
   timer = null;
 
@@ -185,6 +193,68 @@ export async function stopPoller({ waitMs = 90_000 } = {}) {
     log.warn("could not release the poller lease", { message: err.message });
   }
   await Workers.retire(OWNER);
+}
+
+/* ── THE DELIVERY LANE ────────────────────────────────────────
+ *
+ * Mail used to run inside the crawl tick: drain, then legacy retry,
+ * then crawl, then drain again after every query. Discovery and
+ * delivery share no external resource — one talks to job boards, the
+ * other to Brevo — but a slow provider or a large backlog still
+ * delayed the next LinkedIn observation, and a long crawl still sat on
+ * alerts that were already written down and ready to go.
+ *
+ * The outbox decoupled them in the database a week ago and left them
+ * welded together in the runtime. This is the other half.
+ *
+ * Two loops, same process, neither awaiting the other. The outbox is
+ * the only thing between them, which is exactly what it was built to
+ * be.
+ *
+ * NO LEASE. Delivery is safe to run in more than one process: the
+ * outbox claim is a findOneAndUpdate, so two workers cannot take the
+ * same row, and the sealed batch and idempotency key mean a duplicate
+ * attempt cannot become a duplicate email. The crawl needs a lease
+ * because LinkedIn counts requests per IP; Brevo counts messages, and
+ * the outbox already counts those.
+ */
+let deliveryTimer = null;
+let delivering = false;
+
+export function startDeliveryLoop() {
+  if (deliveryTimer) return;
+  log.info("delivery loop started", { everySeconds: env.deliveryTickSeconds });
+  const run = async () => {
+    if (delivering || stopped) return;
+    delivering = true;
+    const startedAt = Date.now();
+    try {
+      await drainOutbox();
+      // The old failed-send queue, still draining emailLog rows written
+      // before the outbox existed. Removed once none are left.
+      await retryFailedSends();
+    } catch (err) {
+      /* A delivery failure must never stop the lane. The obligations
+         are durable; the next pass finds them. */
+      log.error("delivery pass failed", { message: err.message });
+    } finally {
+      delivering = false;
+      const ms = Date.now() - startedAt;
+      if (ms > 5000) log.info("slow delivery pass", { ms });
+    }
+  };
+  deliveryTimer = setInterval(run, env.deliveryTickSeconds * 1000);
+  run();
+}
+
+export async function stopDeliveryLoop({ waitMs = 30_000 } = {}) {
+  if (deliveryTimer) clearInterval(deliveryTimer);
+  deliveryTimer = null;
+  const until = Date.now() + waitMs;
+  while (delivering && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !delivering;
 }
 
 export function stopPollerSync() {
@@ -291,14 +361,20 @@ async function tick() {
        the wrong thing, so measure it first: if mail work costs
        milliseconds, moving it buys nothing and adds a second scheduler
        to reason about. */
-    const mailStart = Date.now();
-    await drainOutbox();
-    const mailDrainMs = Date.now() - mailStart;
+    /* MAIL NO LONGER RUNS HERE. See startDeliveryLoop below.
+
+       Measured first, as promised: the drain and the legacy retry ran
+       before the crawl and again after every query, so a slow provider
+       or a large backlog delayed the next LinkedIn observation even
+       though mail and LinkedIn share no resource at all. The outbox
+       decoupled them in the database and left them welded together in
+       the runtime.
+
+       They are separate loops now. Neither awaits the other. */
+    const mailDrainMs = 0;
 
     const legacyStart = Date.now();
-    // The old failed-send queue, still draining emailLog rows written
-    // before the outbox existed. Removed once none are left.
-    await retryFailedSends();
+    // Moved to the delivery loop with the rest of the mail work.
     const legacyRetryMs = Date.now() - legacyStart;
 
     /* HOW MANY WERE ACTUALLY DUE, not just how many we took.
@@ -309,10 +385,16 @@ async function tick() {
        five-minute cadence becoming a fifteen-minute gap with LinkedIn
        doing nothing wrong. Recording both numbers is what will show
        whether that is happening before anything is restructured. */
-    const [due, dueTotal] = await Promise.all([
-      Queries.findDue(10),
-      Queries.countDue(),
-    ]);
+    /* NOT A FROZEN LIST. findDue(10) took ten due queries once and then
+       walked them; with LinkedIn at 78-92 seconds that is thirteen
+       minutes during which the list is stale, so a query becoming due
+       at minute two waited until minute thirteen. A five-minute watch
+       quietly became a fifteen-minute one.
+
+       The pool is re-read after every sweep and schedule.js picks one
+       from the CURRENT state. See the fairness rule there. */
+    const dueTotal = await Queries.countDue();
+    const due = await Queries.findDue(50);
 
     const blockedMs = mailDrainMs + legacyRetryMs;
     if (blockedMs > 2000) {
@@ -335,8 +417,39 @@ async function tick() {
     if (!due.length) return;
 
     log.debug("tick", { due: due.length });
-    for (const query of due) {
+    /* SELECT ONE, SWEEP IT, SELECT AGAIN — against the current state.
+
+       The pool is re-read from the database after every sweep, so a
+       query that becomes due while another is crawling is eligible the
+       moment that crawl ends rather than at the end of a thirteen-minute
+       walk. schedule.js decides which one; the fairness rule and the
+       starvation guard live there.
+
+       The budget bounds one pass so the tick eventually yields — it is
+       not a target, and an oversubscribed lane simply means the next
+       tick picks up where this one left off. */
+    const PASS_BUDGET = 10;
+    let sweptThisPass = 0;
+    const skip = new Set();
+
+    while (sweptThisPass < PASS_BUDGET) {
       if (stopped) break;
+
+      /* Fresh every iteration. Reading it once would be the frozen list
+         again, wearing a different shape. */
+      const pool = sweptThisPass === 0 ? due : await Queries.findDue(50);
+      const pick = selectNext(pool, Date.now(), { exclude: skip });
+      if (!pick) break;
+      const query = pick.query;
+
+      if (pick.reason === "starving") {
+        log.warn("a search waited long enough to jump the queue", {
+          queryId: String(query._id),
+          keywords: (query.keywords || []).join("+") || "everything",
+          overdueMs: pick.overdueMs,
+          note: "the starvation guard fired — the lane is behind",
+        });
+      }
       /* ASSERTED AGAINST MONGO, not read off a local boolean.
 
          This checked `holdsLease`, which is process memory updated by a
@@ -364,7 +477,7 @@ async function tick() {
         holdsLease = false;
         currentFence = null;
         log.error("stopping mid-tick — this process no longer holds the poller lease", {
-          owner: OWNER, done: due.indexOf(query), of: due.length,
+          owner: OWNER, swept: sweptThisPass,
         });
         break;
       }
@@ -391,24 +504,25 @@ async function tick() {
         // park(), not recordFailure(): the latter increments failCount,
         // so merely skipping a parked query made it look worse each tick.
         await Queries.park(query._id, wait, { probeAt: env.maxFailCount });
+        skip.add(String(query._id));
         continue;
       }
       try {
         await beat({ currentQueryId: String(query._id), currentSince: new Date() });
-        await sweepQuery(query, {
-          queuePosition: due.indexOf(query) + 1,
-          dueTotal,
-        });
+        await sweepQuery(query, { queuePosition: sweptThisPass + 1, dueTotal });
       } catch (err) {
         log.error("sweep threw", { queryId: String(query._id), message: err.message });
         await Queries.recordFailure(query._id, query.everyMinutes * 2);
+        /* Not reselected inside this pass. recordFailure pushes its
+           deadline out, but a query whose sweep threw instantly could
+           otherwise still read as the most overdue and be chosen again
+           and again inside one tick. */
+        skip.add(String(query._id));
       }
-      /* Again after each query, so a long crawl does not sit on the mail
-         it has already earned. A ten-query tick used to mean the tenth
-         query's alerts waited for the first nine to finish; obligations
-         written a minute ago should not wait on a crawl that has minutes
-         left to run. */
-      await drainOutbox();
+      /* No mail here either. The delivery loop is already sending what
+         this sweep just queued, in parallel, without the crawl waiting
+         on a provider it has nothing to do with. */
+      sweptThisPass++;
     }
   } catch (err) {
     log.error("tick failed", { message: err.message });
