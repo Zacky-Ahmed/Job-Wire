@@ -12,7 +12,10 @@
 //
 // test-db.js must be the FIRST import. It sets MONGODB_DB before env.js
 // can read it, and refuses to run at all against production.
-import { TEST_DB, connectDb, collections, closeDb, resetTestDb } from "./lib/test-db.js";
+import {
+  TEST_DB, RUN_ID, connectDb, collections, closeDb,
+  resetTestDb, dropTestDb, announce, strayTestDatabases,
+} from "./lib/test-db.js";
 import { startTestServer } from "./lib/test-server.js";
 
 const pw = await import("../src/services/auth/password.js");
@@ -77,11 +80,29 @@ await connectDb();
    pass while proving nothing. */
 await resetTestDb();
 await ensureIndexes();
-console.log("database:", TEST_DB);
 
 let server = await startTestServer();
 const BASE = server.base;
-console.log("server:  ", BASE);
+
+/* WHAT THIS RUN IS, before a single assertion.
+
+   When a failure shows up in a log days later the first four
+   questions are which database, which commit, was mail real, was
+   the poller on — and none of them used to be answerable from the
+   output. */
+await announce({ server: BASE, sources: "LIVE (network)" });
+
+/* Databases from runs killed before they could drop their own.
+   Reported, not deleted: a run still in progress has a database
+   that looks exactly like an abandoned one. */
+const strayDbs = await strayTestDatabases().catch(() => []);
+if (strayDbs.length) {
+  console.log(
+    `note: ${strayDbs.length} test database(s) from earlier runs still exist` +
+    ` (${strayDbs.slice(0, 3).join(", ")}${strayDbs.length > 3 ? ", …" : ""})\n` +
+    `      they are inert; drop them when convenient.\n`
+  );
+}
 
 await collections.users().insertOne({
   email: EMAIL, passHash: await pw.hash(PASS),
@@ -2424,7 +2445,10 @@ for (const q of new Set(testSubs.map((s) => String(s.queryId)))) {
    also asserts that the app leaves nothing dangling behind a deletion. */
 await resetTestDb();
 await server.stop();
+/* This run's database goes with it. Concurrent runs each drop only
+   their own, which is the whole point of naming them per run. */
+await dropTestDb();
 await closeDb();
 reachedTheEnd = true;
-console.log(`\ncleaned up test data — ${passes} passed, ${failures} failed`);
+console.log(`\ncleaned up ${TEST_DB} — ${passes} passed, ${failures} failed  [run ${RUN_ID}]`);
 if (failures) process.exitCode = 1;
