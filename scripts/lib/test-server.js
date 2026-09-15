@@ -12,21 +12,9 @@
 
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import { TEST_DB, RUN_ID } from "./test-db.js";
+import { TEST_DB } from "./test-db.js";
 
-/* A PORT PER RUN, derived from the run id.
-
-   A fixed 3100 meant two concurrent suites fought over one socket:
-   the second server failed to bind, its e2e reported "test server
-   never answered /healthz", and that looks exactly like a boot
-   regression. The database is already per-run; the port has to be
-   too, or runs still collide on the one resource left shared.
-
-   3100-3199 is plenty for concurrent local runs and stays clear of
-   the dev server on 3000. */
-const PORT = Number(
-  process.env.TEST_PORT || 3100 + (parseInt(RUN_ID, 16) % 100)
-);
+const PORT = Number(process.env.TEST_PORT || 3100);
 export const BASE = `http://localhost:${PORT}`;
 
 /**

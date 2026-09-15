@@ -14,7 +14,6 @@
 // making; two documents every five seconds is.
 
 import { collections } from "../../config/db.js";
-import * as Workers from "../../models/pollerWorkers.js";
 import { env } from "../../config/env.js";
 import { pollerRuntime } from "./runtime.js";
 import { log } from "../../utils/logger.js";
@@ -27,20 +26,10 @@ export async function pollerSnapshot() {
   if (cached && Date.now() - cachedAt < CACHE_MS) return cached;
 
   try {
-    /* AUTHORITY FIRST, THEN THAT OWNER'S TRUTH.
-
-       The lease says who is allowed to crawl; that worker's own row says
-       what it is doing. Reading a shared row instead meant whichever
-       process wrote most recently decided what every screen said — so a
-       standby instance could report the crawler as standing by. */
-    const lease = await collections.pollerLease().findOne({ _id: "poller.lease" });
-
-    let beat = lease?.owner ? await Workers.forOwner(lease.owner) : null;
-    /* No lease, or a holder that has not written a row yet: fall back to
-       the legacy shared document so a single-process deployment and a
-       rolling deploy both still say something true. */
-    if (!beat) beat = await collections.pollerState().findOne({ _id: "poller" });
-
+    const [beat, lease] = await Promise.all([
+      collections.pollerState().findOne({ _id: "poller" }),
+      collections.pollerLease().findOne({ _id: "poller.lease" }),
+    ]);
     cached = pollerRuntime(beat, lease, { enabled: env.pollerEnabled });
     cachedAt = Date.now();
     return cached;

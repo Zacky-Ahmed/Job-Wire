@@ -16,6 +16,36 @@
 (function () {
   var main = document.getElementById('workspaceMain');
 
+  /* Keep the persistent sidebar in sync with HTMX navigation.
+   *
+   * The sidebar lives outside #workspaceMain, so it survives page swaps.
+   * That also means the server-rendered aria-current from the previous
+   * page survives unless we update it here. */
+  function syncActiveNav() {
+    var nav = document.getElementById('workspaceNav');
+    if (!nav) return;
+
+    var path = window.location.pathname;
+
+    Array.prototype.forEach.call(nav.querySelectorAll('a[href]'), function (link) {
+      var href;
+
+      try {
+        href = new URL(link.href, window.location.origin).pathname;
+      } catch (_) {
+        return;
+      }
+
+      var active = path === href || path.indexOf(href + '/') === 0;
+
+      if (active) {
+        link.setAttribute('aria-current', 'page');
+      } else {
+        link.removeAttribute('aria-current');
+      }
+    });
+  }
+
   /* ---- shell: once ---- */
 
   /* Sidebar collapse.
@@ -249,6 +279,7 @@
 
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (main && e.detail.target === main) {
+      syncActiveNav();
       mount();
       /* Send the reader to the top of the new page. A swap moves no
          focus on its own, so a keyboard or screen-reader user would be
@@ -279,5 +310,6 @@
     lastResponse = response;
   });
 
+  syncActiveNav();
   mount();
 })();

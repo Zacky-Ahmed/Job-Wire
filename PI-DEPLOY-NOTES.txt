@@ -1,0 +1,14 @@
+Job Wire Raspberry Pi deployment pack
+
+This package was sanitized for deployment:
+- .env removed (do not transfer secrets inside archives)
+- .git removed
+- node_modules omitted
+- compose.yml added for Raspberry Pi/Docker
+
+Create .env on the Pi from .env.example, then run:
+  docker compose build
+  docker compose up -d
+
+Local health check:
+  curl http://127.0.0.1:3000/healthz

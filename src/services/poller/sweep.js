@@ -485,29 +485,13 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   const fetched = [...fetchedMap.values()];
   const { alertable, primed, storedJobs } = await diff(query, fetched);
 
-  // COVERAGE CHECK.
+  // Overall lifetime trackedPeak is retained for historical/admin display,
+  // but it is not used as a health alarm. An all-time high never decays and
+  // can become stale after source/filter changes.
   //
-  // Every failure this project has had with LinkedIn was silent: a narrow
-  // f_TPR, an unhonoured sort, a keyword filter that returns 24 results
-  // one minute and 3 the next. In each case the sweep "succeeded" and
-  // simply saw less, which is indistinguishable from a quiet morning —
-  // so the only thing that ever caught it was the user spotting a job on
-  // LinkedIn that never reached their inbox. That is the system working
-  // backwards.
-  //
-  // A query that normally yields ~60 jobs and suddenly yields 10 has not
-  // gone quiet, it has gone blind. Compare against the best this query
-  // has ever done and say so out loud.
-  const peak = query.trackedPeak || 0;
-  if (peak >= 10 && fetched.length < peak * 0.5) {
-    log.error("COVERAGE DROP — this sweep saw far less than this watch normally does", {
-      queryId: String(query._id),
-      keywords: query.keywords.join("+"),
-      sawNow: fetched.length,
-      normallySees: peak,
-      note: "jobs are probably being missed; suspect a source filter, not a quiet day",
-    });
-  }
+  // Source health is already checked above using recent healthy observations
+  // and per-surface rolling baselines, which can identify the actual source
+  // that has gone blind without comparing today's total with an old record.
 
   await Queries.reschedule(query._id, {
     timing: { scheduledFor, startedAt: started, finishedAt: Date.now() },

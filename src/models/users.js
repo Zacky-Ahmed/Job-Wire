@@ -25,46 +25,13 @@ export function setPendingPassword(id, pendingPassHash) {
   return collections.users().updateOne({ _id: id }, { $set: { pendingPassHash } });
 }
 
-/**
- * Make an account verified AND usable, in one write.
- *
- * THE ONLY DEFINITION OF "VERIFIED". There were two, and they disagreed:
- * /verify promoted the staged password, and the admin's "verify by hand"
- * button set verified:true and cleared the OTP fields without touching
- * pendingPassHash. So an admin could produce an account that reported
- * VERIFIED with passHash still null and the real password stranded in
- * staging — the person could not sign in, and the admin action that was
- * supposed to rescue a locked account had quietly finished locking it.
- *
- * ONE operation, not two writes. The old shape verified the account and
- * promoted the password separately, so a process dying between them left
- * verified:true, the code consumed, and no usable password — a state
- * that should not exist and cannot be recovered from without a reset.
- *
- * $setOnInsert is not involved and passHash is set from the document's
- * OWN staged value with an aggregation pipeline, so the promotion cannot
- * use a stale copy read minutes earlier by the caller.
- */
-export async function completeVerification(id) {
-  const row = await collections.users().findOneAndUpdate(
+/** Promote the staged password. Called only on a correct code. */
+export function promotePendingPassword(id, pendingPassHash) {
+  return collections.users().updateOne(
     { _id: id },
-    [
-      {
-        $set: {
-          verified: true,
-          verifiedAt: new Date(),
-          /* Promote the staged password if there is one, and otherwise
-             leave the existing hash alone. An account being verified by
-             hand after its staging was already consumed must not have
-             its password blanked. */
-          passHash: { $ifNull: ["$pendingPassHash", "$passHash"] },
-        },
-      },
-      { $unset: ["pendingPassHash", "otpHash", "otpExpiresAt", "otpAttempts"] },
-    ],
-    { returnDocument: "after", projection: { sessionVersion: 1, email: 1, passHash: 1, verified: 1 } }
+    { $set: { passHash: pendingPassHash, verified: true },
+      $unset: { pendingPassHash: "", otpHash: "", otpExpiresAt: "", otpAttempts: "" } }
   );
-  return row?.value ?? row;
 }
 
 export async function create({ email, passHash, otpHash, otpExpiresAt }) {
@@ -122,28 +89,13 @@ export function setReset(id, { resetHash, resetExpiresAt }) {
  * and the database need not agree, and a session issued in the same
  * second as the change should not be a coin toss.
  */
-export async function setPassword(id, passHash) {
-  /* RETURNS THE NEW VERSION, and the caller must use it.
-
-     This incremented sessionVersion and returned nothing, so /reset
-     stamped the session it had just created with the version from the
-     user document it loaded BEFORE the write. Database said 1, session
-     said 0, and requireAuth destroyed the brand-new session on the very
-     next request — a successful password reset signed the person
-     straight back out, every single time.
-
-     findOneAndUpdate rather than updateOne so the number comes from the
-     write itself. Reading it back afterwards would be a second round
-     trip with a race in the middle, and computing it locally as
-     (old + 1) is the same stale-read bug wearing a hat. */
-  const row = await collections.users().findOneAndUpdate(
+export function setPassword(id, passHash) {
+  return collections.users().updateOne(
     { _id: id },
     {
       $set: { passHash, passwordChangedAt: new Date() },
       $inc: { sessionVersion: 1 },
       $unset: { resetHash: "", resetExpiresAt: "", resetAttempts: "" },
-    },
-    { returnDocument: "after", projection: { sessionVersion: 1, email: 1 } }
+    }
   );
-  return row?.value ?? row;
 }

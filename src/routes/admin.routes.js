@@ -47,7 +47,6 @@ import * as EmailLog from "../models/emailLog.js";
 import { rel } from "../utils/time.js";
 import { listPacks, getPack } from "../services/packs.js";
 import * as Ledger from "../models/alertedJobs.js";
-import * as Users from "../models/users.js";
 import * as Outbox from "../models/outbox.js";
 import { dailyCap, providerLabel } from "../services/mail/transport.js";
 import { env } from "../config/env.js";
@@ -521,31 +520,12 @@ adminRoutes.post("/admin/users/:id/verify", ...guard, async (req, res, next) => 
     if (!id) return answer(req, res, "/admin", ["admin:peopleChanged"]);
     const u = await collections.users().findOne({ _id: id }, { projection: { email: 1, verified: 1 } });
     if (u && !u.verified) {
-      /* THE SAME OPERATION /verify USES, and that is the point.
-
-         This wrote verified:true and cleared the OTP fields itself,
-         without touching pendingPassHash — where a signup password sits
-         until the mailbox is proved. So it could produce an account
-         reporting VERIFIED with passHash still null and the real
-         password stranded in staging: the person could not sign in, and
-         the admin action meant to rescue a locked account had quietly
-         finished locking it.
-
-         Two definitions of "verified" is one too many. */
-      const verified = await Users.completeVerification(id);
-      log.warn("ADMIN verified an account by hand", {
-        by: req.user.email, account: u.email,
-        usable: !!verified?.passHash,
-      });
-      /* Said out loud, because an account with no staged password and no
-         existing hash is still unusable after this and the admin needs
-         to know that rather than assuming the button worked. */
-      if (!verified?.passHash) {
-        log.error("ADMIN verified an account that has no usable password", {
-          account: u.email,
-          note: "they must use forgotten-password; manual verification cannot invent one",
-        });
-      }
+      await collections.users().updateOne(
+        { _id: id },
+        { $set: { verified: true, verifiedAt: new Date() },
+          $unset: { otpHash: "", otpExpiresAt: "", otpAttempts: "" } }
+      );
+      log.warn("ADMIN verified an account by hand", { by: req.user.email, account: u.email });
     }
     return answer(req, res, "/admin", ["admin:peopleChanged"]);
   } catch (err) { next(err); }

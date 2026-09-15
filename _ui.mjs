@@ -1,17 +1,6 @@
-// seed-audit-account.js
-//
-//   node scripts/dev/seed-audit-account.js
-//
-// Creates the signed-in account npm run measure-routes uses to sample
-// page timings. Kept because measure-routes is useless without it.
-//
-// It WRITES TO WHATEVER MONGODB_DB POINTS AT, on purpose — the point is
-// to measure real pages against real data. It deletes and recreates only
-// this one address.
-
-import "../../src/config/env.js";
-import { connectDb, collections } from "../../src/config/db.js";
-import * as pw from "../../src/services/auth/password.js";
+import "./src/config/env.js";
+import { connectDb, collections } from "./src/config/db.js";
+import * as pw from "./src/services/auth/password.js";
 await connectDb();
 const email = "ui-audit@example.invalid";
 await collections.users().deleteMany({ email });

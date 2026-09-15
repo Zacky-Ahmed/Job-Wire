@@ -11,3 +11,17 @@ dist/
 tests/fixtures/*.html
 !tests/fixtures/sample-*.html
 email-preview/
+
+# Production/local secrets
+.env
+.env.*
+!.env.example
+
+# Local backups
+*.bak
+*.bak-*
+
+# Dependencies / runtime junk
+node_modules/
+npm-debug.log*
+.DS_Store

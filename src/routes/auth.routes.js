@@ -141,11 +141,11 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
     if (patch) await Users.applyPatch(user._id, patch);
 
     if (result === otp.OTP_RESULT.OK) {
-      /* The code is the proof of mailbox control, so this is where an
-         account becomes verified AND usable — in one write, because two
-         writes could be interrupted between them and leave an account
-         verified with no usable password. */
-      const verified = await Users.completeVerification(user._id);
+      // The code is the proof of mailbox control, so this is the only
+      // place a signup password becomes usable.
+      if (user.pendingPassHash) {
+        await Users.promotePendingPassword(user._id, user.pendingPassHash);
+      }
 
       /* First watch, before the first page.
        *
@@ -166,10 +166,10 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
       req.session.regenerate((err) => {
         if (err) return next(err);
         req.session.userId = String(user._id);
-      /* From the document the write returned, not the one loaded before
-         it. See the note on setPassword: a stale copy here is what made
-         a successful reset sign people straight back out. */
-      req.session.sessionVersion = verified?.sessionVersion ?? 0;
+      /* Stamped at sign-in and compared on every request. A password
+         change bumps the user's counter, so every session issued before
+         it stops working — see models/users.js setPassword. */
+      req.session.sessionVersion = user.sessionVersion ?? 0;
         req.session.save((err2) => {
           if (err2) return next(err2);
           log.info("verified", { email: user.email });
@@ -380,7 +380,7 @@ authRoutes.post("/reset", resetLimiter, async (req, res, next) => {
       return back({ error: messages[result] });
     }
 
-    const updated = await Users.setPassword(user._id, await pw.hash(password));
+    await Users.setPassword(user._id, await pw.hash(password));
     log.info("password reset", { email: user.email });
 
     // regenerate drops the old session id along with resetUserId, so the
@@ -388,11 +388,10 @@ authRoutes.post("/reset", resetLimiter, async (req, res, next) => {
     req.session.regenerate((err) => {
       if (err) return next(err);
       req.session.userId = String(user._id);
-      /* THE VERSION THE WRITE RETURNED, not the one on the document
-         loaded before it. Stamping the stale value meant the session
-         created BY a successful reset was one version behind the
-         database and requireAuth destroyed it on the next request. */
-      req.session.sessionVersion = updated?.sessionVersion ?? 0;
+      /* Stamped at sign-in and compared on every request. A password
+         change bumps the user's counter, so every session issued before
+         it stops working — see models/users.js setPassword. */
+      req.session.sessionVersion = user.sessionVersion ?? 0;
       req.session.save((err2) => (err2 ? next(err2) : res.redirect("/wire")));
     });
   } catch (err) {
