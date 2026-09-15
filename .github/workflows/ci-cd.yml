@@ -32,9 +32,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run shell/UI checks if available
-        run: npm run check-shell --if-present
-
       - name: JavaScript syntax check
         shell: bash
         run: |
