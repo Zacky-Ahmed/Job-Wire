@@ -161,26 +161,36 @@ async function tick() {
      same queries from the same IP range. LinkedIn's answer to that is to
      stop answering, and the symptom is the one this project keeps
      having — no jobs, no error, indistinguishable from a quiet day. */
-  let fence = await Lease.acquire(OWNER);
-  currentFence = fence;
-  if (!fence) {
-    const holder = await Lease.current();
-    log.info("another process holds the poller lease — standing by", {
-      holder: holder?.owner, expiresAt: holder?.expiresAt,
-    });
-    /* Stamps lastTickAt even though no crawling happens.
+  let fence;
+  try {
+    fence = await Lease.acquire(OWNER);
+    currentFence = fence;
 
-       It did not, and so a standby process's tick age grew without
-       bound and the admin page declared it "Stalled — no progress for
-       2 min" after ninety seconds. Standby is a CORRECT state: another
-       process holds the lease and this one is deliberately not
-       crawling. It still has to prove it is alive, which is what the
-       heartbeat is for. */
-    await beat({
-      state: "standby",
-      lastTickAt: new Date(),
-      leaseHolder: holder?.owner ?? null,
-      leaseExpiresAt: holder?.expiresAt ?? null,
+    if (!fence) {
+      const holder = await Lease.current();
+      log.info("another process holds the poller lease — standing by", {
+        holder: holder?.owner, expiresAt: holder?.expiresAt,
+      });
+      /* Stamps lastTickAt even though no crawling happens.
+
+         It did not, and so a standby process's tick age grew without
+         bound and the admin page declared it "Stalled — no progress for
+         2 min" after ninety seconds. Standby is a CORRECT state: another
+         process holds the lease and this one is deliberately not
+         crawling. It still has to prove it is alive, which is what the
+         heartbeat is for. */
+      await beat({
+        state: "standby",
+        lastTickAt: new Date(),
+        leaseHolder: holder?.owner ?? null,
+        leaseExpiresAt: holder?.expiresAt ?? null,
+      });
+      return;
+    }
+  } catch (err) {
+    currentFence = null;
+    log.warn("poller tick skipped — database temporarily unavailable", {
+      message: err?.message || String(err),
     });
     return;
   }
