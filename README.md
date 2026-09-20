@@ -1,740 +1,869 @@
 <div align="center">
 
 <a href="https://jobwire.me">
-  <img src="public/readme/job-wire-banner-v2.png" alt="Job Wire: early job alerts. Be early, by default." width="100%">
+  <img src="public/readme/job-wire-banner-v2.png" alt="Job Wire — early job alerts" width="100%">
 </a>
 
-# Job Wire: be early, by default.
+# Job Wire
 
-**A job you'd be good at was posted while you were reading this.**<br>
-By tonight it could be forty applications deep.
+### Multi-source job monitoring and early email alerts
 
-[Try Job Wire](https://jobwire.me) · four job sources · one watch · one useful email
+Job Wire watches job sources continuously, remembers what it has already seen,
+matches new postings against a user's watches, and sends alerts without making
+the user repeatedly search the same sites by hand.
+
+[Live site](https://jobwire.me) · [Scaling notes](docs/SCALING.md) · [MIT License](LICENSE)
+
+![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)
+![MongoDB](https://img.shields.io/badge/Database-MongoDB-47A248?logo=mongodb&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![CI](https://github.com/Zacky-Ahmed/Job-Wire/actions/workflows/ci-cd.yml/badge.svg)
 
 </div>
 
 ---
 
-## The whole product, in one hour
+## What is Job Wire?
 
-![A timeline from a job being posted to Job Wire alerting you before the application pile grows.](public/readme/application-window-infographic.png)
+A normal job search is pull-based: open several sites, type the same search,
+refresh, repeat, and hope you notice a useful vacancy early enough.
 
-**09:14:** a role is posted. **09:16:** Job Wire catches it and emails you.
-By 10:14, the application pile may already be too deep to matter.
+Job Wire turns that into a watch.
 
-Recruiters read the pile from the top. Being early is not an advantage over
-the other candidates; it decides whether you are read **at all**.
+A user chooses:
 
-That number is real: a PickMe internship measured during development took
-**12 applications in its first 31 minutes**.
+- one or more job-title keywords;
+- a country;
+- a polling interval between 5 and 60 minutes.
 
----
+The application then decides which sources can serve that country, checks them
+in the background, normalises the different source formats into one job shape,
+deduplicates postings it has already observed, and sends new matching jobs to
+the user's inbox.
 
-## How it works
+For Sri Lanka, one watch currently reaches **seven sources**. For other
+supported countries, LinkedIn provides the country-wide source.
 
-One process. A web server and a poller sharing a Mongo pool, because splitting
-them loses the shared connection and the in-memory schedule. That is the
-entire reason this is not serverless.
-
-![Job Wire architecture: job sources feed the poller, which checks MongoDB, normalises new matches and sends email alerts.](public/readme/job-wire-architecture-infographic.png)
-
-### The sweep, step by step
-
-```
-every POLL_TICK_SECONDS:
-  retry anything that failed to send last time
-  find queries where nextFetchAt <= now
-  for each, ONE AT A TIME:
-      for every source that covers this country:
-          fetch → parse → normalise
-      new = fetched − already seen        (unique index on queryId+jobId)
-      if not primed:  store everything, send nothing, mark primed
-      else:
-          refine the newest N            (LinkedIn: one request per job)
-          drop matches too old to act on
-          email every subscriber ONE batch
-      reschedule
-```
+> Job Wire is an alerting system, not an auto-apply bot. It finds and surfaces
+> postings; the user still decides what to apply for and applies on the
+> original employer/job-board page.
 
 ---
 
-## Four rules carry the design
+## Why it exists
 
-**Prime before you alert.** A brand-new watch finds hundreds of existing jobs.
-Store them silently; alert only from the second sweep. Otherwise the first
-email is a wall of stale posts.
+Many useful vacancies are time-sensitive. Checking job boards once or twice a
+day means a posting can collect a large application pile before the candidate
+even knows it exists.
 
-**Identical searches share one fetch.** A hundred users watching
-`intern / Sri Lanka` is one query row and one set of requests, fanned out to a
-hundred emails. Load scales with *distinct searches*, not users.
+Job Wire is designed around one simple idea:
 
-![Identical subscribers share one job query and source fetch, then receive their own alerts.](public/readme/shared-query-alerts-infographic.png)
+**search once, keep watching automatically.**
 
-**Sweep serially.** Ten simultaneous requests from one IP is what a scraper
-looks like. A steady trickle is what a browser looks like.
-
-**A silent shortfall is the failure mode.** Every bug this project has had
-returned success and simply saw less.
+The system is intentionally honest about a limitation that matters: Job Wire
+cannot see a posting before a source exposes it publicly. Some sources publish
+immediately; LinkedIn's public discovery surfaces can lag behind the employer's
+posting time. The project's measured latency and scaling work is documented in
+[docs/SCALING.md](docs/SCALING.md).
 
 ---
 
-## The thing that will keep biting you
+## Current source coverage
 
-Not one of these threw an error. Each was a sweep that *succeeded* and returned
-fewer jobs; indistinguishable from a quiet morning. All measured against the
-live site:
+Source selection is derived from the watch's country. Users do not need to know
+which checkbox to select for which board.
 
-| What looked fine | What was actually happening |
-|---|---|
-| `f_TPR=r3600` (last hour) | empty document returned while jobs existed |
-| `sortBy=DD` | not honoured; newest jobs sit on pages 2 to 3 |
-| `keywords=Intern` | 24 results one minute, 3 the next: a ranker, not a filter |
-| pagination cap of 100 | the feed is 232 deep; a 40-minute-old internship sat on page 19 |
-| substring matching | `intern` matched `internal`; pulled in a Chief HR Officer |
-| `matchedBy: unverified` | a failed request treated as a match, emailing three non-internships |
-| 74 emails sent, 0 failures | every one filed as spam; DMARC broken, provider reported success |
-
-Two defences exist because of this:
-
-- **Coverage check:** each sweep compares against the best that query has ever
-  done and logs `COVERAGE DROP` below half. A query that normally yields 60 and
-  suddenly yields 10 has not gone quiet, it has gone blind.
-- **`npm run parity`:** diffs our results against the live LinkedIn page and
-  prints `MISSING` / `EXTRA`, exiting non-zero if anything is missing.
-
-> **The one lesson worth taking from this repo:** a system that returns success
-> and quietly does less is far more dangerous than one that crashes. A crash you
-> fix in an hour. This took days to even notice.
-
----
-
-## Sources
-
-Which sites get searched is **derived from the country**, never chosen. Nobody
-wants fewer sites searched for the same keyword, and the only wrong answers were
-the available ones; ticking a Sri Lankan board for a German watch built
-something that could never match.
-
-| Source | Coverage | How data arrives | Lag |
+| Source | Coverage | Integration | Posting-time precision |
 |---|---|---|---|
-| LinkedIn | every country | 3 public surfaces, HTML | **median 27 min** |
-| topjobs.lk | Sri Lanka | server-rendered listing pages | instant |
-| John Keells Group | Sri Lanka | server-rendered careers search | instant |
-| MAS Holdings | Sri Lanka | Oracle Cloud Recruiting REST API | instant |
+| **LinkedIn** | 45 verified countries | public HTML/search surfaces | minute |
+| **topjobs.lk** | Sri Lanka | HTML + locally maintained functional-area corpus | day |
+| **John Keells Group** | Sri Lanka | server-rendered careers HTML | day |
+| **MAS Holdings** | Sri Lanka | Oracle Recruiting JSON API | day |
+| **ITPro.lk** | Sri Lanka | server-rendered HTML | minute |
+| **XpressJobs** | Sri Lanka | JSON API used by the site's frontend | no reliable publish time |
+| **Rooster** | Sri Lanka / applicable remote roles | JSON API used by the site's frontend | treated as day precision |
 
-**That LinkedIn figure is measured, not promised.** Over 442 postings in a day:
+The 45 country entries available to the user are not arbitrary strings. Their
+LinkedIn geo IDs are kept in <code>src/services/linkedin/geoIds.js</code> and
+are exposed only after verification.
 
-```
-best         1 min
-median      27 min      ← the number that actually matters
-75th pct    61 min
-90th pct   121 min
-under 15m      31%
-```
+### A note about source reliability
 
-Almost none of it is the sweep. A sweep takes ~100 seconds against a 5-minute
-schedule, so the poller adds single-digit minutes; the rest is LinkedIn's own
-public index, verified by walking their feed and finding jobs absent that were
-plainly visible to a signed-in browser. The three local boards have no such lag
-and they reach you within one sweep.
+Not every source is a supported public API. Some adapters read public HTML or
+undocumented endpoints used by a site's own frontend. Those interfaces can
+change.
 
-Say the smaller true number rather than the larger nice one. "Within minutes"
-was on this page for weeks and was accurate about a third of the time.
+The adapters therefore try to detect **success-shaped failures**: a source can
+still return HTTP 200 while a selector, response shape, filter, or pagination
+rule has silently stopped returning the jobs the application expects.
 
-Adding a board is one file in `services/sources/`. Nothing downstream, including dedupe,
-storage, email and the UI, knows which site a job came from. Sources are resolved
-at sweep time, so a new adapter reaches **every existing watch** without anyone
-editing anything.
-
-### The adapter contract
-
-```js
-export const id            = "topjobs";        // also the jobId prefix
-export const label         = "topjobs.lk";     // what a user sees
-export const hosts         = ["topjobs.lk"];   // guardedFetch allowlist
-export const countries     = ["100446352"];    // empty = worldwide
-export const timePrecision = "day";            // or "minute"
-
-export async function fetchJobs({ keywords, geoId, matchAll }) { … }
-export async function refine(jobs, { keywords }) { … }   // optional
-```
-
-**`timePrecision` is load-bearing.** Boards that print a date and no time
-resolve every posting to midnight, so a job put up this morning already reads as
-hours old. The freshness gate skips them entirely and leans on priming plus
-dedupe instead. Getting this wrong meant Keells jobs appeared on the wire and
-were *never once emailed*.
+The source layer is designed to fail loudly when it cannot decide whether an
+empty result is real.
 
 ---
 
-## Matching
+## Product features
 
-Keywords match as **whole words with ordinary endings**, so `intern` reaches
-`internship` and `interning` but not `internal`, `international` or `internet`.
+### Watches
 
-```
-  intern  ✔ Intern, Interns, Internship, Interning, Trainee
-          ✘ Internal, International, Internet
-```
+A watch is what a user creates: a label, keywords, a country, and a requested
+interval.
 
-Words meaning the same job expand automatically. `intern` also finds
-`trainee`. The table is deliberately tiny: `graduate` and `junior` are excluded,
-because plenty of those want experience an intern has not got.
+Under the hood, identical watches share one canonical query. If ten users watch
+the same keywords in the same country, Job Wire does not create ten identical
+network crawls. It stores ten subscriptions that point to one shared query.
 
-For LinkedIn only, a job whose title does not match costs one extra request to
-read its employment type and seniority. Employers routinely tag a role
-`Internship` while titling it "Real Estate Sales Agent", and no title filter can
-reach that. Those requests are budgeted per sweep, newest first; the rest carry
-forward on a pending queue.
+### Automatic source selection
 
-**What it deliberately does not read: the description.** It was tried, and it
-faithfully reproduced LinkedIn's own mistakes, including a Senior Google Ads Specialist
-and a Junior Estimator both reached the wire because their body text mentioned
-interns. Employment type and seniority are fields an employer *set*. Prose is
-not a claim about what the job is.
+The country decides which adapters participate.
+
+A Sri Lankan watch reaches all seven current sources. A German watch, for
+example, does not waste requests on Sri Lankan employer portals.
+
+### Priming before alerts
+
+The first sweep of a brand-new query memorises the jobs that already exist and
+sends nothing.
+
+Without this rule, creating a watch would immediately email the user an old
+backlog and make “new alert” meaningless.
+
+### The Wire
+
+Signed-in users get a feed of jobs caught by their watches.
+
+The feed supports:
+
+- source filtering;
+- progressively loading older matches;
+- delivery status;
+- per-watch labels;
+- relative discovery time;
+- posting-age information only when the source publishes a clock precise
+  enough to support it.
+
+The wire updates through HTMX without turning the application into a
+client-heavy single-page app.
+
+### Email alerts
+
+Mail can be delivered through:
+
+- **Gmail SMTP** for local/small deployments; or
+- **Brevo's HTTP API** when <code>BREVO_API_KEY</code> is configured.
+
+The mail path includes a durable outbox, retry handling, delivery logs, provider
+health checks, and Brevo idempotency keys so a retry does not become a duplicate
+email when the provider already accepted the first request.
+
+### Accounts and verification
+
+Job Wire includes:
+
+- email/password signup;
+- bcrypt password hashing;
+- six-digit email verification;
+- password reset by verification code;
+- session invalidation after password changes;
+- MongoDB-backed sessions.
+
+A signup password is staged until the email address is verified. This prevents
+somebody from registering another person's email address with an attacker-chosen
+password and having the real owner accidentally bless it later.
+
+### Admin area
+
+Admin access is controlled by <code>ADMIN_EMAILS</code>, not by a user-editable
+database role.
+
+The admin tools cover operational tasks such as:
+
+- user/account support;
+- query inspection;
+- manual sweeps;
+- parking/resuming searches;
+- watch administration;
+- duplicate-query cleanup;
+- delivery health and email status.
+
+### Operational safety
+
+The application also includes:
+
+- a fenced MongoDB poller lease so overlapping instances do not crawl at the
+  same time during a rolling deploy;
+- heartbeat/progress reporting;
+- crawl and sweep telemetry;
+- source-coverage checks;
+- graceful shutdown;
+- a durable alert ledger separate from the short-lived user feed;
+- a health endpoint at <code>/healthz</code>.
 
 ---
 
-## Layout
+## Architecture
 
-```
-src/
-  server.js              express app + starts the poller in the same process
-  config/                env validation, single Mongo pool
-  models/                collection accessors, all indexes created at boot
-  routes/                HTMX endpoints; return HTML fragments, not JSON
-  middleware/            session, csrf, auth guard, admin guard, rate limits
-  services/
-    http/guardedFetch.js the ONLY outbound HTTP path; SSRF allowlist
-    sources/             one file per job board, behind a shared contract
-    linkedin/            url building, HTML parsing, geoId table
-    poller/              the loop, one sweep, the dedupe rule, retry queue
-    mail/                transport, send functions, templates
-    auth/                bcrypt, code generate/verify
-  views/                 ejs pages and HTMX partials
-  utils/                 matching, time formatting, logging
-public/                  css and the small vanilla JS htmx does not cover
-```
+Job Wire is intentionally a small server-rendered system rather than a set of
+microservices.
+
+The Express web server and the background poller start from the same Node.js
+process. MongoDB is the shared persistent state, and the poller lease protects
+against two live processes doing the same crawl simultaneously.
+
+~~~mermaid
+flowchart LR
+    U[User browser] -->|HTTPS| W[Express + EJS + HTMX]
+    W --> M[(MongoDB)]
+
+    P[Background poller] --> Q[Shared queries]
+    Q --> S1[LinkedIn]
+    Q --> S2[topjobs.lk]
+    Q --> S3[Keells]
+    Q --> S4[MAS]
+    Q --> S5[ITPro.lk]
+    Q --> S6[XpressJobs]
+    Q --> S7[Rooster]
+
+    S1 --> N[Normalise + match + dedupe]
+    S2 --> N
+    S3 --> N
+    S4 --> N
+    S5 --> N
+    S6 --> N
+    S7 --> N
+
+    N --> M
+    N --> O[Durable outbox]
+    O --> E[Gmail SMTP or Brevo HTTP]
+    E --> I[User inbox]
+
+    M --> W
+~~~
+
+### Technology stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 20+ / ES modules |
+| Web server | Express 4 |
+| Views | EJS |
+| Partial updates | HTMX + small vanilla JavaScript modules |
+| Database | MongoDB |
+| Sessions | express-session + connect-mongo |
+| HTML parsing | Cheerio |
+| Email | Nodemailer/Gmail SMTP or Brevo HTTP API |
+| Authentication | bcryptjs + emailed OTP codes |
+| Container | Node 20 Alpine |
+| CI/CD | GitHub Actions + Docker Buildx |
+| Production image | GHCR ARM64 image for the Raspberry Pi deployment path |
 
 ---
 
-## Running locally
+## How a sweep works
 
-```bash
-cp .env.example .env     # then fill it in
+A simplified sweep looks like this:
+
+~~~text
+poller tick
+  |
+  +-- acquire / renew fenced lease
+  |
+  +-- find due shared queries
+  |
+  +-- open a source snapshot/pass
+  |
+  +-- for each due query
+        |
+        +-- resolve sources for the query's country
+        +-- fetch source data
+        +-- parse and normalise jobs
+        +-- match the watch keywords
+        +-- check the long-lived alert ledger
+        |
+        +-- first sweep?
+        |     yes -> remember current jobs, send nothing
+        |
+        +-- later sweep?
+              -> save new feed rows
+              -> create durable outbox obligations
+              -> send/retry email
+              -> reschedule the query
+~~~
+
+Queries are processed carefully rather than firing every request in parallel.
+Different source hosts can be fetched concurrently where safe, while per-source
+pagination and expensive search-specific work remain controlled.
+
+The detailed request-cost model, shared snapshot strategy, measured source lag,
+and scheduler limits live in [docs/SCALING.md](docs/SCALING.md).
+
+---
+
+## Data model
+
+The names below are MongoDB collections/concepts used by the current code.
+
+| Collection / concept | Purpose |
+|---|---|
+| <code>users</code> | accounts, password hashes, verification state |
+| <code>queries</code> | one row per distinct shared search |
+| <code>subscriptions</code> | a user's watch pointing to a shared query |
+| <code>seenJobs</code> | recent matched jobs used by The Wire |
+| <code>alertedJobs</code> | long-lived “already observed/claimed” ledger used for dedupe |
+| <code>outbox</code> | durable email work that still has to be delivered |
+| <code>emailLog</code> | send attempts and delivery history |
+| <code>pollerLease</code> / poller state | single-active-poller coordination and liveness |
+| <code>crawlLog</code> | source crawl telemetry |
+| <code>sweepRuns</code> | sweep-level telemetry |
+| <code>observations</code> | source health/coverage observations |
+| <code>telemetryCoverage</code> | records when particular telemetry became available |
+
+### Why queries and subscriptions are separate
+
+This is one of the most important design choices in the project.
+
+~~~text
+User A ─┐
+User B ─┼── subscriptions ──> one shared query: "intern / Sri Lanka"
+User C ─┘
+                              |
+                              +--> one scheduled search
+                              +--> one remembered history
+                              +--> results fan out to subscribers
+~~~
+
+Network load should grow with distinct searches, not directly with the number
+of users.
+
+---
+
+## Repository structure
+
+~~~text
+Job-Wire/
+├─ src/
+│  ├─ server.js                 Express app, startup and graceful shutdown
+│  ├─ config/
+│  │  ├─ db.js                  MongoDB connection
+│  │  └─ env.js                 environment parsing and validation
+│  ├─ middleware/               auth, session, CSRF, rate limits, theme
+│  ├─ models/                   MongoDB accessors, indexes, ledger, outbox
+│  ├─ routes/                   landing, auth, wire, watches, admin
+│  ├─ services/
+│  │  ├─ auth/                  password + OTP logic
+│  │  ├─ http/                  guarded outbound HTTP
+│  │  ├─ linkedin/              LinkedIn URL/parser/geo helpers
+│  │  ├─ mail/                  transports, outbox worker, templates
+│  │  ├─ onboarding/            starter-watch logic
+│  │  ├─ poller/                loop, sweep, retry, snapshot, runtime state
+│  │  └─ sources/               one adapter per job source
+│  ├─ utils/                    matching, sanitising, timing, rendering
+│  └─ views/                    EJS layouts, pages and partials
+├─ public/                      CSS, browser JS, icons and README images
+├─ scripts/                     tests, probes, maintenance and diagnostics
+├─ docs/
+│  └─ SCALING.md                measured scaling/cost analysis
+├─ .github/workflows/ci-cd.yml  syntax check + ARM64 image build/publish
+├─ Dockerfile
+├─ compose.yml
+├─ render.yaml
+├─ railway.json
+└─ package.json
+~~~
+
+The codebase contains detailed comments explaining why many non-obvious rules
+exist. For this project, those comments are useful operational history: several
+bugs were not crashes; they were successful requests that quietly returned less
+data than expected.
+
+---
+
+## Local development
+
+### Requirements
+
+Before starting, install or provide:
+
+- **Node.js 20 or newer**
+- **npm**
+- a reachable **MongoDB** database
+- an email provider:
+  - Gmail with an app password, or
+  - Brevo with a REST API key
+
+### 1. Clone
+
+~~~bash
+git clone https://github.com/Zacky-Ahmed/Job-Wire.git
+cd Job-Wire
+~~~
+
+### 2. Install dependencies
+
+~~~bash
 npm install
+~~~
+
+For reproducible CI/production installs, use:
+
+~~~bash
+npm ci
+~~~
+
+### 3. Create the environment file
+
+macOS/Linux:
+
+~~~bash
+cp .env.example .env
+~~~
+
+PowerShell:
+
+~~~powershell
+Copy-Item .env.example .env
+~~~
+
+Then edit <code>.env</code>.
+
+### 4. Minimum configuration
+
+For Gmail SMTP:
+
+~~~dotenv
+NODE_ENV=development
+PORT=3000
+APP_URL=http://localhost:3000
+
+MONGODB_URI=mongodb+srv://...
+MONGODB_DB=jobwire
+
+SESSION_SECRET=replace-with-a-long-random-string
+
+GMAIL_USER=you@gmail.com
+GMAIL_APP_PASSWORD=your-16-character-app-password
+MAIL_FROM=Job Wire <you@gmail.com>
+
+POLLER_ENABLED=false
+~~~
+
+For Brevo instead of Gmail:
+
+~~~dotenv
+MONGODB_URI=mongodb+srv://...
+SESSION_SECRET=replace-with-a-long-random-string
+
+BREVO_API_KEY=xkeysib-...
+MAIL_FROM=Job Wire <alerts@your-domain.example>
+~~~
+
+When <code>BREVO_API_KEY</code> is set, Gmail credentials are optional.
+
+> For UI work, keep <code>POLLER_ENABLED=false</code>. Running a local poller
+> against a production database can create real network traffic and real email.
+
+### 5. Start the app
+
+~~~bash
 npm run dev
-```
+~~~
 
-Set `POLLER_ENABLED=false` while working on the UI. **Do this.** A local poller
-against the production database sends real email alongside the deployed
-instance; pairs of identical alerts two seconds apart are the symptom.
+Open:
 
-Rate limits skip loopback outside production. Four password resets an hour is
-right for the internet and wrong for the machine building the feature.
+~~~text
+http://localhost:3000
+~~~
 
-| Command | What it does |
+Health check:
+
+~~~text
+http://localhost:3000/healthz
+~~~
+
+---
+
+## Environment variables
+
+The complete validation/default logic is in <code>src/config/env.js</code>.
+The most important settings are:
+
+| Variable | Purpose |
 |---|---|
-| `npm run e2e` | 48 assertions against a running server |
-| `npm run parity` | diff our results against the live LinkedIn page |
-| `npm run test-sweep` | one sweep, no email, prints what it found |
-| `npm run verify-geoids` | check every geoId returns jobs in the right country |
-| `npm run preview-email` | render the emails + 14 deliverability checks |
-| `npm run measure-lag` | measure real indexing lag for your market |
-| `npm run prune-matches` | re-test stored jobs against the current rules |
-| `npm run set-password` | set a password from the terminal, echo off |
+| <code>NODE_ENV</code> | <code>development</code> or <code>production</code> |
+| <code>PORT</code> | HTTP port, default 3000 |
+| <code>APP_URL</code> | public base URL used in links and mail |
+| <code>MONGODB_URI</code> | **required** MongoDB connection string |
+| <code>MONGODB_DB</code> | database name, default <code>jobwire</code> |
+| <code>SESSION_SECRET</code> | **required** session-signing secret |
+| <code>GMAIL_USER</code> | Gmail SMTP account when Brevo is not used |
+| <code>GMAIL_APP_PASSWORD</code> | 16-character Gmail app password |
+| <code>MAIL_FROM</code> | sender shown on outgoing mail |
+| <code>BREVO_API_KEY</code> | optional REST API key; switches mail to Brevo HTTP |
+| <code>POLLER_ENABLED</code> | enable/disable background polling |
+| <code>POLL_TICK_SECONDS</code> | how often the scheduler looks for due work |
+| <code>DEFAULT_SWEEP_MINUTES</code> | default watch interval |
+| <code>MIN_SWEEP_MINUTES</code> | operator safety floor for polling |
+| <code>MAX_FAIL_COUNT</code> | repeated source failures before a query is parked |
+| <code>ADMIN_EMAILS</code> | comma-separated admin allowlist |
+| <code>STARTER_WATCH_KEYWORDS</code> | optional watch created after verification |
+| <code>STARTER_WATCH_GEO_ID</code> | starter watch country geo ID |
+| <code>STARTER_WATCH_LABEL</code> | starter watch display name |
+| <code>SEEN_JOB_TTL_DAYS</code> | retention for the user-facing recent feed |
+| <code>ALERT_TTL_DAYS</code> | long-lived dedupe/alert-ledger retention |
+| <code>STALE_ALERT_DAYS</code> | sanity ceiling for day-precision source alerts |
+| <code>SHUTDOWN_GRACE_MS</code> | graceful shutdown allowance |
+
+Production mode requires a session secret of at least 32 characters.
 
 ---
 
-## Accounts
+## Matching rules
 
-Email and password with bcrypt, plus a six-digit emailed code before a first
-sign-in. Forgotten passwords use the same mechanism: a **code, not a link**,
-because a clickable reset URL is the thing spam filters distrust most.
+A watch is matched primarily against job titles.
 
-**A signup password is staged, not granted.** An unverified account is unowned:
-anyone can type any address into the form. Writing the password immediately let
-an attacker register a victim's address under a password of their choosing, and
-the victim's own verification then blessed it. The hash now waits in
-`pendingPassHash` until a correct code proves who holds the mailbox.
+Matching uses word boundaries and ordinary endings rather than raw substring
+searches. For example, a watch for <code>intern</code> can match words such as
+<code>internship</code> without also matching unrelated strings such as
+<code>internal</code> or <code>international</code>.
 
-```
-  attacker signs up as victim@…  ──▶  hash STAGED, nothing granted
-  code goes to the victim         ──▶  attacker cannot verify
-  victim signs up, gets a code    ──▶  their hash replaces the staged one
-  victim enters the code          ──▶  their password is promoted
-```
+The application does **not** automatically redefine <code>intern</code> as
+<code>trainee</code>. If the user wants both concepts, both can be added as
+keywords.
 
-The reset endpoint never reveals whether an address has an account. Identical
-wording is not enough on its own: awaiting the email send made the endpoint
-answer in ~5s for a real address and ~0.7s for an unknown one, which reduces the
-whole protection to a stopwatch. The send is detached for that reason.
+LinkedIn has one extra refinement path because an employer can tag a posting
+with an employment type even when the title itself does not contain the
+keyword. That work is request-budgeted rather than performed without limit.
 
-Admin is an env var, not a database flag:
+---
 
-```bash
-ADMIN_EMAILS=you@example.com,someone@else.com
-```
+## Deduplication and delivery guarantees
 
-Nothing with write access to Mongo can promote itself, and there is no
-first-admin bootstrap problem. A non-admin gets **404, not 403**; "forbidden"
-confirms the page is real. Every mutating admin route re-checks on its own —
-hiding a page is not access control.
+Two different kinds of memory are intentionally kept separate.
 
-The actions exist because a real support case needs each of them:
+### Recent feed memory
 
-| | |
+<code>seenJobs</code> exists so the user can open The Wire and see recent
+matches. It is allowed to expire.
+
+### Long-lived alert memory
+
+A posting can remain live on a board much longer than the recent-feed TTL.
+If dedupe depended only on the recent feed, an old vacancy could disappear from
+the database and later look “new” again.
+
+<code>alertedJobs</code> therefore acts as the long-lived claim/ledger for
+query + job IDs.
+
+The mail outbox is also durable. Discovering a job and remembering that an
+email is owed are separate from successfully talking to the mail provider.
+
+This is why a provider outage, deploy, or process restart does not have to turn
+into a permanently lost alert.
+
+---
+
+## Security controls
+
+The current application includes:
+
+- bcrypt password hashing;
+- email ownership verification;
+- MongoDB-backed sessions;
+- CSRF protection on mutating forms;
+- IP-based rate limiting;
+- body-size limits;
+- NoSQL operator-injection rejection;
+- output sanitisation/escaping through the view layer;
+- explicit security headers and CSP;
+- secure cookies in production;
+- a guarded outbound-fetch allowlist to reduce SSRF risk;
+- admin access derived from environment configuration;
+- generic browser-facing error messages instead of stack traces.
+
+Source adapters must declare the hosts they are allowed to contact. Do not
+casually widen an adapter host allowlist.
+
+---
+
+## Adding a job source
+
+A source adapter lives under <code>src/services/sources/</code> and is
+registered in <code>src/services/sources/index.js</code>.
+
+A typical adapter exports metadata plus <code>fetchJobs()</code>:
+
+~~~js
+export const id = "example";
+export const label = "Example Jobs";
+export const hosts = ["jobs.example.com"];
+export const countries = ["100446352"];
+export const perCountry = false;
+export const maxPages = 1;
+export const timePrecision = "minute";
+
+export async function fetchJobs({
+  keywords,
+  geoId,
+  page,
+  matchAll
+}) {
+  // Return normalised job objects.
+}
+~~~
+
+Normalised jobs use this shape:
+
+~~~js
+{
+  jobId: "example:12345",
+  title: "Data Engineering Intern",
+  company: "Example Ltd",
+  location: "Colombo, Sri Lanka",
+  url: "https://jobs.example.com/12345",
+  postedAt: Date | null,
+  postedText: "20 minutes ago"
+}
+~~~
+
+Important source rules:
+
+1. Prefix IDs so two boards cannot collide.
+2. Declare the narrowest outbound host allowlist possible.
+3. Tell the system whether timestamps are truly minute-precise or date-only.
+4. Stop pagination explicitly.
+5. If a response shape changed and the adapter cannot tell whether an empty
+   result is legitimate, **throw** instead of silently returning an empty list.
+6. Test the adapter against real source behaviour before treating HTTP 200 as
+   proof of coverage.
+
+---
+
+## Useful commands
+
+| Command | Purpose |
 |---|---|
-| **Verify** | a code landed in spam, so the account is locked out of itself |
-| **Delete account** | a spam signup, or someone asking to be removed |
-| **Add watch** | put somebody on a search that already exists. A shared query is one fetch however many people are on it, so this costs nothing — and it is the answer to "can you just add me to that one" without them re-typing the keywords and risking a second copy of the search |
-| **Remove watch** | one person off one search — a bouncing address, or a request by mail from somebody who cannot sign in. The account and their other watches survive |
-| **Park / Resume** | stop a search nobody needs from spending requests. Refused while anyone is actively watching |
-| **Sweep** | check a source is alive without waiting for the schedule |
-| **Merge** | fold one search into another, moving its watchers across |
-| **Delete search** | clear a parked row. Refused while anyone is subscribed |
-
-### A new account already watches something
-
-Signing up landed on an empty wire and a form. That asks somebody to configure
-a thing before they have seen it do anything — and the next sweep after that is
-the **priming** one, which stores everything and alerts on nothing, so the
-reward for filling the form in correctly was a second wait with nothing to show.
-
-Verifying now creates the watch, and the shared-query design gives it away free:
-the `intern / Sri Lanka` row already exists and is already primed, so a new
-subscriber joins a search that is **warm**. The wire fills on the next sweep.
-
-```bash
-STARTER_WATCH_KEYWORDS=intern      # empty string turns it off
-STARTER_WATCH_GEO_ID=100446352     # a LinkedIn geoId the app knows
-STARTER_WATCH_LABEL=Intern
-```
-
-It runs at **verification**, not signup: an address that never comes back with
-its code should not leave a subscription holding a query open. It is idempotent
-on *any* existing subscription rather than on this particular one — somebody who
-deleted the starter watch has decided, and verifying again must not put it back.
-It cannot throw; a failure leaves the account watching nothing, which is where
-every account started before this existed.
-
-The signup form says which search you will get and that you can delete it,
-read from the same config the watch is built from so the promise and the row
-cannot drift apart. A watch appearing on its own is a pleasant surprise only if
-it was not a surprise.
-
-### Seven sources, one clock
-
-| source | how | cost | posting time |
-|---|---|---|---|
-| LinkedIn | scraped, 3 surfaces | **85s** | relative string |
-| MAS | Oracle Recruiting API | 6.7s | date only |
-| topjobs | scraped | 5.6s | date only |
-| Keells | scraped | 5.4s | date only |
-| **Rooster** | JSON API (POST) | 4.0s | timestamp, no offset |
-| **ITPro.lk** | scraped | 2.2s | **ISO timestamp with offset** |
-| **XpressJobs** | JSON API (GET) | 1.3s | none |
-
-Sources are fetched concurrently, so a sweep costs the **slowest** one, not the
-sum. Adding the three new boards took the wall clock from 85.2s to 85.2s — they
-finish while LinkedIn is still on page three of twenty-four — and added 91
-matching jobs for a single keyword.
-
-Two of the three are JSON APIs the sites' own front ends call, so there is no
-markup to break on a redesign. ITPro is the only source that publishes a real
-timestamp with an offset, which makes it the only local board that can be
-trusted to the minute.
-
-Rooster's country filter is accepted and then ignored — the same response comes
-back holding Malaysia, Qatar and "Worldwide" — so Sri Lanka is enforced in the
-adapter. XpressJobs requires `postedIn`, answering 400 without it, and returns a
-bare array rather than a wrapper. Both were found by trying, and both would have
-been silent failures: a wrapper-shaped parse of an array reads as zero jobs,
-which is indistinguishable from a quiet day.
-
-### Email packs — one search, different inboxes
-
-One role has many titles. A Data Science student wants `Intern - Data
-Engineering`, `Machine Learning Engineer Intern` and `Business Intelligence
-Trainee`, and does not want `Intern - Human Resources`. No keyword expresses
-that, because a watch's keywords are **OR**'d: watching `intern, data analyst`
-asks for interns *or* analysts and delivers every one of both.
-
-A **pack** is the AND half. The keyword decides what is a job worth looking at;
-the pack decides whether it is about the right subject.
-
-**Where it lives is the whole design.** A pack belongs to a **subscription**,
-not to a query:
-
-| | decides | shared |
-|---|---|---|
-| query | what is fetched and remembered | one fetch for everyone on it |
-| subscription | what reaches *that* inbox | that person alone |
-
-Put it on the query and the watch becomes a different search — its own row, its
-own sweep, its own priming pass, its own share of a cycle everyone queues
-behind. On the subscription, twenty people on one `intern` search still cost one
-fetch and only the last step differs. It also means there is nothing to migrate
-in either direction: setting a pack changes no history, and clearing it restores
-exactly the behaviour the watch had before.
-
-It narrows **email only**. The wire keeps showing everything the watch caught,
-because the complaint packs exist to fix is inbox noise, not having too much to
-read when you deliberately open the page.
-
-The words are phrases, not bare terms — `data analyst`, not `data` — because
-`data` alone matches *Data Entry Operator Intern*, which is not data science by
-any reading. Editing a pack reaches everyone on it at once, since a subscription
-stores the pack **id** and not a copy of its words.
-
-### Deleting a search people are watching
-
-Delete is refused while anyone is subscribed, and that refusal is not timidity: a
-subscription is joined to its query, so removing the query alone makes each watch
-vanish from its owner's page with no message and no way back — present in the
-database, absent from every screen.
-
-The admin can now override it, and the override **takes the watches with it**.
-That is the honest version: those people lose the watch outright and can create
-it again, rather than holding one that renders nowhere. The button renames itself
-to **Force delete**, the confirmation states how many watches it destroys, and
-the log records which accounts they belonged to. The ledger goes too — it is
-keyed by `(queryId, jobId)` and outlives the wire by years, so leaving it would
-keep ids claimed against a search that no longer exists.
-
-### The application window, and where a job came from
-
-The Window column sized itself from `postedAt || firstSeenAt`. That fallback
-measured how long *we* had known about a job rather than how old it was, so
-XpressJobs — which returns `createdDate: null` on every record — showed
-**"~26m left"** on postings of completely unknown age.
-
-Two rules now, and both refuse to guess:
-
-- no published time at all → **"no posting date"**, no gauge
-- a **day**-precision board → an age in days, no gauge. A date resolves to
-  midnight, so a countdown drawn from it is arithmetic on a rounding error
-- a **minute**-precision board (LinkedIn, ITPro.lk) → the countdown, as before
-
-The feed also has **source tabs** — All, XpressJobs, Rooster, LinkedIn, ITPro.lk,
-MAS — with counts taken over the whole feed rather than the current selection,
-so the tab that undoes a filter still says how much is behind it. They are plain
-links, so the filter survives a reload and is shareable, and both the "show
-older" control and the 15-second HTMX poll carry it — without that, fifteen
-seconds after picking a board every other board's jobs reappeared underneath it.
-
-### "intern" means intern
-
-The matcher used to treat **trainee** as a synonym for **intern**, on the
-reasoning that Sri Lankan employers use them interchangeably — topjobs really
-does list "Trainee Software Engineer" beside roles titled "Intern".
-
-That is true of some of them and badly untrue of the rest. Watching `intern`
-delivered Trainee Barista, Trainee Commi (Pastry & Bakery), Trainee Bar Waiters,
-CCTV Installation Trainees, Trainee Metrologist and Management Trainees — none
-an internship, all in the same inbox as the ones that were.
-
-A keyword now means the word. Anyone who wants trainee roles adds `trainee` and
-gets exactly those, which is more honest than a table deciding on their behalf.
-The word-boundary rule is unchanged, so `intern` still reaches internship,
-interns and interning while refusing internal and international.
-
-`npm run prune-matches -- --apply` re-asks the **current** rule of every row
-already on the wire, so the history is corrected by the same definition rather
-than by a list of words. Two guards earn their place there: a **match-all** watch
-is exempt, because its keywords describe nothing and testing against them
-unmatched 1,594 of one watch's 1,625 correct rows; and a row whose query no
-longer exists is skipped, because there are no keywords to test it against and
-5,559 orphans otherwise failed a test nobody set. Scoped properly it was 109 rows.
-
-### How old is too old to mail
-
-Two different rules, because two different kinds of clock:
-
-| source | rule |
-|---|---|
-| **minute** precision (LinkedIn, ITPro) | four hours, then a closure check for anything the clock rejected |
-| **day** precision (Keells, topjobs, MAS, Rooster, Xpress) | no freshness gate — a date resolves to midnight — but a ceiling of `STALE_ALERT_DAYS` (90) on the printed age |
-
-The day-precision exemption exists because a board that prints "8 Sep 2026" and
-nothing finer makes a job posted this morning read as hours old. It had **no
-upper bound**, which was a bug: Rooster carries years of listings and mailed
-postings printed **1,024** and **747** days old.
-
-The ceiling is deliberately generous rather than tight. Keells stamps a listing
-with the date the vacancy was *raised* and leaves it up for months, so a
-genuinely new Keells posting can print 56 days old — that case is exactly why
-the old fourteen-day rule was removed, and it must keep arriving. This is a
-sanity bound on absurdity, not a freshness rule. The wire still keeps everything.
-
-### Adding a source to watches that already exist
-
-A query's first sweep stores everything and alerts on nothing, or a new watch's
-first email is a wall of month-old postings. Adding a source to an **existing**
-watch has the same shape and none of that protection — the watch is already
-primed, so everything the new board has been carrying all along arrives at once
-and every row of it looks new. Measured here: **376 jobs across four watches.**
-
-`npm run prime-sources -- --sources itpro,xpress,rooster --apply` does what a
-priming sweep does: records what the new sources are carrying right now, into
-the wire so the jobs are visible and into the ledger so they can never be mailed
-as news. Run it **before** the deploy that adds the source.
-
-### One fetch per board, per country, per cycle
-
-Load used to scale with **searches**. It should only ever have scaled with
-**countries**, and on 2026-09-09 the difference stopped being theoretical:
-
-```
-intern            saw 365/429
-data analyst      saw   1/207   <- collapsed
-business analyst  saw 233/233
-data scientist    saw   2/202   <- collapsed
-it                saw 300/300
-```
-
-Two searches were returning nothing. Not a quiet morning — five searches in one
-country meant five full walks of LinkedIn every cycle, and it began refusing us.
-
-Those five walks were fetching the same jobs. Measured the same hour:
-
-| | |
-|---|---|
-| `intern` / `data analyst` / `business analyst` / `it` | 209 / 191 / 203 / 217 jobs |
-| pairwise overlap | **79–86%** |
-| four fetches, distinct jobs | **259** |
-| the largest single fetch alone | **217** |
-
-Four requests bought **42 extra jobs** and cost the throttling that was erasing
-99% of two searches. A bad trade at five searches; an impossible one at fifty.
-
-So a board is now fetched **once per country per cycle** and every search in that
-country matches the same result locally, which is free. Rerun over the five live
-searches: `data analyst` **1 → 208**, `data scientist` **2 → 209**, board
-fetches **35 → 15** per cycle.
-
-Sources fall into three groups, and the distinction is the safety argument:
-
-- **topjobs, MAS, XpressJobs, ITPro.lk** ignore the keyword entirely — they fetch
-  a listing and filter inside the adapter. Sharing is not an approximation, it is
-  the identical bytes.
-- **LinkedIn** does take a keyword and returns a 79–86% identical set whatever it
-  is. Sharing gives up the edges, so the keyword driving the shared fetch
-  **rotates** between cycles: over a few passes every search's own words get their
-  turn. Nothing is lost for good, because the ledger means a job found a cycle
-  later is still mailed once, and never twice.
-- **Keells and Rooster** genuinely filter server-side, and are cheap (5s and 1s).
-  They are left alone — sharing those *would* lose jobs.
-
-The next bottleneck is those two: at fifty searches they are fifty fetches each.
-Fixing it means fetching them unfiltered once and filtering in the sweep rather
-than in the adapter, which is a bigger change than this one.
-
-### One fetch, every watch
-
-A sweep pulls a country's jobs, keeps what matches its own keywords, and throws
-the rest away — while another watch, minutes behind on its own clock, is about
-to ask the same board for one of the jobs just discarded.
-
-Measured over a week: **2,092** LinkedIn jobs were fetched by more than one
-watch, and **1,975** alerts went out later than the moment the job was already
-in memory — a median of **22 minutes** late, 1,243 of them more than ten
-minutes late. One posting was in hand at 03:25:45 for one watch and not
-delivered to the `intern` watch until 03:39:06.
-
-So every sweep now offers what it fetched to the other live watches in the same
-country. **Title matches only**, and that restriction is the safety property:
-the expensive half of matching asks LinkedIn for a job's employment type, one
-request each, and spending that here would multiply requests by the number of
-watches and get the scraper blocked. This path spends nothing — it decides from
-the title already in hand or leaves the job for the owning watch.
-
-Guard rails: same country only (sources are chosen by country); primed watches
-only (a watch created this minute must not receive a backlog as its first
-email); the same age rule the owning sweep applies, so nothing reaches an inbox
-through this door that the other would have withheld; ids claimed on the ledger
-exactly as dedupe claims them, so it cannot race a watch's own sweep into
-sending twice; and a cap of 25 per watch per sweep so switching it on could not
-become a surprise inbox.
-
-The useful consequence: **latency now falls as watches are added.** More watches
-mean more fetches mean more jobs already in hand when a match appears — the
-opposite of how the per-watch sweep scales.
-
-### Mailed once, however long a board leaves it up
-
-`seenJobs` is the wire's memory and expires after `SEEN_JOB_TTL_DAYS` (14) so
-the feed stays a feed. Dedupe used to run against it, and that is a trap: a
-posting a board leaves up longer than that window falls out of the set, comes
-back on the next sweep looking brand new, and is alerted again.
-
-It is not hypothetical. On 2026-09-03 at 15:30 one sweep "discovered" **22 MAS
-listings at once** — 18 of them over a fortnight old, one printed 170 days old
-— and mailed each to five people. Every long-lived listing would have done it
-again fourteen days later, indefinitely.
-
-An earlier attempt recorded what had been **sent** and gated on that. It could
-not work: those jobs had never been sent. The old day-precision rule had
-suppressed them by date, and removing that rule — which was right, it was
-killing real Keells listings printed 56 and 672 days old — is what let them
-through.
-
-So the ledger records every job a search has ever **seen**, sent or not, with a
-TTL (`ALERT_TTL_DAYS`, default 1095) that comfortably outlives the longest a
-board leaves a posting up. It holds ids and nothing else. Dedupe asks it, not
-`seenJobs`, whether something is new, and claims ids *before* alerting so a
-racing sweep loses on the unique index and a crash costs one alert rather than
-causing a duplicate.
-
-Age then stops standing in for novelty, which is the whole point: a listing
-printed 56 days old that we have genuinely never seen is news; one printed
-today that we met last month is not.
-
-### One vacancy, many requisitions
-
-MAS raises a separate requisition per plant and per head. A single internship
-arrived as `21083, 21084, 21085, 21086, 21088, 21090, 21110` — same title,
-same day, **seven emails**. One morning's list also held 7x Human Resources,
-5x Merchandising and 5x Industrial Engineering the same way.
-
-They cannot be told apart. Checked against the API: `secondaryLocations` is
-`[]` on every one, `PrimaryLocation` is the bare string `Sri Lanka`, and
-`Organization` is `null`. No field, expanded or not, says which plant a
-requisition belongs to — so collapsing them loses nothing the API ever gave
-us, and the row carries the count instead: *7 openings*.
-
-The surviving id is derived from the group (`mas:g<date>-<slug>`), never
-borrowed from a member. Keeping the lowest member's id looks stable and
-quietly is not: fill that requisition and the id becomes one no sweep has
-seen, and the whole group alerts again. `PostedDate` stays in the key so
-tomorrow's batch is tomorrow's alert.
-
-### Why merge exists
-
-Sweeps run one at a time, so two rows that fetch the same thing are not merely
-untidy — each one puts another sweep in front of everybody else's watch. Three
-copies of `intern` stretched a five-minute cycle to nine.
-
-New duplicates can no longer appear: `upsert()` matches on an **identityKey**
-(normalised keywords + country + match-all) rather than on the display key, so a
-watch joins the existing search however it was spelled — `Intern`, `intern `,
-`intern, INTERN` and the legacy `intern@@linkedin` all land on one row. Two
-match-all watches in one country are also the same search, because
-`sweep.js` passes no keywords at all for those.
-
-Merge is for what normalisation cannot decide. `internship` and `intern` are
-different strings, and only a person can say they are one search — so the button
-is manual, lists same-country rows only, and marks provably identical ones with
-`*`. Nobody loses a watch: subscriptions are repointed, and where that would
-give one person the same watch twice the redundant row goes rather than the
-search. The source is parked, not deleted, so the result can be looked at first.
+| <code>npm run dev</code> | start the development server with Node watch mode |
+| <code>npm start</code> | start the normal server |
+| <code>npm run e2e</code> | run the signed-in E2E suite using its own test DB/server |
+| <code>npm run test-sources</code> | exercise source adapters |
+| <code>npm run test-sweep</code> | run a controlled sweep diagnostic |
+| <code>npm run test-mail</code> | verify/send through the configured mail path |
+| <code>npm run preview-email</code> | render/check email output |
+| <code>npm run parity</code> | compare LinkedIn discovery against the live surface |
+| <code>npm run verify-geoids</code> | verify configured country geo IDs |
+| <code>npm run measure-lag</code> | measure source/indexing lag |
+| <code>npm run measure-routes</code> | profile application routes |
+| <code>npm run trace-job</code> | trace a job through telemetry/state |
+| <code>npm run prune-matches</code> | re-evaluate stored matches against current rules |
+| <code>npm run merge-queries</code> | merge duplicate canonical searches |
+| <code>npm run backfill-alerts</code> | backfill alert-ledger state |
+| <code>npm run backfill-intervals</code> | backfill per-subscription intervals |
+| <code>npm run prime-sources</code> | prime newly introduced sources before alerting |
+| <code>npm run check-shell</code> | application shell/rendering checks |
+
+### Test database safety
+
+The E2E suite owns its own server and its own isolated test database. The test
+helpers deliberately refuse to run against the production database.
+
+That protection exists because test code is destructive by design.
 
 ---
 
-## Email deliverability
+## Docker
 
-A new user's first email is their verification code. If that lands in spam they
-cannot sign up **at all**, so this matters more than any feature.
+Build locally:
 
-**The one thing that matters most.** Sending as a `gmail.com` address through a
-third-party relay breaks DMARC; only Google may send as gmail.com, so the relay
-claims a domain it cannot prove. Gmail accepts the message and files it as spam,
-and the provider reports zero failures the entire time.
+~~~bash
+docker build -t job-wire .
+docker run --rm --env-file .env -p 3000:3000 job-wire
+~~~
 
-```
-  Symptom:  74 / 280 sent · 0 failed · empty inbox
-```
+The container:
 
-The proper fix: own a domain, authenticate it in a transactional provider with
-SPF and DKIM, and send as `alerts@yourdomain`. The `/admin` Delivery panel flags
-the misalignment until you do.
-
-**The alert email leads with age**, because that is the only number the product
-is really about:
-
-```
-  2m old    Intern: Fintech Operations
-            PickMe · Colombo
-            Open on LinkedIn
-
-  41m old   Trainee Software Engineer
-            Epinics · Kandy
-            Open on LinkedIn
-```
-
-No images, no coloured buttons, no bulk-mail footer, a real `text/plain`
-alternative, `List-Unsubscribe` on both transports. Those are deliverability
-decisions, not a lack of ideas; anything decorative costs inbox placement this
-account cannot afford. `npm run preview-email` asserts all fourteen.
+- uses Node 20 Alpine;
+- installs production dependencies with <code>npm ci</code>;
+- runs as the non-root <code>node</code> user;
+- exposes port 3000;
+- starts <code>src/server.js</code>.
 
 ---
 
-## Things that will bite you
+## Raspberry Pi / ARM64 deployment
 
-**LinkedIn does not want to be polled.** It is against their terms, they
-rate-limit hard, and shared cloud IPs are often already flagged. All the
-fragility lives in `services/linkedin/parse.js`; keep it isolated.
+The GitHub Actions workflow builds an ARM64 image on pushes to
+<code>main</code> and publishes it to:
 
-**A 200 is not a success.** Responses are classified, not assumed: markup with
-no job cards raises an error rather than reporting zero jobs. Oracle's API will
-happily return 200 with no `requisitionList` if the finder syntax is wrong.
+~~~text
+ghcr.io/zacky-ahmed/job-wire
+~~~
 
-**geoIds must be verified.** A wrong one fails silently and searches the wrong
-country. `npm run verify-geoids` checks all 45.
+The included <code>compose.yml</code> is configured for that image and binds the
+application to localhost on port 3000, which is suitable for placing a reverse
+proxy in front of it.
 
-**The TTL index on `seenJobs` is not optional.** Without it the collection grows
-forever on a 512 MB Atlas tier. With it, storage is steady state.
+Typical flow on the Pi:
 
-**`numReplicas` must stay at 1.** Two replicas means two pollers sweeping the
-same queries.
+~~~bash
+cp .env.example .env
+# fill in the production values
 
-**Do not deploy to Vercel.** Serverless functions are destroyed between
-requests, so the loop cannot exist.
+docker compose pull
+docker compose up -d
+~~~
 
-**`pkill` does not kill node on Windows.** Use `taskkill //F //IM node.exe`, or
-a stale server keeps port 3000 and your health check passes against code from an
-hour ago.
+Check it locally on the host:
 
----
+~~~bash
+curl http://127.0.0.1:3000/healthz
+~~~
 
-## Deploying
-
-One always-on service. The web app and the poller share a process, so anything
-that sleeps or recycles between requests breaks the product.
-
-**Railway (current target).** `railway.json` builds from the Dockerfile and
-points the healthcheck at `/healthz`.
-
-1. New Project → Deploy from GitHub repo
-2. Variables → everything from `.env.example` except `PORT` (Railway injects its own)
-3. Set `APP_URL` to your domain; canonical tags and email links both read it
-4. MongoDB Atlas → Network Access → allow `0.0.0.0/0`, because Railway's egress
-   IPs are not fixed
-
-The Dockerfile forces IPv4 DNS ordering. Without it, outbound SMTP fails with
-`ENETUNREACH` on an IPv6 address that has no route; 43 consecutive send
-failures in one evening before that was found.
-
-**Render (alternative).** `render.yaml` is a blueprint for the same single
-service. Free instances sleep after ~15 minutes idle, which stops the poller;
-hence `plan: starter`.
+The compose configuration gives the container a shutdown grace period long
+enough for the poller to finish/hand off work cleanly.
 
 ---
 
-## Licence
+## Other deployment manifests
 
-[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
+The repository also contains:
 
-One thing the licence does **not** cover, and cannot: it applies to this
-source code, not to the sites it reads. Job Wire polls LinkedIn's public
-guest endpoints, which is against LinkedIn's terms of service. MIT-licensing a
-scraper grants you rights to the scraper; it grants nobody permission to
-scrape. If you fork this, that decision is yours to make and yours to own.
+- <code>render.yaml</code>
+- <code>railway.json</code>
+
+These are deployment configuration files, not a guarantee that every provider
+is currently the production host.
+
+A practical mail warning applies to many PaaS providers: outbound SMTP ports may
+be blocked. In that environment, use the Brevo HTTP path instead of relying on
+Gmail SMTP.
+
+Keep the web application and poller configuration consistent, and keep the
+number of active crawling replicas controlled. The MongoDB poller lease exists
+to protect rolling deployments, not to make unnecessary duplicate crawlers a
+good architecture.
 
 ---
 
-<div align="center">
+## CI/CD
 
-Built because good applications lose to early ones.
+<code>.github/workflows/ci-cd.yml</code> runs on pull requests and pushes to
+<code>main</code>.
 
-</div>
+It currently:
+
+1. checks out the repository;
+2. installs Node.js 20;
+3. runs <code>npm ci</code>;
+4. syntax-checks JavaScript files;
+5. configures QEMU + Docker Buildx;
+6. builds an ARM64 container image;
+7. publishes <code>latest</code> and commit-SHA tags to GHCR on pushes to
+   <code>main</code>.
+
+---
+
+## Known limitations
+
+Job Wire is deliberately not presented as something it cannot be.
+
+- **Source visibility controls the earliest possible alert.** If a board has not
+  exposed the job yet, Job Wire cannot discover it.
+- **Public pages and undocumented endpoints can change.** Adapters and coverage
+  checks reduce silent failure risk but cannot eliminate it.
+- **LinkedIn public discovery is not the same as LinkedIn's signed-in product.**
+  Different public surfaces can expose different subsets at different times.
+- **A requested five-minute watch is not a promise that every board will reveal
+  every job within five minutes of the employer posting it.**
+- **Job Wire does not auto-apply.**
+- **Sri Lanka has the richest coverage.** Outside Sri Lanka, current coverage is
+  primarily LinkedIn.
+- **Email providers have quotas and filtering rules.** Successful API/SMTP
+  acceptance does not guarantee inbox placement.
+- **Scraping/integration behavior should be reviewed against the applicable
+  source terms and laws before operating a deployment.**
+
+For measured performance and the scaling analysis, read
+[docs/SCALING.md](docs/SCALING.md).
+
+---
+
+## Design principles
+
+A few rules explain a large part of the codebase:
+
+**Prime before alerting.** Existing jobs are not “new” just because a user
+created a watch five seconds ago.
+
+**Share identical searches.** Users should multiply subscribers, not duplicate
+network work.
+
+**Remember alerts longer than the feed.** A short-lived UI feed is not a safe
+dedupe ledger.
+
+**Fail loudly on ambiguous source breakage.** An error is easier to investigate
+than a healthy-looking process quietly returning 80% fewer jobs.
+
+**Do not invent time precision.** A board that publishes only a date cannot
+support a minute-accurate freshness decision.
+
+**Persist email obligations before delivery.** Provider availability should not
+decide whether the application remembers that it owes somebody an alert.
+
+**Measure before optimising.** Much of the scheduler/source design exists because
+live measurements contradicted assumptions that looked reasonable in code.
+
+---
+
+## Contributing
+
+Changes are easiest to review when they preserve the source boundaries already
+in the project.
+
+For a typical change:
+
+~~~bash
+git checkout -b feature/your-change
+npm ci
+npm run e2e
+~~~
+
+For source-related changes, also run the relevant source/probe tools before
+opening a pull request.
+
+Please do not commit:
+
+- <code>.env</code>;
+- email/provider secrets;
+- MongoDB credentials;
+- generated <code>node_modules</code>;
+- private production data.
+
+---
+
+## License
+
+Job Wire is released under the [MIT License](LICENSE).
+
+Copyright © Zacky Ahmed.
+
+---
+
+## One-minute summary for a new reader
+
+If this is your first time seeing the repository, the entire system can be
+remembered like this:
+
+> **Users create watches. Identical watches share queries. The poller checks the
+> sources for those queries, normalises and deduplicates jobs, stores new
+> matches in MongoDB, creates durable email work, and the mail worker delivers
+> the alert. The browser shows the same caught jobs in The Wire.**
+
+Start with:
+
+1. <code>src/server.js</code> — how the application boots.
+2. <code>src/services/poller/loop.js</code> — how background work is scheduled.
+3. <code>src/services/poller/sweep.js</code> — how one query is processed.
+4. <code>src/services/sources/index.js</code> — the source contract and registry.
+5. <code>src/models/queries.js</code> + <code>subscriptions.js</code> — why
+   searches are shared.
+6. <code>docs/SCALING.md</code> — the measured reason behind the architecture.
