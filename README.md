@@ -210,35 +210,9 @@ The Express web server and the background poller start from the same Node.js
 process. MongoDB is the shared persistent state, and the poller lease protects
 against two live processes doing the same crawl simultaneously.
 
-~~~mermaid
-flowchart LR
-    U[User browser] -->|HTTPS| W[Express + EJS + HTMX]
-    W --> M[(MongoDB)]
-
-    P[Background poller] --> Q[Shared queries]
-    Q --> S1[LinkedIn]
-    Q --> S2[topjobs.lk]
-    Q --> S3[Keells]
-    Q --> S4[MAS]
-    Q --> S5[ITPro.lk]
-    Q --> S6[XpressJobs]
-    Q --> S7[Rooster]
-
-    S1 --> N[Normalise + match + dedupe]
-    S2 --> N
-    S3 --> N
-    S4 --> N
-    S5 --> N
-    S6 --> N
-    S7 --> N
-
-    N --> M
-    N --> O[Durable outbox]
-    O --> E[Gmail SMTP or Brevo HTTP]
-    E --> I[User inbox]
-
-    M --> W
-~~~
+<p align="center">
+  <img src="public/readme/job-wire-architecture.jpg" alt="Job Wire architecture showing users, the Express app, background poller, seven job sources, MongoDB and email delivery" width="100%">
+</p>
 
 ### Technology stack
 
@@ -261,7 +235,11 @@ flowchart LR
 
 ## How a sweep works
 
-A simplified sweep looks like this:
+<p align="center">
+  <img src="public/readme/how-job-wire-works.jpg" alt="Seven-step Job Wire workflow from creating a watch through shared queries, polling, matching, priming and email alerts" width="100%">
+</p>
+
+The infographic above is the newcomer view. The simplified poller flow below shows the same process from the scheduler's point of view:
 
 ~~~text
 poller tick
