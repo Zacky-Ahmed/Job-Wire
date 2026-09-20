@@ -171,6 +171,24 @@ async function main() {
     log.info("listening", { port: env.port, env: env.nodeEnv });
   });
 
+  /*
+   * Bound how long a client may occupy an HTTP connection.
+   *
+   * Cloudflare normally absorbs slow/broken clients before they reach us,
+   * but the origin should still defend itself.  These limits are generous
+   * for this app (tiny form/JSON bodies, no uploads or streaming) while
+   * preventing a client from holding Raspberry Pi sockets open forever.
+   *
+   * requestTimeout: complete request (headers + body) must arrive in 30s.
+   * headersTimeout: headers alone must arrive in 15s.
+   * keepAliveTimeout: idle keep-alive sockets close after 5s.
+   * setTimeout: destroy a socket after 30s of inactivity.
+   */
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 15_000;
+  server.keepAliveTimeout = 5_000;
+  server.setTimeout(30_000, (socket) => socket.destroy());
+
   // Prove the mail credentials, but in the background. The classic failure
   // is GMAIL_USER not matching the account the app password was created
   // on: it authenticates locally and fails in production, silently, until
