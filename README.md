@@ -239,34 +239,11 @@ against two live processes doing the same crawl simultaneously.
   <img src="public/readme/how-job-wire-works.jpg" alt="Seven-step Job Wire workflow from creating a watch through shared queries, polling, matching, priming and email alerts" width="100%">
 </p>
 
-The infographic above is the newcomer view. The simplified poller flow below shows the same process from the scheduler's point of view:
+The infographic above is the newcomer view. The detailed scheduler view below shows exactly what happens inside a sweep:
 
-~~~text
-poller tick
-  |
-  +-- acquire / renew fenced lease
-  |
-  +-- find due shared queries
-  |
-  +-- open a source snapshot/pass
-  |
-  +-- for each due query
-        |
-        +-- resolve sources for the query's country
-        +-- fetch source data
-        +-- parse and normalise jobs
-        +-- match the watch keywords
-        +-- check the long-lived alert ledger
-        |
-        +-- first sweep?
-        |     yes -> remember current jobs, send nothing
-        |
-        +-- later sweep?
-              -> save new feed rows
-              -> create durable outbox obligations
-              -> send/retry email
-              -> reschedule the query
-~~~
+<p align="center">
+  <img src="public/readme/how-a-job-wire-sweep-works.jpg" alt="Detailed Job Wire sweep flow showing the poller tick, fenced lease, due shared queries, source fetching, matching, first-sweep priming and later email alerts" width="100%">
+</p>
 
 Queries are processed carefully rather than firing every request in parallel.
 Different source hosts can be fetched concurrently where safe, while per-source
@@ -300,54 +277,20 @@ The names below are MongoDB collections/concepts used by the current code.
 
 This is one of the most important design choices in the project.
 
-~~~text
-User A ─┐
-User B ─┼── subscriptions ──> one shared query: "intern / Sri Lanka"
-User C ─┘
-                              |
-                              +--> one scheduled search
-                              +--> one remembered history
-                              +--> results fan out to subscribers
-~~~
+<p align="center">
+  <img src="public/readme/why-shared-queries-matter.jpg" alt="Why shared queries matter: multiple users with the same watch share one scheduled search and remembered history, with matching results fanned out to subscribers" width="100%">
+</p>
 
-Network load should grow with distinct searches, not directly with the number
-of users.
+Identical watches share the same background work, so adding more subscribers to
+an existing search does not create another copy of that crawl.
 
 ---
 
 ## Repository structure
 
-~~~text
-Job-Wire/
-├─ src/
-│  ├─ server.js                 Express app, startup and graceful shutdown
-│  ├─ config/
-│  │  ├─ db.js                  MongoDB connection
-│  │  └─ env.js                 environment parsing and validation
-│  ├─ middleware/               auth, session, CSRF, rate limits, theme
-│  ├─ models/                   MongoDB accessors, indexes, ledger, outbox
-│  ├─ routes/                   landing, auth, wire, watches, admin
-│  ├─ services/
-│  │  ├─ auth/                  password + OTP logic
-│  │  ├─ http/                  guarded outbound HTTP
-│  │  ├─ linkedin/              LinkedIn URL/parser/geo helpers
-│  │  ├─ mail/                  transports, outbox worker, templates
-│  │  ├─ onboarding/            starter-watch logic
-│  │  ├─ poller/                loop, sweep, retry, snapshot, runtime state
-│  │  └─ sources/               one adapter per job source
-│  ├─ utils/                    matching, sanitising, timing, rendering
-│  └─ views/                    EJS layouts, pages and partials
-├─ public/                      CSS, browser JS, icons and README images
-├─ scripts/                     tests, probes, maintenance and diagnostics
-├─ docs/
-│  └─ SCALING.md                measured scaling/cost analysis
-├─ .github/workflows/ci-cd.yml  syntax check + ARM64 image build/publish
-├─ Dockerfile
-├─ compose.yml
-├─ render.yaml
-├─ railway.json
-└─ package.json
-~~~
+<p align="center">
+  <img src="public/readme/job-wire-repository-structure.jpg" alt="Visual map of the Job Wire repository showing src, services, public assets, scripts, docs, CI/CD and deployment files" width="100%">
+</p>
 
 The codebase contains detailed comments explaining why many non-obvious rules
 exist. For this project, those comments are useful operational history: several
