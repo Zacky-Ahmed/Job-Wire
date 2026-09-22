@@ -147,14 +147,27 @@ client-heavy single-page app.
 
 ### Email alerts
 
-Mail can be delivered through:
+Job Wire supports two mail transports:
 
-- **Gmail SMTP** for local/small deployments; or
-- **Brevo's HTTP API** when <code>BREVO_API_KEY</code> is configured.
+- **Brevo HTTP API** as the preferred transactional provider when
+  <code>BREVO_API_KEY</code> is configured; and
+- **Gmail SMTP** either as the only provider or as an automatic fallback when
+  Gmail credentials are configured alongside Brevo.
 
-The mail path includes a durable outbox, retry handling, delivery logs, provider
-health checks, and Brevo idempotency keys so a retry does not become a duplicate
-email when the provider already accepted the first request.
+With both providers configured, Job Wire checks Brevo's account send credits
+before assigning a **new** message. If Brevo reports remaining send credits, the
+message goes through Brevo. If Brevo reports zero credits, or the preflight
+account check is unavailable, the new message is routed through Gmail SMTP
+instead.
+
+The decision is made **before** an alert batch is handed to a provider and is
+then written into the durable outbox beside the batch identity. Retries stay
+pinned to that provider. This matters because a Brevo timeout after submission
+is ambiguous: Brevo may already have accepted the message, so retrying the same
+batch through Gmail could otherwise send a duplicate.
+
+The mail path also includes retry handling, delivery logs, provider-health
+tracking, Brevo idempotency keys, and an instance-wide daily safety ceiling.
 
 ### Accounts and verification
 
@@ -225,7 +238,7 @@ against two live processes doing the same crawl simultaneously.
 | Database | MongoDB |
 | Sessions | express-session + connect-mongo |
 | HTML parsing | Cheerio |
-| Email | Nodemailer/Gmail SMTP or Brevo HTTP API |
+| Email | Brevo HTTP API + Nodemailer/Gmail SMTP automatic fallback |
 | Authentication | bcryptjs + emailed OTP codes |
 | Container | Node 20 Alpine |
 | CI/CD | GitHub Actions + Docker Buildx |
@@ -308,9 +321,10 @@ Before starting, install or provide:
 - **Node.js 20 or newer**
 - **npm**
 - a reachable **MongoDB** database
-- an email provider:
-  - Gmail with an app password, or
-  - Brevo with a REST API key
+- at least one email provider:
+  - Gmail with an app password;
+  - Brevo with a REST API key; or
+  - both, to enable automatic Brevo → Gmail fallback
 
 ### 1. Clone
 
@@ -368,7 +382,7 @@ MAIL_FROM=Job Wire <you@gmail.com>
 POLLER_ENABLED=false
 ~~~
 
-For Brevo instead of Gmail:
+For Brevo only:
 
 ~~~dotenv
 MONGODB_URI=mongodb+srv://...
@@ -378,7 +392,28 @@ BREVO_API_KEY=xkeysib-...
 MAIL_FROM=Job Wire <alerts@your-domain.example>
 ~~~
 
-When <code>BREVO_API_KEY</code> is set, Gmail credentials are optional.
+For the recommended dual-provider setup:
+
+~~~dotenv
+MONGODB_URI=mongodb+srv://...
+SESSION_SECRET=replace-with-a-long-random-string
+
+BREVO_API_KEY=xkeysib-...
+
+GMAIL_USER=you@gmail.com
+GMAIL_APP_PASSWORD=your-16-character-app-password
+
+MAIL_FROM=Job Wire <alerts@your-domain.example>
+~~~
+
+When both Brevo and Gmail are configured, Brevo is preferred while it reports
+send credits remaining. New messages automatically fall back to Gmail when
+Brevo reaches zero credits or its account preflight cannot be completed.
+
+If <code>MAIL_FROM</code> differs from <code>GMAIL_USER</code>, verify that
+address in Gmail's **Send mail as** settings before relying on the Gmail path.
+Brevo-only deployments remain valid; Gmail credentials are optional unless the
+fallback is wanted.
 
 > For UI work, keep <code>POLLER_ENABLED=false</code>. Running a local poller
 > against a production database can create real network traffic and real email.
@@ -416,10 +451,10 @@ The most important settings are:
 | <code>MONGODB_URI</code> | **required** MongoDB connection string |
 | <code>MONGODB_DB</code> | database name, default <code>jobwire</code> |
 | <code>SESSION_SECRET</code> | **required** session-signing secret |
-| <code>GMAIL_USER</code> | Gmail SMTP account when Brevo is not used |
+| <code>GMAIL_USER</code> | Gmail SMTP account; can be primary or Brevo fallback |
 | <code>GMAIL_APP_PASSWORD</code> | 16-character Gmail app password |
-| <code>MAIL_FROM</code> | sender shown on outgoing mail |
-| <code>BREVO_API_KEY</code> | optional REST API key; switches mail to Brevo HTTP |
+| <code>MAIL_FROM</code> | sender shown on outgoing mail; verify as a Gmail Send-as identity when it differs from <code>GMAIL_USER</code> |
+| <code>BREVO_API_KEY</code> | optional Brevo REST API key; preferred when configured and send credits remain |
 | <code>POLLER_ENABLED</code> | enable/disable background polling |
 | <code>POLL_TICK_SECONDS</code> | how often the scheduler looks for due work |
 | <code>DEFAULT_SWEEP_MINUTES</code> | default watch interval |
@@ -478,8 +513,13 @@ query + job IDs.
 The mail outbox is also durable. Discovering a job and remembering that an
 email is owed are separate from successfully talking to the mail provider.
 
-This is why a provider outage, deploy, or process restart does not have to turn
-into a permanently lost alert.
+When both Brevo and Gmail are configured, a newly sealed alert batch records
+which provider was chosen for it. A retry reuses that same provider as well as
+the same batch identity. That prevents an ambiguous Brevo timeout from being
+retried through Gmail and accidentally becoming a second copy.
+
+This is why a provider outage, quota transition, deploy, or process restart does
+not have to turn into a permanently lost alert.
 
 ---
 
@@ -493,6 +533,8 @@ The current application includes:
 - CSRF protection on mutating forms;
 - IP-based rate limiting;
 - body-size limits;
+- bounded inbound HTTP connection lifetimes (header, request, keep-alive and
+  idle-socket timeouts);
 - NoSQL operator-injection rejection;
 - output sanitisation/escaping through the view layer;
 - explicit security headers and CSP;
@@ -620,8 +662,25 @@ ghcr.io/zacky-ahmed/job-wire
 ~~~
 
 The included <code>compose.yml</code> is configured for that image and binds the
-application to localhost on port 3000, which is suitable for placing a reverse
-proxy in front of it.
+application only to <code>127.0.0.1:3000</code>.
+
+The current Raspberry Pi production path exposes that local service through a
+**Cloudflare Tunnel** rather than a public origin port:
+
+~~~text
+Internet
+   ↓
+Cloudflare
+   ↓
+Cloudflare Tunnel (outbound from the Pi)
+   ↓
+127.0.0.1:3000
+   ↓
+Job Wire
+~~~
+
+This keeps the Node.js service off the public network interface while still
+allowing <code>jobwire.me</code> to reach it.
 
 Typical flow on the Pi:
 
@@ -655,8 +714,9 @@ These are deployment configuration files, not a guarantee that every provider
 is currently the production host.
 
 A practical mail warning applies to many PaaS providers: outbound SMTP ports may
-be blocked. In that environment, use the Brevo HTTP path instead of relying on
-Gmail SMTP.
+be blocked. In that environment, Brevo HTTP can still work while the Gmail SMTP
+fallback cannot. The automatic fallback therefore assumes the host can actually
+reach Gmail SMTP; the Raspberry Pi production path does.
 
 Keep the web application and poller configuration consistent, and keep the
 number of active crawling replicas controlled. The MongoDB poller lease exists
@@ -698,8 +758,12 @@ Job Wire is deliberately not presented as something it cannot be.
 - **Job Wire does not auto-apply.**
 - **Sri Lanka has the richest coverage.** Outside Sri Lanka, current coverage is
   primarily LinkedIn.
-- **Email providers have quotas and filtering rules.** Successful API/SMTP
-  acceptance does not guarantee inbox placement.
+- **Email providers have quotas and filtering rules.** Job Wire can route new
+  mail from Brevo to Gmail when Brevo reports no send credits, but successful
+  API/SMTP acceptance still does not guarantee inbox placement.
+- **Provider failover is deliberately not a mid-send retry.** Once an alert
+  batch has been assigned to a provider, retries stay there so an ambiguous
+  timeout cannot create a duplicate through the other provider.
 - **Scraping/integration behavior should be reviewed against the applicable
   source terms and laws before operating a deployment.**
 
@@ -777,7 +841,8 @@ remembered like this:
 > **Users create watches. Identical watches share queries. The poller checks the
 > sources for those queries, normalises and deduplicates jobs, stores new
 > matches in MongoDB, creates durable email work, and the mail worker delivers
-> the alert. The browser shows the same caught jobs in The Wire.**
+> through Brevo or Gmail according to provider availability. The browser shows
+> the same caught jobs in The Wire.**
 
 Start with:
 
