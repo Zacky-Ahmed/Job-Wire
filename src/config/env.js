@@ -63,17 +63,12 @@ export const env = {
   // Gmail SMTP — required on hosts that block outbound SMTP ports.
   brevoApiKey: (process.env.BREVO_API_KEY || "").trim(),
 
-  // Only required when Gmail is the transport. With BREVO_API_KEY set,
-  // transport.js never touches these — but boot refused to start without
-  // them anyway, so a Brevo-only deploy had to invent a Gmail account to
-  // satisfy a check for credentials it would never use.
-  gmailUser: (process.env.BREVO_API_KEY || "").trim()
-    ? (process.env.GMAIL_USER || "").trim()
-    : required("GMAIL_USER"),
+  // Gmail can be the only provider OR a fallback behind Brevo. Keep both
+  // credentials available even when BREVO_API_KEY is present; transport.js
+  // decides which provider to use for each message.
+  gmailUser: (process.env.GMAIL_USER || "").trim(),
   // Google displays the app password as 4 groups of 4; the secret is the 16 chars.
-  gmailAppPassword: ((process.env.BREVO_API_KEY || "").trim()
-    ? (process.env.GMAIL_APP_PASSWORD || "")
-    : required("GMAIL_APP_PASSWORD")).replace(/\s+/g, ""),
+  gmailAppPassword: (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, ""),
   mailFrom: process.env.MAIL_FROM || process.env.GMAIL_USER,
 
   pollTickSeconds: num("POLL_TICK_SECONDS", 30),
@@ -143,14 +138,23 @@ export const env = {
   starterWatchLabel: (process.env.STARTER_WATCH_LABEL ?? "Intern").trim(),
 };
 
-// True when Gmail SMTP is the transport. Every Gmail-specific check
-// below is conditioned on it: with Brevo configured these credentials are
-// legitimately absent, and asserting on them turned an unused setting
-// into a boot failure.
-const usingGmail = !env.brevoApiKey;
+const hasGmailUser = !!env.gmailUser;
+const hasGmailPassword = !!env.gmailAppPassword;
+const hasGmail = hasGmailUser && hasGmailPassword;
 
-// Catch the mistakes that produce confusing failures much later.
-if (usingGmail && env.gmailAppPassword.length !== 16) {
+// A half-configured fallback is worse than no fallback: it looks available
+// until the first real message needs it.
+if (hasGmailUser !== hasGmailPassword) {
+  throw new Error(
+    "GMAIL_USER and GMAIL_APP_PASSWORD must either both be set or both be empty."
+  );
+}
+if (!env.brevoApiKey && !hasGmail) {
+  throw new Error(
+    "No mail transport configured. Set BREVO_API_KEY, or both GMAIL_USER and GMAIL_APP_PASSWORD."
+  );
+}
+if (hasGmail && env.gmailAppPassword.length !== 16) {
   throw new Error(
     `GMAIL_APP_PASSWORD should be 16 characters after removing spaces, ` +
     `got ${env.gmailAppPassword.length}. Is it a real app password?`
@@ -162,7 +166,7 @@ if (usingGmail && env.gmailAppPassword.length !== 16) {
 // than throw: a legitimately configured "Send mail as" alias is valid.
 const fromAddress = ((env.mailFrom || "").match(/<([^>]+)>/)?.[1] || env.mailFrom || "")
   .trim().toLowerCase();
-if (usingGmail && fromAddress !== env.gmailUser.toLowerCase()) {
+if (hasGmail && fromAddress !== env.gmailUser.toLowerCase()) {
   console.warn(
     `WARNING  MAIL_FROM address (${fromAddress}) does not match GMAIL_USER ` +
     `(${env.gmailUser}). Gmail will rewrite the From header, and the ` +

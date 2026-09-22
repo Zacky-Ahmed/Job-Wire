@@ -168,20 +168,27 @@ export async function enqueue(items) {
  *
  *   one provider request  =  one immutable set of obligations  =  one key
  */
-export async function sealBatch(rows, { now = new Date() } = {}) {
+export async function sealBatch(rows, { now = new Date(), mailProvider = null } = {}) {
   const existing = rows.find((r) => r.batchId);
-  /* An already-sealed batch keeps its identity. This is the whole point:
-     a retry must reuse the key the first attempt used, or the provider
-     sees a new message and delivers the same jobs twice. */
+  /* An already-sealed batch keeps its identity AND its provider. This is
+     the whole point: a retry must reuse not only the same key but the same
+     transport. If Brevo accepted a message and our response was lost,
+     retrying that sealed batch through Gmail could deliver a duplicate. */
   const batchId = existing?.batchId || randomUUID();
   const batchKey = existing?.batchKey || randomUUID();
+  const pinnedProvider = existing?.mailProvider || mailProvider || null;
 
   const ids = rows.map((r) => r._id);
   await collections.outbox().updateMany(
     { _id: { $in: ids } },
-    { $set: { batchId, batchKey, sealedAt: existing?.sealedAt || now } }
+    { $set: {
+        batchId,
+        batchKey,
+        mailProvider: pinnedProvider,
+        sealedAt: existing?.sealedAt || now,
+      } }
   );
-  return { batchId, batchKey, ids };
+  return { batchId, batchKey, mailProvider: pinnedProvider, ids };
 }
 
 /**

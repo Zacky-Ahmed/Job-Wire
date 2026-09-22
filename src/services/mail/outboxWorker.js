@@ -22,7 +22,7 @@ import * as Outbox from "../../models/outbox.js";
 import * as EmailLog from "../../models/emailLog.js";
 import { collections } from "../../config/db.js";
 import { sendAlert } from "./send.js";
-import { dailyCap } from "./transport.js";
+import { chooseProvider, dailyCap } from "./transport.js";
 import * as Provider from "./providerHealth.js";
 import { log } from "../../utils/logger.js";
 
@@ -190,16 +190,23 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
       jobIds: rows.map((r) => r.jobId),
     });
 
-    /* SEAL BEFORE SENDING. After this line the set of obligations this
-       message carries is fixed and written down, so a retry sends the
-       same message under the same key rather than a larger one. */
-    const { batchKey } = await Outbox.sealBatch(rows, { now });
+    /* SEAL BEFORE SENDING. New batches choose a provider before the first
+       network call and write that choice beside the batch key. Retries
+       reuse both. This prevents an ambiguous Brevo timeout from becoming
+       a duplicate Gmail send after the fallback decision changes. */
+    const alreadyPinned = rows.find((r) => r.mailProvider)?.mailProvider || null;
+    const selectedProvider = alreadyPinned || await chooseProvider();
+    const { batchKey, mailProvider } = await Outbox.sealBatch(rows, {
+      now,
+      mailProvider: selectedProvider,
+    });
 
     let res;
     try {
       res = await send({
         to, label: first.label, jobs,
         idempotencyKey: batchKey,
+        provider: mailProvider,
       });
     } catch (err) {
       res = { ok: false, error: err.message };
