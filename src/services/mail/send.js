@@ -239,8 +239,8 @@ export async function sendVerification({ to, code, userId = null }) {
    attempt, including retries, so a provider that supports it will not
    deliver the same jobs twice after a timeout we misread as a failure.
    See the note in transport.js about what SMTP cannot promise here. */
-export function sendAlert({ to, label, jobs, idempotencyKey }) {
-  return sendMail({ to, ...buildAlert({ label, jobs }), idempotencyKey });
+export function sendAlert({ to, label, jobs, idempotencyKey, provider }) {
+  return sendMail({ to, ...buildAlert({ label, jobs }), idempotencyKey, provider });
 }
 
 export async function sendPasswordReset({ to, code, userId = null }) {
