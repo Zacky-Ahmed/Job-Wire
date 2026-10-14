@@ -67,6 +67,7 @@ export const collections = {
   subscriptions: () => getDb().collection("subscriptions"),
   seenJobs: () => getDb().collection("seenJobs"),
   emailLog: () => getDb().collection("emailLog"),
+  adminNotifications: () => getDb().collection("adminNotifications"),
   // What has ever been EMAILED, as opposed to what the wire has shown.
   // Outlives seenJobs on purpose; see models/alertedJobs.js.
   alertedJobs: () => getDb().collection("alertedJobs"),

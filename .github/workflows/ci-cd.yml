@@ -43,6 +43,9 @@ jobs:
             -type f -name '*.mjs' \
             -print0 | xargs -0 -r -n1 node --check
 
+      - name: Admin notification unit tests
+        run: node --test scripts/test-admin-notifications.test.js
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

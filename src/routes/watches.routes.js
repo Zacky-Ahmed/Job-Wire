@@ -19,6 +19,7 @@ import { listSources, getSource, sourcesForCountry, DEFAULT_SOURCE } from "../se
 import { rel, countdown } from "../utils/time.js";
 import { headerState } from "../utils/header.js";
 import { env } from "../config/env.js";
+import { queueManualWatch } from "../services/mail/adminNotifications.js";
 
 export const watchesRoutes = Router();
 
@@ -171,6 +172,11 @@ watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
     });
     if (!sub)
       return render(req, res, { showNew: true, values, error: "You already watch this exact query." });
+
+    void queueManualWatch({
+      subscriptionId: sub._id, email: req.user.email, label,
+      keywords: kw, location: geo.name, everyMinutes: every,
+    });
 
     return render(req, res, {
       notice: `Watch created. The first sweep only memorises what is already there — alerts start after that.`,

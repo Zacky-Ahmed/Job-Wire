@@ -11,6 +11,7 @@ import { ensureStarterWatch, describeStarterWatch } from "../services/onboarding
 import * as pw from "../services/auth/password.js";
 import * as otp from "../services/auth/otp.js";
 import { sendVerification, sendPasswordReset } from "../services/mail/send.js";
+import { queueVerifiedUser } from "../services/mail/adminNotifications.js";
 import { redirectIfAuthed } from "../middleware/requireAuth.js";
 import { signupLimiter, signinLimiter, verifyLimiter, resendLimiter,
   forgotLimiter, resetLimiter } from "../middleware/rateLimit.js";
@@ -173,6 +174,7 @@ authRoutes.post("/verify", verifyLimiter, async (req, res, next) => {
         req.session.save((err2) => {
           if (err2) return next(err2);
           log.info("verified", { email: user.email });
+          void queueVerifiedUser({ userId: user._id, email: user.email });
           res.redirect("/wire");
         });
       });

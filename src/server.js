@@ -250,6 +250,11 @@ async function main() {
      never started, which the handler treats as nothing to stop. */
   let poller = null;
 
+  // Operational email notifications have their own small worker. It runs
+  // even when crawling is disabled, and never blocks HTTP requests.
+  const { startAdminNotifications, stopAdminNotifications } = await import("./services/mail/adminNotifications.js");
+  if (indexed) startAdminNotifications();
+
   if (!env.pollerEnabled) {
     log.info("poller disabled by POLLER_ENABLED");
   } else if (!indexed) {
@@ -302,6 +307,7 @@ async function main() {
     hard.unref();
 
     server.close();                              // stop taking new requests
+    await stopAdminNotifications();
 
     try {
       if (poller) await poller.stopPoller();

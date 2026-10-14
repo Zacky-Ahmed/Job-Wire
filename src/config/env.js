@@ -54,6 +54,10 @@ export const env = {
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean),
 
+  // Admin activity emails. Defaults to the existing admin allowlist.
+  adminNotificationEmails: (process.env.ADMIN_NOTIFICATION_EMAILS ?? process.env.ADMIN_EMAILS ?? "")
+    .split(",").map((email) => email.trim().toLowerCase()).filter(Boolean),
+
   mongoUri: required("MONGODB_URI"),
   mongoDb: process.env.MONGODB_DB || "jobwire",
 
