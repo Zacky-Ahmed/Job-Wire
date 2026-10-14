@@ -50,6 +50,7 @@ import * as Ledger from "../models/alertedJobs.js";
 import * as Outbox from "../models/outbox.js";
 import { dailyCap, providerLabel } from "../services/mail/transport.js";
 import { env } from "../config/env.js";
+import { parseAdminSweepMinutes } from "../utils/sweepIntervals.js";
 
 export const adminRoutes = Router();
 
@@ -74,8 +75,10 @@ function adminFlash(q = {}) {
         q.err === "selfmerge" ? "A search cannot be merged into itself." :
         q.err === "geo" ? "Those two searches are in different countries. Merging them would change which region every watcher is following." :
         q.err === "already" ? "That account already watches this search." :
-        q.err === "nosuch" ? "That account or search no longer exists." : null,
-    adminNotice: q.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
+        q.err === "nosuch" ? "That account or search no longer exists." :
+        q.err === "interval" ? `Enter a whole-number sweep interval between ${Math.max(5, env.minSweepMinutes)} and 60 minutes.` : null,
+    adminNotice: q.interval ? `Shared search interval set to ${q.interval} minutes. Existing watches are unchanged; this setting applies to them all.` :
+        q.swept ? "Sweep started. It runs in the background — reload in a minute to see the result." :
         q.unwatched ? "Watch removed. If that was the last one on the search, it has stopped sweeping." :
         q.watched ? `${q.watched} now watches that search. A shared query is one fetch however many people are on it, so this costs nothing.` :
         q.filtered ? `Email filter set to ${q.filtered}. Their wire still shows everything the watch catches — only the email is narrowed.` :
@@ -281,6 +284,7 @@ async function adminData(req, res) {
         tracked: q.trackedCount ?? 0,
         peak: q.trackedPeak ?? 0,
         every: q.everyMinutes,
+        adminEvery: q.adminEveryMinutes ?? null,
         lastFetched: rel(q.lastFetchedAt),
         failCount: q.failCount || 0,
         retired: !q.nextFetchAt,
@@ -449,6 +453,7 @@ async function adminData(req, res) {
       ...headerState(myWatches, await pollerSnapshot()),
       people,
       queryRows,
+      adminSweepMin: Math.max(5, env.minSweepMinutes),
       packs: listPacks(),
       delivery,
       poller,
@@ -586,6 +591,26 @@ adminRoutes.post("/admin/users/:id/delete", ...guard, async (req, res, next) => 
     await Promise.all([...touched.values()].map((qid) => Subs.syncSchedule(qid)));
     log.warn("ADMIN deleted an account", { by: req.user.email, account: u.email, watches: subs.length });
     return answer(req, res, "/admin", ["admin:peopleChanged", "admin:queriesChanged"]);
+  } catch (err) { next(err); }
+});
+
+/** Enforce a per-query sweep interval for all its watchers. */
+adminRoutes.post("/admin/queries/:id/interval", ...guard, async (req, res, next) => {
+  try {
+    const id = oid(req.params.id);
+    if (!id) return answer(req, res, "/admin?err=nosuch", ["admin:queriesChanged"]);
+    const minutes = parseAdminSweepMinutes(
+      req.body.minutes, Math.max(5, env.minSweepMinutes)
+    );
+    if (minutes === null) {
+      return answer(req, res, "/admin?err=interval", ["admin:queriesChanged"]);
+    }
+    const changed = await Queries.setAdminInterval(id, minutes);
+    if (!changed) return answer(req, res, "/admin?err=nosuch", ["admin:queriesChanged"]);
+    log.warn("ADMIN set the sweep cadence", {
+      by: req.user.email, queryId: String(id), everyMinutes: minutes,
+    });
+    return answer(req, res, `/admin?interval=${minutes}`, ["admin:queriesChanged", "admin:pollerChanged"]);
   } catch (err) { next(err); }
 });
 

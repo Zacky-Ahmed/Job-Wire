@@ -5,6 +5,7 @@
 
 import { collections } from "../config/db.js";
 import { log } from "../utils/logger.js";
+import { effectiveSweepMinutes, adminIntervalPatch } from "../utils/sweepIntervals.js";
 
 /** Find the shared query row or create it. Never creates a duplicate. */
 /**
@@ -89,17 +90,17 @@ export async function upsert({ keywordsKey, keywords, geoId, location, everyMinu
         keywordsKey, keywords, geoId, location,
         sources: sources?.length ? sources : ["linkedin"],
         matchAll: !!matchAll,
+        // The first subscriber chooses the initial cadence. Later
+        // subscribers are reconciled by subscriptions.syncSchedule().
+        // Never apply $min to an EXISTING row: it would silently
+        // override an admin-enforced interval until syncSchedule ran.
+        everyMinutes,
         primed: false,          // first sweep memorises, does not alert
         lastFetchedAt: null,
         nextFetchAt: now,       // sweep it immediately to prime
         failCount: 0,
         createdAt: now,
       },
-      // If someone wants it faster than the existing row, honour the shorter
-      // gap. $min also SETS the field when the document is being inserted,
-      // which is why everyMinutes must not also appear in $setOnInsert —
-      // Mongo rejects two operators writing the same path in one update.
-      $min: { everyMinutes },
     },
     { upsert: true, returnDocument: "after",
       /* Deterministic when several rows still share an identity — which
@@ -233,6 +234,14 @@ export function siblings(geoId, exceptId) {
  *   a genuine problem.
  */
 export async function reschedule(id, { everyMinutes, primed, tracked, timing }) {
+  // Read the LATEST cadence when finishing a sweep. An admin may have
+  // increased it while the old schedule was in flight; using the query
+  // snapshot passed into sweepQuery would undo the change for one cycle.
+  const current = await collections.queries().findOne(
+    { _id: id }, { projection: { serviceMsAvg: 1, everyMinutes: 1 } }
+  );
+  const liveEveryMinutes = Number.isFinite(current?.everyMinutes) && current.everyMinutes > 0
+    ? current.everyMinutes : everyMinutes;
   const set = { lastFetchedAt: new Date(), failCount: 0 };
   if (timing?.startedAt && timing?.finishedAt) {
     const serviceMs = timing.finishedAt - timing.startedAt;
@@ -245,9 +254,8 @@ export async function reschedule(id, { everyMinutes, primed, tracked, timing }) 
       // and "minus four minutes late" is not a useful thing to record.
       set.lastQueueDelayMs = Math.max(0, timing.startedAt - new Date(timing.scheduledFor).getTime());
     }
-    const prior = await collections.queries().findOne({ _id: id }, { projection: { serviceMsAvg: 1 } });
-    set.serviceMsAvg = Number.isFinite(prior?.serviceMsAvg)
-      ? Math.round(prior.serviceMsAvg * 0.7 + serviceMs * 0.3)
+    set.serviceMsAvg = Number.isFinite(current?.serviceMsAvg)
+      ? Math.round(current.serviceMsAvg * 0.7 + serviceMs * 0.3)
       : serviceMs;
   }
   if (primed !== undefined) set.primed = primed;
@@ -296,7 +304,7 @@ export async function reschedule(id, { everyMinutes, primed, tracked, timing }) 
      that was parked for a day would otherwise come back owing 288 sweeps
      and try to run them all — the classic catch-up storm, aimed at the
      one board that responds to being hammered by going silent. */
-  const step = everyMinutes * 60000;
+  const step = liveEveryMinutes * 60000;
   const from = timing?.scheduledFor ? new Date(timing.scheduledFor).getTime() : Date.now();
   const now = Date.now();
   const slotsMissed = Math.max(1, Math.ceil((now - from) / step));
@@ -354,29 +362,64 @@ export async function setInterval(id, everyMinutes) {
      query that is about to run should run.  */
   const q = await collections.queries().findOne(
     { _id: id },
-    { projection: { everyMinutes: 1, nextFetchAt: 1, lastFetchedAt: 1 } }
+    { projection: { everyMinutes: 1, adminEveryMinutes: 1, nextFetchAt: 1,
+      lastFetchedAt: 1, failCount: 1 } }
   );
-  if (!q || q.everyMinutes === everyMinutes) return 0;
+  if (!q) return 0;
+  const effective = effectiveSweepMinutes(q, everyMinutes);
+  if (q.everyMinutes === effective) return 0;
 
-  const faster = everyMinutes < (q.everyMinutes ?? Infinity);
-  const patch = { everyMinutes };
-  if (faster && q.nextFetchAt) {
+  const faster = effective < (q.everyMinutes ?? Infinity);
+  const patch = { everyMinutes: effective };
+  // A reduced watch interval must never cancel an existing failure
+  // backoff and immediately hammer an already rate-limited board.
+  if (faster && q.nextFetchAt && !q.failCount) {
     const since = q.lastFetchedAt ? q.lastFetchedAt.getTime() : Date.now();
-    const wanted = new Date(since + everyMinutes * 60000);
+    const wanted = new Date(since + effective * 60000);
     if (wanted < q.nextFetchAt) patch.nextFetchAt = wanted;
   }
 
   const res = await collections.queries().updateOne(
-    { _id: id, everyMinutes: { $ne: everyMinutes } },
+    { _id: id, everyMinutes: { $ne: effective },
+      ...(q.adminEveryMinutes != null
+        ? { adminEveryMinutes: effective }
+        : { adminEveryMinutes: { $exists: false } }) },
     { $set: patch }
   );
   if (res.modifiedCount) {
-    log.info("shared query cadence recomputed from its watchers", {
-      queryId: String(id), everyMinutes,
+    log.info("shared query cadence recomputed", {
+      queryId: String(id), everyMinutes: effective,
+      adminOverride: q.adminEveryMinutes != null,
       ...(patch.nextFetchAt ? { deadlinePulledForwardTo: patch.nextFetchAt } : {}),
     });
   }
   return res.modifiedCount || 0;
+}
+
+/**
+ * Admin-enforced sweep cadence for one SHARED query.
+ *
+ * Subscriber preferences stay untouched. This value remains authoritative
+ * when watches are created, held, resumed or removed, because setInterval()
+ * always honours adminEveryMinutes. A query's next scheduled sweep is
+ * adjusted without waking parked queries or defeating rate-limit backoff.
+ */
+export async function setAdminInterval(id, everyMinutes) {
+  const coll = collections.queries();
+  const query = await coll.findOne(
+    { _id: id },
+    { projection: { everyMinutes: 1, adminEveryMinutes: 1,
+      nextFetchAt: 1, lastFetchedAt: 1, failCount: 1 } }
+  );
+  if (!query) return false;
+
+  const patch = adminIntervalPatch(query, everyMinutes);
+  await coll.updateOne({ _id: id }, { $set: patch });
+  log.warn("ADMIN changed the shared query sweep interval", {
+    queryId: String(id), from: query.everyMinutes, to: everyMinutes,
+    ...(patch.nextFetchAt ? { nextFetchAt: patch.nextFetchAt } : {}),
+  });
+  return true;
 }
 
 export async function setSweeping(id, shouldSweep) {

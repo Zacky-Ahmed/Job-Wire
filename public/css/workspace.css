@@ -86,3 +86,10 @@
 .flash-slot:empty{display:none}
 .flash-slot{padding:0 32px;margin-top:12px;max-width:1600px;width:100%;margin-left:auto;margin-right:auto}
 @media(max-width:700px){.flash-slot{padding:0 12px}}
+
+/* A per-query cadence editor, beneath the action buttons on compact screens.
+   Input is narrow; values are whole minutes, including 7, 8 and 10. */
+.workspace .r-admin .admin-cadence { display:flex;align-items:center;justify-content:flex-end;gap:7px;width:100%;flex-wrap:wrap;font:11px var(--display);color:var(--ink-2); }
+.workspace .r-admin .admin-cadence input { height:32px;width:58px;min-width:58px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);color:var(--ink);padding:0 7px;text-align:center;font:12px var(--display); }
+.workspace .r-admin .admin-cadence .btn {height:32px;}
+@media(max-width:980px) { .workspace .r-admin .admin-cadence { justify-content:flex-start; } }
