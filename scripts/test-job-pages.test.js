@@ -27,6 +27,8 @@ test("official apply links reject scripts and non-HTTP schemes", () => {
 test("alert email uses distinct Job Wire links in HTML and plaintext", async () => {
   process.env.MONGODB_URI ||= "mongodb://localhost:27017/test";
   process.env.SESSION_SECRET ||= "test-session-secret";
+  // buildAlert only formats messages. No transport is used by this test.
+  process.env.BREVO_API_KEY ||= "dummy-key-for-format-only-tests";
   process.env.APP_URL = origin;
   const { buildAlert } = await import("../src/services/mail/send.js");
   const jobs = [first, second].map((detailId, i) => ({
