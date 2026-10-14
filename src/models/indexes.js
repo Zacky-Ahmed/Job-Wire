@@ -150,6 +150,19 @@ export async function ensureIndexes() {
     )
   );
 
+  // ── durable, idempotent admin activity notification queue ─────
+  created.push(
+    await idx(collections.adminNotifications(),
+      { status: 1, nextAttemptAt: 1, createdAt: 1 },
+      { name: "admin_notifications_due" })
+  );
+  created.push(
+    await idx(collections.adminNotifications(),
+      { sentAt: 1 },
+      { name: "admin_notifications_sent_ttl", expireAfterSeconds: 30 * 86400,
+        partialFilterExpression: { status: "sent" } })
+  );
+
   // ── outbox: what we owe, and to whom ─────────────────────────
   /* The uniqueness that makes enqueue idempotent, and therefore makes
      it safe to claim the ledger AFTER enqueueing rather than before.
