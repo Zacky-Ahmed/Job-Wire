@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en" data-theme="<%= theme %>">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Review a job caught by Job Wire and apply through the original employer or job board.">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="stylesheet" href="<%= asset('/css/job.css') %>">
+  <title><%= title %> · Job Wire</title>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="/" aria-label="Job Wire home">
+        <span class="brand-mark" aria-hidden="true">⌁</span>
+        Job <span>Wire</span>
+      </a>
+      <a class="header-link" href="/wire">My Wire <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+  <main class="wrap main">
+    <nav class="crumb" aria-label="Breadcrumb">
+      <a href="/">Job Wire</a><span aria-hidden="true">/</span><span>Job details</span>
+    </nav>
+    <article class="job-card">
+      <div class="eyebrow">JOB WIRE · JOB DETAILS</div>
+      <h1><%= job.title || 'Untitled role' %></h1>
+      <p class="company"><%= job.company || 'Company not provided' %></p>
+      <div class="chips" aria-label="Job information">
+        <% if (job.location) { %><span class="chip"><span aria-hidden="true">⌖</span> <%= job.location %></span><% } %>
+        <span class="chip">Via <%= sourceLabel %></span>
+        <% if (postedDate) { %><span class="chip">Posted <%= postedDate %></span><% } %>
+        <% if (job.openings > 1) { %><span class="chip"><%= job.openings %> openings</span><% } %>
+      </div>
+      <div class="actions">
+        <% if (applyUrl) { %>
+          <a class="apply" href="<%= applyUrl %>" target="_blank" rel="noopener noreferrer nofollow">Apply on original site <span aria-hidden="true">↗</span></a>
+        <% } else { %>
+          <span class="apply disabled" aria-disabled="true">Application link unavailable</span>
+        <% } %>
+        <a class="back" href="/wire">Back to my Wire</a>
+      </div>
+    </article>
+    <section class="details" aria-labelledby="description-title">
+      <h2 id="description-title">About this job</h2>
+      <% if (job.description && String(job.description).trim()) { %>
+        <p class="description"><%= job.description %></p>
+      <% } else { %>
+        <p>Job Wire captured the title, company and posting details, but this source did not provide a full description.</p>
+        <p>Use <strong>Apply on original site</strong> to read the full requirements, check availability and submit your application.</p>
+      <% } %>
+      <p class="caution">Job information comes from an external source. Requirements and application availability may have changed since Job Wire found it.</p>
+    </section>
+    <footer class="foot">
+      <span>Found by Job Wire. Applications are handled by the original employer or job board.</span>
+      <a href="/">jobwire.me</a>
+    </footer>
+  </main>
+</body>
+</html>

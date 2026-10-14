@@ -137,7 +137,9 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
   for (const rows of affordable) {
     const ids = rows.map((r) => r._id);
     const first = rows[0];
-    const jobs = rows.map((r) => r.job);
+    // Every delivered job has its own permanent Job Wire detail link.
+    // The outbox snapshot remains available after the 14-day seenJobs TTL.
+    const jobs = rows.map((r) => ({ ...r.job, detailId: String(r._id) }));
 
     /* IS THIS STILL OWED? Asked immediately before sending, not assumed
        from the moment it was queued.

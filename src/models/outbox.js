@@ -107,6 +107,11 @@ export async function enqueue(items) {
             company: it.job.company,
             location: it.job.location,
             url: it.job.url,
+            // Optional source-provided description; never invent missing content.
+            description: typeof it.job.description === "string"
+              ? it.job.description.slice(0, 6000) : "",
+            ...(Number.isInteger(it.job.openings) && it.job.openings > 1
+              ? { openings: it.job.openings } : {}),
             postedAt: it.job.postedAt ?? null,
             postedText: it.job.postedText ?? "",
             source: String(it.job.jobId).split(":")[0],

@@ -13,7 +13,8 @@
 //   · a real text/plain alternative that says the same thing as the HTML
 //     (a missing or stub plain part is heavily penalised)
 //   · short subject lines with no ALL CAPS, exclamation marks or money
-//   · links go straight to linkedin.com — never a shortener or redirect
+//   · alert links open a saved Job Wire detail page, with a direct Apply link
+//     to the official posting — never a shortener or tracking redirect
 //
 // The verification mail is deliberately plainer than the alert mail.
 // It is the first thing a new account ever receives, and if it lands in
@@ -28,6 +29,7 @@ import * as EmailLog from "../../models/emailLog.js";
 import { log } from "../../utils/logger.js";
 import { getSource } from "../sources/index.js";
 import { env } from "../../config/env.js";
+import { jobDetailsUrl, safeApplyUrl } from "../../utils/jobLinks.js";
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) =>
@@ -127,8 +129,10 @@ export function buildAlert({ label, jobs }) {
   const n = jobs.length;
   const MANAGE = `${env.appUrl.replace(/\/+$/, "")}/watches`;
 
-  const sourceName = (jobId) =>
-    getSource(String(jobId).split(":")[0])?.label || "the job board";
+  // The email leads to Job Wire first. A direct board link remains only
+  // for legacy/test callers that did not supply an outbox detailId.
+  const viewLink = (j) =>
+    jobDetailsUrl(j.detailId, env.appUrl) || safeApplyUrl(j.url);
 
   // Minutes since posting, when the board tells us to the minute.
   // Day-precision boards resolve everything to midnight, so an age from
@@ -162,7 +166,9 @@ export function buildAlert({ label, jobs }) {
         <div style="font-weight:600;">${esc(j.title)}</div>
         <div style="color:${MUTED};font-size:14px;margin:3px 0 6px;">
           ${esc(j.company)}${j.location ? " &middot; " + esc(j.location) : ""}${j.openings > 1 ? " &middot; " + j.openings + " openings" : ""}</div>
-        <a href="${esc(j.url)}" style="color:${LINK};font-size:14px;">Open on ${esc(sourceName(j.jobId))}</a>
+        ${viewLink(j)
+          ? `<a href="${esc(viewLink(j))}" style="color:${LINK};font-size:14px;">View job on Job Wire</a>`
+          : `<span style="color:${MUTED};font-size:14px;">Application link unavailable</span>`}
       </td>
     </tr>`)
     .join("");
@@ -202,7 +208,7 @@ export function buildAlert({ label, jobs }) {
       jobs
         .map((j) =>
           `[${ageText(j)}] ${j.title}\n` +
-          `${j.company}${j.location ? " · " + j.location : ""}${j.openings > 1 ? " · " + j.openings + " openings" : ""}\n${j.url}`)
+          `${j.company}${j.location ? " · " + j.location : ""}${j.openings > 1 ? " · " + j.openings + " openings" : ""}\n${viewLink(j) || "Job link unavailable"}`)
         .join("\n\n") +
       `\n\nYou set up this watch. Pause or delete it: ${MANAGE}`,
     html: SHELL(inner, jobs.map((j) => `${ageText(j)} · ${j.title}`).join(", ")),
