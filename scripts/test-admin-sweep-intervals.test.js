@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import ejs from "ejs";
 import {
   parseAdminSweepMinutes, effectiveSweepMinutes, adminIntervalPatch,
 } from "../src/utils/sweepIntervals.js";
@@ -62,4 +64,29 @@ test("parked, in-flight and failing queries keep their current schedule", () => 
     assert.deepEqual(adminIntervalPatch(row, 10, now),
       { adminEveryMinutes: 10, everyMinutes: 10 });
   }
+});
+
+test("admin queries panel renders an editable interval for shared watches", () => {
+  const template = readFileSync(
+    new URL("../src/views/partials/admin/queries.ejs", import.meta.url), "utf8"
+  );
+  const id = "64bf21593670f3d81c9ac107";
+  const html = ejs.render(template, {
+    csrfToken: "test-csrf",
+    adminSweepMin: 5,
+    packs: [],
+    queryRows: [{
+      id, label: "Intern", location: "Sri Lanka", sources: "linkedin, topjobs",
+      matchAll: false, subscribers: 1, watchers: [], addable: [],
+      tracked: 100, peak: 120, every: 10, adminEvery: 10, failCount: 0,
+      retired: false, orphaned: false, stalled: false, duplicate: false,
+      deletable: false, mergeTargets: [],
+    }],
+  });
+  assert.ok(html.includes("/admin/queries/" + id + "/interval"));
+  assert.match(html, /name="minutes"/);
+  assert.match(html, /min="5" max="60" step="1"/);
+  assert.match(html, /value="10" required/);
+  assert.ok(html.includes("admin set"));
+  assert.ok(html.includes('name="_csrf"'));
 });
