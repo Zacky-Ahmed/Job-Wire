@@ -24,7 +24,7 @@
       <div class="row r-admin">
         <div class="role">
           <div class="a"><%= q.label %><% if (q.matchAll) { %><span class="why">everything</span><% } %></div>
-          <div class="b"><%= q.location %> · <%= q.sources %> · every <%= q.every %> min</div>
+          <div class="b"><%= q.location %> · <%= q.sources %> · every <%= q.every %> min<% if (q.adminEvery !== null) { %><span class="why" title="Admin-set interval takes priority over individual watcher preferences">admin set</span><% } %></div>
           <%# Who is on it. A count answers the wrong question: before
               parking or deleting a search you want to know whose it is. %>
           <div class="watchers">
@@ -104,6 +104,16 @@
             apply is now disabled and says why on hover, which is also the
             only version that answers "why does this row have no Delete". %>
         <div class="acts">
+          <form class="admin-cadence" method="post" action="/admin/queries/<%= q.id %>/interval">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label for="interval-<%= q.id %>">Sweep every</label>
+            <input type="number" id="interval-<%= q.id %>" name="minutes"
+              min="<%= adminSweepMin %>" max="60" step="1" inputmode="numeric"
+              value="<%= q.adminEvery ?? q.every %>" required
+              aria-label="Sweep interval in minutes for <%= q.label %>">
+            <span>min</span>
+            <button class="btn btn-xs" type="submit">Save</button>
+          </form>
           <div class="acts-r">
             <form method="post" action="/admin/queries/<%= q.id %>/toggle">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">

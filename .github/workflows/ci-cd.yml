@@ -49,6 +49,9 @@ jobs:
       - name: Job detail page and alert link tests
         run: node --test scripts/test-job-pages.test.js
 
+      - name: Admin sweep interval unit tests
+        run: node --test scripts/test-admin-sweep-intervals.test.js
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
