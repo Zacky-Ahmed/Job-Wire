@@ -46,6 +46,9 @@ jobs:
       - name: Admin notification unit tests
         run: node --test scripts/test-admin-notifications.test.js
 
+      - name: Job detail page and alert link tests
+        run: node --test scripts/test-job-pages.test.js
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

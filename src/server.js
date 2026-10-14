@@ -34,6 +34,7 @@ import { rejectOperators } from "./utils/sanitize.js";
 import { log } from "./utils/logger.js";
 import { page } from "./utils/render.js";
 import { landingRoutes } from "./routes/landing.routes.js";
+import { jobRoutes } from "./routes/job.routes.js";
 import { authRoutes } from "./routes/auth.routes.js";
 import { wireRoutes } from "./routes/wire.routes.js";
 import { watchesRoutes } from "./routes/watches.routes.js";
@@ -117,6 +118,7 @@ export async function buildApp() {
      page, robots.txt and sitemap.xml carry no form and no HTMX post. */
   app.get("/healthz", (req, res) => res.type("text/plain").send("ok"));
   app.use(landingRoutes); // public "/" — must come before wireRoutes
+  app.use(jobRoutes); // public email deep links, no login or CSRF session write
 
   app.use(csrf);
 

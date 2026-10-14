@@ -101,6 +101,7 @@ landingRoutes.get("/robots.txt", (req, res) => {
     "User-agent: *",
     "Allow: /$",
     "Disallow: /wire",
+    "Disallow: /job/",
     "Disallow: /watches",
     "Disallow: /admin",
     "Disallow: /settings",
