@@ -34,7 +34,8 @@
 // title matches. A watch can also ask for the country feed untouched,
 // for people who would rather scan everything than miss anything.
 
-import { guardedFetch } from "../http/guardedFetch.js";
+import { guardedFetch, BlockedBySource } from "../http/guardedFetch.js";
+import * as LinkedInCooldown from "../linkedin/sourceCooldown.js";
 import { parseJobs, parseCriteria, classifyResponse } from "../linkedin/parse.js";
 import { findGeo } from "../linkedin/geoIds.js";
 import { observer } from "./observe.js";
@@ -138,7 +139,20 @@ export function urlFor({ geoId, keywords, page }) {
  * requests and then breaks has cost five requests, and a cost model that
  * only counts successes understates the expensive failures most.
  */
-async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) {
+async function fetchLinkedInPage(url) {
+  await LinkedInCooldown.beforeRequest();
+  try {
+    return await guardedFetch(url, hosts, { jitter: true });
+  } catch (err) {
+    if (err instanceof BlockedBySource) await LinkedInCooldown.noteBlocked(err);
+    throw err;
+  }
+}
+
+// fetchPage injection is for deterministic tests, never a second HTTP path.
+export async function collect(makeUrl, {
+  onProgress = null, surfaceName = null, fetchPage = fetchLinkedInPage,
+} = {}) {
   const found = new Map();
   /* pages[] is what makes the latency question answerable: which page
      carried the job, and how many seconds into the walk we reached it.
@@ -153,13 +167,20 @@ async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) 
     const pageStarted = Date.now();
     try {
       tally.requests++;
-      html = await guardedFetch(makeUrl(page), hosts, { jitter: true });
+      html = await fetchPage(makeUrl(page));
     } catch (err) {
       tally.pageLog.push({
         page, atMs: pageStarted - startedAt, ms: Date.now() - pageStarted, error: err.message,
       });
       tally.durationMs = Date.now() - startedAt;
-      tally.stopReason = "error";
+      tally.stopReason = found.size ? "error_partial" : "error";
+      tally.error = err.message;
+      if (found.size) {
+        log.warn("LinkedIn page failed; retaining earlier jobs", {
+          surface: surfaceName, page, retained: found.size, error: err.message,
+        });
+        break;
+      }
       err.tally = tally;
       throw err;
     }
@@ -171,7 +192,9 @@ async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) 
       const err = new Error("LinkedIn returned markup we do not recognise");
       err.code = "UNRECOGNISED";
       tally.durationMs = Date.now() - startedAt;
-      tally.stopReason = "unrecognised";
+      tally.stopReason = found.size ? "unrecognised_partial" : "unrecognised";
+      tally.error = err.message;
+      if (found.size) break;
       err.tally = tally;
       throw err;
     }
@@ -276,39 +299,51 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
      absent crawl, and telling them apart is the entire point of having
      the log. err.tally carries the pages already walked. */
   const feedStart = Date.now();
-  let everything;
+  let everything = new Map();
   try {
     everything = await collect((p) => urlFor({ geoId, page: p }),
       { onProgress: trace?.onProgress, surfaceName: "countryFeed" });
-    await logWalk("countryFeed", feedStart, everything.tally);
+    const partial = /partial$/.test(everything.tally.stopReason);
+    await logWalk("countryFeed", feedStart, everything.tally, {
+      ok: !partial, error: partial ? everything.tally.error : null,
+    });
+    obs.surface("countryFeed", {
+      ok: !partial, requests: everything.tally.requests, pages: everything.tally.pages,
+      rawCount: everything.size, parsedCount: everything.size,
+      note: everything.tally.stopReason,
+      error: partial ? everything.tally.error : null,
+    });
   } catch (err) {
     await logWalk("countryFeed", feedStart, err.tally, { ok: false, error: err.message });
-    throw err;   // the country feed failing is still a failed sweep
+    obs.surface("countryFeed", {
+      ok: false, requests: err.tally?.requests ?? 0, pages: err.tally?.pages ?? 0,
+      error: err.message,
+    });
+    // Other independent surfaces can still recover jobs after DNS/transport
+    // failure. But if LinkedIn blocked us, no more LinkedIn requests.
   }
-  obs.surface("countryFeed", {
-    ok: true,
-    requests: everything.tally.requests, pages: everything.tally.pages,
-    rawCount: everything.size, parsedCount: everything.size,
-    note: everything.tally.stopReason,
-  });
 
   // LinkedIn's own matching, which sees descriptions and job type — the
   // only way to reach a job whose title never says "intern". Skipped
   // entirely when the watch already wants everything, since it could not
   // add anything the feed above does not already have.
   let relevant = new Map();
-  if (query && !matchAll) {
+  if (query && !matchAll && !LinkedInCooldown.isCoolingDown()) {
     // Outside the try: the catch has to log how long the failed walk ran.
     const guestStart = Date.now();
     try {
       relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }),
         { onProgress: trace?.onProgress, surfaceName: "guestKeyword" });
-      await logWalk("guestKeyword", guestStart, relevant.tally);
+      const partial = /partial$/.test(relevant.tally.stopReason);
+      await logWalk("guestKeyword", guestStart, relevant.tally, {
+        ok: !partial, error: partial ? relevant.tally.error : null,
+      });
       obs.surface("guestKeyword", {
-        ok: true,
+        ok: !partial,
         requests: relevant.tally.requests, pages: relevant.tally.pages,
         rawCount: relevant.size, parsedCount: relevant.size,
         note: relevant.tally.stopReason,
+        error: partial ? relevant.tally.error : null,
       });
     } catch (err) {
       /* Recorded, not thrown. This surface failing is exactly the case
@@ -325,6 +360,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
         message: err.message,
       });
     }
+  } else if (LinkedInCooldown.isCoolingDown() && query && !matchAll) {
+    obs.surface("guestKeyword", { ok: false, note: "skipped: LinkedIn cooling down" });
   } else {
     obs.surface("guestKeyword", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to this watch" });
   }
@@ -333,17 +370,21 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
      the sweep the other two — it is unioned in when it works and
      recorded as degraded when it does not. */
   let fromPage = new Map();
-  if (!matchAll) {
+  if (!matchAll && !LinkedInCooldown.isCoolingDown()) {
     const jserpStart = Date.now();
     try {
       fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }),
         { onProgress: trace?.onProgress, surfaceName: "jserp" });
-      await logWalk("jserp", jserpStart, fromPage.tally);
+      const partial = /partial$/.test(fromPage.tally.stopReason);
+      await logWalk("jserp", jserpStart, fromPage.tally, {
+        ok: !partial, error: partial ? fromPage.tally.error : null,
+      });
       obs.surface("jserp", {
-        ok: true,
+        ok: !partial,
         requests: fromPage.tally.requests, pages: fromPage.tally.pages,
         rawCount: fromPage.size, parsedCount: fromPage.size,
         note: fromPage.tally.stopReason,
+        error: partial ? fromPage.tally.error : null,
       });
     } catch (err) {
       await logWalk("jserp", jserpStart, err.tally, { ok: false, error: err.message });
@@ -355,6 +396,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
         message: err.message,
       });
     }
+  } else if (LinkedInCooldown.isCoolingDown() && !matchAll) {
+    obs.surface("jserp", { ok: false, note: "skipped: LinkedIn cooling down" });
   } else {
     obs.surface("jserp", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to a match-all watch" });
   }
@@ -425,7 +468,11 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   const sweepMs = Date.now() - walkStart;
   for (const j of shaped) j._sweepMs = sweepMs;
 
-  return obs.done(shaped);
+  const result = obs.done(shaped);
+  if (result.observation.status === "healthy") {
+    await LinkedInCooldown.noteHealthySweep();
+  }
+  return result;
 }
 
 const DETAIL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/";
@@ -464,7 +511,7 @@ async function detailPage(rawId) {
   const hit = detailPages.get(rawId);
   if (hit && Date.now() - hit.at < DETAIL_TTL_MS) return hit.html;
 
-  const html = await guardedFetch(DETAIL + encodeURIComponent(rawId), hosts, { jitter: true });
+  const html = await fetchLinkedInPage(DETAIL + encodeURIComponent(rawId));
   detailPages.set(rawId, { html, at: Date.now() });
 
   /* Bounded, because this is a process that runs for weeks. Evicting the
