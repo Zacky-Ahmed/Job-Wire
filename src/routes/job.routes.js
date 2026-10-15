@@ -38,7 +38,9 @@ jobRoutes.get("/job/:id", async (req, res, next) => {
 
     // The response contains only public job metadata and is safe to
     // share; its random outbox id is never a login or access token.
-    res.set("Cache-Control", "public, max-age=60");
+    // The rendered theme varies by browser cookie.
+    res.set("Cache-Control", "private, no-cache");
+    res.vary("Cookie");
     return res.render("pages/job", {
       title: job.title || "Job details",
       job,

@@ -11,16 +11,20 @@
   <title><%= title %> · Job Wire</title>
 </head>
 <body>
+  <a class="skip-link" href="#jobMain">Skip to job details</a>
   <header class="site-header">
     <div class="wrap header-inner">
       <a class="brand" href="/" aria-label="Job Wire home">
-        <span class="brand-mark" aria-hidden="true">⌁</span>
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0" opacity=".55"/><path d="M8.2 15.5a5 5 0 0 1 7.6 0" opacity=".8"/><circle cx="12" cy="8" r="1.8" fill="currentColor"/></svg></span>
         Job <span>Wire</span>
       </a>
+      <div class="header-actions">
+      <button class="theme-toggle" id="themeBtn" type="button" aria-label="Toggle theme" hidden><span id="themeLabel">Dark</span> mode</button>
       <a class="header-link" href="/wire">My Wire <span aria-hidden="true">↗</span></a>
+      </div>
     </div>
   </header>
-  <main class="wrap main">
+  <main class="wrap main" id="jobMain">
     <nav class="crumb" aria-label="Breadcrumb">
       <a href="/">Job Wire</a><span aria-hidden="true">/</span><span>Job details</span>
     </nav>
@@ -58,5 +62,6 @@
       <a href="/">jobwire.me</a>
     </footer>
   </main>
+  <script src="<%= asset('/js/theme.js') %>" defer></script>
 </body>
 </html>

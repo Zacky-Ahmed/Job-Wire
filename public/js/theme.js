@@ -7,6 +7,7 @@
   var root = document.documentElement;
   var btn = document.getElementById("themeBtn");
   if (!btn) return;
+  btn.hidden = false;
 
   function label() {
     var el = document.getElementById("themeLabel");
