@@ -30,10 +30,11 @@ const UA =
   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 export class BlockedBySource extends Error {
-  constructor(status, host) {
+  constructor(status, host, retryAfter = null) {
     super(`${host} returned ${status}`);
     this.name = "BlockedBySource";
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -130,7 +131,7 @@ export async function guardedFetch(
 
     if (res.status === 429 || res.status === 403) {
       log.warn("source blocked us", { status: res.status, host: url.hostname });
-      throw new BlockedBySource(res.status, url.hostname);
+      throw new BlockedBySource(res.status, url.hostname, res.headers.get("retry-after"));
     }
 
     if (res.status >= 300 && res.status < 400) {
