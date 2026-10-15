@@ -109,16 +109,23 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   const cursorStore = getDb().collection("linkedinSearchCursors");
   const cursorKey = JSON.stringify([geoId, query, matchAll]);
   const cursor = await cursorStore.findOne({ _id: cursorKey });
-  const deepPage = cursor?.page || 1;
+  // Advance after EACH successful page so recovery's single request cannot
+  // pin discovery to page zero. Revisit both front pages between deeper pages.
+  let turn = cursor?.turn || 0;
+  let guestPage = cursor?.guestPage || 1;
+  let publicPage = cursor?.publicPage || 1;
   const relevant = new Map(), everything = new Map();
   const targeted = !matchAll && !!query;
-  const mainName = targeted ? "guestKeyword" : "countryFeed";
-  const tasks = [
-    { name: mainName, page: 0, url: urlFor({ geoId, keywords: targeted ? query : '', page: 0 }) },
-    { name: mainName, page: deepPage, url: urlFor({ geoId, keywords: targeted ? query : '', page: deepPage }) },
-  ];
+  const makeTask = () => {
+    const publicSearch = turn % 2 === 0;
+    const page = turn < 2 ? 0 : (publicSearch ? publicPage : guestPage);
+    const keywords = targeted ? query : '';
+    return { publicSearch, page, name: publicSearch ? 'publicSearch' : 'guestKeyword',
+      url: (publicSearch ? pageUrlFor : urlFor)({geoId, keywords, page}) };
+  };
   let firstError = null;
-  for (const task of tasks) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const task = makeTask();
     const start = Date.now();
     try {
       const html = await guardedFetch(task.url, hosts, { jitter: true, discovery: true });
@@ -130,7 +137,12 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
       jobs.forEach(j => target.set(j.jobId, j));
       obs.surface(`${task.name}:${task.page}`, { ok: true, requests: 1, pages: 1, parsedCount: jobs.length });
       await logWalk(task.name, start, {pageLog:[{page:task.page,returned:jobs.length,jobIds:jobs.map(j=>j.jobId)}],stopReason:'budget'});
-      if (task.page > 0) await cursorStore.updateOne({_id:cursorKey}, {$set:{page: jobs.length && deepPage < 39 ? deepPage + 1 : 1}}, {upsert:true});
+      if (task.page > 0) {
+        const next = jobs.length && task.page < 39 ? task.page + 1 : 1;
+        if (task.publicSearch) publicPage = next; else guestPage = next;
+      }
+      turn = (turn + 1) % 4;
+      await cursorStore.updateOne({_id:cursorKey}, {$set:{turn,publicPage,guestPage}}, {upsert:true});
     } catch (err) {
       firstError ||= err;
       obs.surface(`${task.name}:${task.page}`, { ok: false, requests: err.deferred && !err.status ? 0 : 1, pages: 0, error: err.message });

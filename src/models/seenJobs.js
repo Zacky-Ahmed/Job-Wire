@@ -122,28 +122,32 @@ export function countMatched(queryIds) {
  *
  * A job belongs to a reader only from the moment they started watching.
  */
-function scopedToSubscriptions(pairs) {
+export function wireFilter(pairs, { now = new Date(), source = '' } = {}) {
   return {
     matched: { $ne: false },
-    $or: pairs.map(({ queryId, since }) => ({
-      queryId,
-      firstSeenAt: since ? { $gte: since } : { $exists: true },
-    })),
+    queryId: { $in: pairs.map(p => p.queryId) },
+    postedAt: { $gte: new Date(+now - 86400000), $lte: now },
+    ...(source ? { jobId: { $regex: '^' + source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':' } } : {}),
   };
 }
 
-export function recentForSubscriptions(pairs, limit = 50) {
+export function recentForSubscriptions(pairs, limit = 50, options = {}) {
   if (!pairs.length) return Promise.resolve([]);
-  return collections.seenJobs()
-    .find(scopedToSubscriptions(pairs))
-    .sort({ firstSeenAt: -1 })
-    .limit(limit)
-    .toArray();
+  return collections.seenJobs().find(wireFilter(pairs, options))
+    .sort({ postedAt: -1, firstSeenAt: -1 }).limit(limit).toArray();
 }
 
-export function countMatchedForSubscriptions(pairs) {
+export function countMatchedForSubscriptions(pairs, options = {}) {
   if (!pairs.length) return Promise.resolve(0);
-  return collections.seenJobs().countDocuments(scopedToSubscriptions(pairs));
+  return collections.seenJobs().countDocuments(wireFilter(pairs, options));
+}
+
+export async function wireSourceCounts(pairs) {
+  if (!pairs.length) return [];
+  return collections.seenJobs().aggregate([
+    { $match: wireFilter(pairs) },
+    { $group: { _id: { $arrayElemAt: [{ $split: ['$jobId', ':'] }, 0] }, n: { $sum: 1 } } },
+  ]).toArray();
 }
 
 export function countFor(queryId) {

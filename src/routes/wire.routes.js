@@ -30,7 +30,7 @@ const WINDOW_MIN = 60; // assumed application window — an estimate, labelled a
 // they were simply unreachable. 50 stays the first page; "show older"
 // walks back through the rest.
 const PAGE = 50;
-const MAX_SHOW = 500;
+const MAX_SHOW = 10000;
 
 function showCount(raw) {
   const n = Number.parseInt(raw, 10);
@@ -59,11 +59,12 @@ async function gather(user, show = PAGE, only = "", t = null) {
      result took 2ms. Only `emails` genuinely depends on `caught` — it
      looks delivery up by the jobs actually on screen — so it stays behind.
      The counters depend on nothing but the user. */
-  const [caught, caughtCount, sentToday, sentTodayAll] = await Promise.all([
-    SeenJobs.recentForSubscriptions(scope, show),
-    SeenJobs.countMatchedForSubscriptions(scope),
+  const [caught, caughtCount, sentToday, sentTodayAll, sourceCounts] = await Promise.all([
+    SeenJobs.recentForSubscriptions(scope, show, { source: only }),
+    SeenJobs.countMatchedForSubscriptions(scope, { source: only }),
     EmailLog.countTodayForUser(user._id),
     EmailLog.countToday(),
+    SeenJobs.wireSourceCounts(scope),
   ]);
   t?.mark("db-scoped");
 
@@ -149,15 +150,8 @@ async function gather(user, show = PAGE, only = "", t = null) {
      their numbers when one is selected. Counting after the filter would
      make every other board read zero the moment you picked one, which is
      the one thing a filter must never do to the control that undoes it. */
-  const perSource = new Map();
-  for (const d of dispatches) {
-    const id = d.sourceId || sourceOf(d.jobId);
-    if (!perSource.has(id)) {
-      perSource.set(id, { id, label: getSource(id)?.label || id, n: 0 });
-    }
-    perSource.get(id).n++;
-  }
-  const sources = [...perSource.values()].sort((a, b) => b.n - a.n);
+  const sources = sourceCounts.map(({_id:id,n}) => ({id,n,label:getSource(id)?.label || id}))
+    .sort((a,b) => b.n - a.n);
   const filtered = only ? dispatches.filter((d) => (d.sourceId || sourceOf(d.jobId)) === only) : dispatches;
 
   t?.mark("shape-rows");

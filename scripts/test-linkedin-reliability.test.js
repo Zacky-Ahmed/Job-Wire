@@ -69,7 +69,8 @@ test('a failed cooldown write still stops requests locally', async () => {
   await assert.rejects(circuit.enter({ discovery: true }), { name: 'SourceCoolingDown' });
 });
 
-await mock.module('../src/config/db.js', { namedExports: { getDb: () => ({ collection: () => ({ findOne: async () => null, updateOne: async () => {} }) }) } });
+let cursorRow = null;
+await mock.module('../src/config/db.js', { namedExports: { getDb: () => ({ collection: () => ({ findOne: async () => cursorRow, updateOne: async (_, update) => { cursorRow = {...update.$set}; } }) }) } });
 let handler;
 await mock.module('../src/services/http/guardedFetch.js', { namedExports: { guardedFetch: (...args) => handler(...args) } });
 await mock.module('../src/models/crawlLog.js', { namedExports: { record: async () => {} } });
@@ -153,4 +154,23 @@ test('runtime never carries a previous crawl page into a new sweep', async () =>
   assert.equal(stale.currentPage,null);
   const current = pollerRuntime({...beat,lastProgressAt:new Date(2500),currentPage:0},null,{enabled:true,now:3000});
   assert.equal(current.currentPage,0);
+});
+
+
+test('one successful recovery request advances through both surfaces and deeper pages', async () => {
+  cursorRow=null;
+  const starts=[];
+  const html='<li><div class="base-card" data-entity-urn="urn:li:jobPosting:123"><a href="/jobs/view/123/"></a><h3>Software Intern</h3><h4>Example</h4><span class="job-search-card__location">Sri Lanka</span></div></li>';
+  for (let poll=0;poll<5;poll++) {
+    let calls=0;
+    handler=async url=>{if(calls++) throw Object.assign(Error('recovery wait'),{deferred:true});starts.push(url);return html;};
+    await linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'});
+  }
+  assert.ok(starts[0].includes('/jobs/search?'));
+  assert.ok(starts[1].includes('/jobs-guest/'));
+  assert.equal(new URL(starts[2]).searchParams.get('start'),'10');
+  assert.equal(new URL(starts[3]).searchParams.get('start'),'10');
+  assert.equal(new URL(starts[4]).searchParams.get('start'),'0');
+  assert.equal(cursorRow.publicPage,2);
+  assert.equal(cursorRow.guestPage,2);
 });

@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 const noop = async () => {};
-let events = [], jobs = [], pending = [], failures = [], sourceError = false;
+let events = [], jobs = [], pending = [], failures = [], sourceError = false, emailPack = null, displayed = [];
 const source = {
   timePrecision: 'minute', maxPages: 1,
   fetchJobs: async () => { if (sourceError) throw Error('blocked'); return jobs; },
@@ -26,12 +26,12 @@ await moduleMock('../src/services/poller/dedupe.js', { diff: async () => ({ aler
 await moduleMock('../src/models/queries.js', { siblings: async () => [], recordFailure: noop, reschedule: async () => { events.push('reschedule'); } });
 await moduleMock('../src/models/seenJobs.js', {
   pending: async () => pending, markPending: async (_, items, options) => { failures.push({ items, options }); },
-  markMatched: noop, clearPending: noop, unmatch: noop, insertNew: noop
+  markMatched: async (_, items) => { displayed.push(...items.map(j=>j.jobId)); }, clearPending: noop, unmatch: noop, insertNew: noop
 });
 
 
 await moduleMock('../src/models/alertedJobs.js', { knownIds: async () => new Set(), remember: async (_, ids) => { events.push(['claim', ids]); } });
-await moduleMock('../src/models/subscriptions.js', { activeSubscribers: async () => [{ _id: 'sub', userId: 'user' }] });
+await moduleMock('../src/models/subscriptions.js', { activeSubscribers: async () => [{ _id: 'sub', userId: 'user', emailPack }] });
 await moduleMock('../src/models/outbox.js', { enqueue: async items => { events.push(['enqueue', items.map(i => i.job.jobId)]); return { queued: items.length, alreadyQueued: 0 }; } });
 await moduleMock('../src/models/observations.js', { record: noop, baseline: noop, isAnomalous: () => false });
 await moduleMock('../src/models/sweepRuns.js', { open: noop, close: noop, noteSource: noop });
@@ -56,9 +56,24 @@ test('queue and deliver obvious matches before verification, then record full ti
 
 test('an older matching job stays pending when its closure check cannot complete', async () => {
   events = []; failures = []; pending = [];
-  jobs = [{ jobId: 'linkedin:3', title: 'Software Intern', postedAt: new Date(Date.now() - 5 * 3600000) }];
+  jobs = [{ jobId: 'linkedin:3', title: 'Software Intern', postedAt: new Date(Date.now() - 25 * 3600000) }];
   const result = await sweepQuery(query);
   assert.equal(result.alerted, 0);
   assert.ok(failures.some(f => f.items.some(j => j.jobId === 'linkedin:3')));
   assert.ok(!events.some(e => Array.isArray(e) && e[0] === 'claim' && e[1].includes('linkedin:3')));
+});
+
+
+test('all title matches reach the feed; Data Science only narrows email within 24 hours', async () => {
+  events=[];failures=[];pending=[];displayed=[];emailPack='data-science';
+  jobs=[
+    {jobId:'linkedin:ds',title:'Data Science Intern',postedAt:new Date(Date.now()-6*3600000)},
+    {jobId:'linkedin:brand',title:'Brand Marketing Intern',postedAt:new Date()},
+  ];
+  try {
+    await sweepQuery(query);
+    assert.ok(displayed.includes('linkedin:ds'));
+    assert.ok(displayed.includes('linkedin:brand'));
+    assert.deepEqual(events.find(e=>Array.isArray(e)&&e[0]==='enqueue')[1],['linkedin:ds']);
+  } finally { emailPack=null; }
 });

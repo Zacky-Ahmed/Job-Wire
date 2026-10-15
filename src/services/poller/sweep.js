@@ -39,7 +39,7 @@ const CLOSURE_CHECK_BUDGET = 12;
 // Older than this and a match goes on the wire but not into an email.
 // LinkedIn indexes about an hour late, so four hours leaves plenty of
 // room while still ruling out yesterday's postings.
-const ALERT_MAX_AGE_MIN = 240;
+const ALERT_MAX_AGE_MIN = 24 * 60;
 
 // How many times to re-try reading a job's detail page before giving up
 // and taking the job on trust. Bounded so a permanently broken page
@@ -510,6 +510,13 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
 
   const fetched = [...fetchedMap.values()];
   const { alertable, primed, storedJobs } = await diff(query, fetched);
+  // Display eligibility is independent of email age, pack and detail budgets.
+  // Include known jobs too, repairing previously deferred title matches.
+  await SeenJobs.markMatched(query._id, fetched.filter(j =>
+    query.matchAll || matchesAny(j.title, query.keywords)
+  ).map(j => ({...j, matchedBy: 'title'})));
+
+
 
   // Overall lifetime trackedPeak is retained for historical/admin display,
   // but it is not used as a health alarm. An all-time high never decays and
