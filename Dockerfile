@@ -18,7 +18,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-COPY . .
+COPY --chown=node:node . .
 
 ENV NODE_ENV=production
 

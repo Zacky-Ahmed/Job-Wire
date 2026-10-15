@@ -7,7 +7,8 @@
 // request volume to LinkedIn flat as users grow.
 
 import { getSource, sourcesForCountry, DEFAULT_SOURCE } from "../sources/index.js";
-import { BlockedBySource } from "../http/guardedFetch.js";
+import { BlockedBySource, getLinkedInCooldown } from "../http/guardedFetch.js";
+import { drainOutbox } from "../mail/outboxWorker.js";
 import { diff } from "./dedupe.js";
 import { sharedFetch, isShared } from "./snapshot.js";
 import { normalize } from "../sources/observe.js";
@@ -220,6 +221,22 @@ export async function sweepQuery(query, { queuePosition = null, dueTotal = null 
     } catch { /* not running under the poller */ }
 
     const result = await runSweep(query, { sweepId, started, scheduledFor, onProgress });
+    // Detail requests happen after discovery; their blocks must reach the UI too.
+    try {
+      const cooldown = await getLinkedInCooldown();
+      if (cooldown?.failures) await collections.queries().updateOne(
+        { _id: query._id },
+        { $set: { "sourceHealth.$[li].ok": false,
+          "sourceHealth.$[li].error": `LinkedIn paused until ${new Date(cooldown.until).toISOString()}; recovery probe required`,
+          "sourceHealth.$[li].at": new Date() } },
+        { arrayFilters: [{ "li.source": "linkedin" }] }
+      );
+    } catch (err) { log.warn("could not update cooldown status", { message: err.message }); }
+    if (result?.ok !== false) await Queries.reschedule(query._id, {
+      timing: { scheduledFor, startedAt: started, finishedAt: Date.now() },
+      everyMinutes: query.everyMinutes, primed: true, tracked: result?.fetched,
+    });
+    log.info("sweep complete", { queryId: String(query._id), ms: Date.now() - started, ok: result?.ok });
     await SweepRuns.close({
       sweepId, status: result?.ok === false ? "failed" : "ok",
       fetched: result?.fetched, alerted: result?.alerted,
@@ -250,6 +267,8 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   if (!sourceIds.length) sourceIds.push(DEFAULT_SOURCE);
   const fetchedMap = new Map();
   const failures = [];
+  const degradedSources = new Map();
+  let earlyAlerted = 0;
 
   /* The four boards are fetched CONCURRENTLY, and the reason this is safe
      is worth stating: the serial rule exists so that one HOST never sees a
@@ -383,6 +402,9 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
         startedAt: sourceStarted, finishedAt: Date.now(), jobs: mine.length,
       });
 
+      if (observed?.status === "degraded") {
+        degradedSources.set(sourceId, Object.values(observed.surfaces).filter(v => !v.ok).map(v => v.error || "Incomplete results").join("; "));
+      }
       if (observed) {
         await Observations.record({
           source: sourceId, geoId: query.geoId, queryId: query._id,
@@ -467,7 +489,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
     { $set: {
         sourceHealth: sourceIds.map((id) => {
           const bad = failures.find((f) => f.sourceId === id);
-          return { source: id, ok: !bad, error: bad ? String(bad.err.message).slice(0, 160) : null,
+          return { source: id, ok: !bad && !degradedSources.has(id), error: bad ? String(bad.err.message).slice(0, 160) : (degradedSources.get(id) || null),
                    at: new Date() };
         }),
       } }
@@ -493,14 +515,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   // and per-surface rolling baselines, which can identify the actual source
   // that has gone blind without comparing today's total with an old record.
 
-  await Queries.reschedule(query._id, {
-    timing: { scheduledFor, startedAt: started, finishedAt: Date.now() },
-    everyMinutes: query.everyMinutes,
-    primed: true,
-    tracked: fetched.length,
-  });
-
-  log.info("sweep", {
+  log.info("discovery complete", {
     queryId: String(query._id),
     keywords: query.keywords.join("+"),
     sources: sourceIds.join(","),
@@ -552,7 +567,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
       (j) => !words.length || matchesAny(j.title, words)
     );
     await SeenJobs.markMatched(query._id, obvious.map((j) => ({ ...j, matchedBy: "title" })));
-    return { ok: true, fetched: fetched.length, alerted: 0 };
+    return { ok: true, fetched: fetched.length, alerted: earlyAlerted };
   }
   // NOTE: no early return on an empty `alertable`. A sweep that turns up
   // nothing new can still owe verdicts on jobs a previous sweep deferred,
@@ -582,7 +597,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   const byNewest = candidates.sort(
     (a, b) => new Date(b.postedAt || 0) - new Date(a.postedAt || 0)
   );
-  if (!byNewest.length) return { ok: true, fetched: fetched.length, alerted: 0 };
+  if (!byNewest.length) return { ok: true, fetched: fetched.length, alerted: earlyAlerted };
 
   // The budget exists because refining costs a request per job. Sources
   // that decide during the fetch — the local boards, which carry the
@@ -590,9 +605,22 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   // extra, so making them queue behind it just delays their alerts by
   // whole sweeps. Measured: a three-board sweep deferred 67 jobs that
   // needed no requests at all.
+  await SeenJobs.markPending(query._id, byNewest);
+  const ready = byNewest.filter(j =>
+    (!words.length || matchesAny(j.title, words)) && isStillWorthMailing(j)
+  ).map(j => ({ ...j, matchKind: "title", matchedBy: "title" }));
+  if (ready.length) {
+    await SeenJobs.markMatched(query._id, ready);
+    earlyAlerted += (await fanOut(query, ready, new Date(started))).queued;
+    await Ledger.remember(query._id, ready.map(j => j.jobId));
+    await SeenJobs.clearPending(query._id, ready.map(j => j.jobId));
+    await drainOutbox();
+  }
+  const readyIds = new Set(ready.map(j => j.jobId));
+  const remaining = byNewest.filter(j => !readyIds.has(j.jobId));
   const needsRequest = (j) => !!getSource(j.jobId.split(":")[0])?.refine;
-  const free = byNewest.filter((j) => !needsRequest(j));
-  const costly = byNewest.filter(needsRequest);
+  const free = remaining.filter((j) => !needsRequest(j));
+  const costly = remaining.filter(needsRequest);
 
   const batch = [...free, ...costly.slice(0, REFINE_BUDGET)];
   const deferred = costly.slice(REFINE_BUDGET);
@@ -674,10 +702,10 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
      mailed. Nothing the reader asked for by title is lost, because
      nothing here matched their title. */
   const undecided = wanted.filter(
-    (j) => j.matchKind === "unverified" && (j.refineAttempts || 0) < MAX_REFINE_ATTEMPTS
+    (j) => j.matchKind === "unverified" && (j.verificationDeferred || (j.refineAttempts || 0) < MAX_REFINE_ATTEMPTS)
   );
   const exhausted = wanted.filter(
-    (j) => j.matchKind === "unverified" && (j.refineAttempts || 0) >= MAX_REFINE_ATTEMPTS
+    (j) => j.matchKind === "unverified" && !j.verificationDeferred && (j.refineAttempts || 0) >= MAX_REFINE_ATTEMPTS
   );
   if (exhausted.length) {
     /* Recorded as NOT a match, with the reason. Marking them matched
@@ -696,7 +724,8 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   const undecidedIds = new Set(undecided.map((j) => j.jobId));
   wanted = wanted.filter((j) => !undecidedIds.has(j.jobId));
   if (undecided.length) {
-    await SeenJobs.markPending(query._id, undecided, { failedAttempt: true });
+    await SeenJobs.markPending(query._id, undecided.filter(j => !j.verificationDeferred), { failedAttempt: true });
+    await SeenJobs.markPending(query._id, undecided.filter(j => j.verificationDeferred));
     log.info("could not verify some jobs — retrying them next sweep", {
       queryId: String(query._id), undecided: undecided.length,
     });
@@ -704,7 +733,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
 
   await SeenJobs.markMatched(query._id, wanted);
   // Judged either way — matched or rejected — so it stops carrying.
-  const settled = batch.filter((j) => !undecidedIds.has(j.jobId)).map((j) => j.jobId);
+  let settled = batch.filter((j) => !undecidedIds.has(j.jobId)).map((j) => j.jobId);
   await SeenJobs.clearPending(query._id, settled);
 
   /* Claim what has a verdict, once nothing more is owed on it.
@@ -727,7 +756,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
       queryId: String(query._id), considered: batch.length,
     });
     await claimSettled();
-    return { ok: true, fetched: fetched.length, alerted: 0 };
+    return { ok: true, fetched: fetched.length, alerted: earlyAlerted };
   }
 
   // Store every match so the wire is complete, but only EMAIL the ones
@@ -762,16 +791,24 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   const revived = [];
   let budget = CLOSURE_CHECK_BUDGET;
 
+  const closurePending = [];
   for (const j of rejected) {
-    if (budget <= 0) break;
     const src = getSource(j.jobId.split(":")[0]);
     if (!src || typeof src.isClosed !== "function") continue;
+    if (budget <= 0) { closurePending.push(j); continue; }
     budget--;
     const closed = await src.isClosed(j.jobId);
     // null is "we could not tell". A failed request is not evidence that
     // a job is open, so it stays withheld — the same rule that stopped
     // matchedBy:"unverified" being treated as a match.
     if (closed === false) revived.push(j);
+    else if (closed === null) closurePending.push(j);
+  }
+
+  if (closurePending.length) {
+    await SeenJobs.markPending(query._id, closurePending);
+    const held = new Set(closurePending.map(j => j.jobId));
+    settled = settled.filter(id => !held.has(id));
   }
 
   if (revived.length) {
@@ -790,7 +827,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   }
   if (!fresh.length) {
     await claimSettled();
-    return { ok: true, fetched: fetched.length, alerted: 0 };
+    return { ok: true, fetched: fetched.length, alerted: earlyAlerted };
   }
 
   /* No "have we mailed this before?" gate here any more.
@@ -863,7 +900,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   }
   if (!sendable.length) {
     await claimSettled();
-    return { ok: true, fetched: fetched.length, alerted: 0 };
+    return { ok: true, fetched: fetched.length, alerted: earlyAlerted };
   }
 
   /* Obligations first, ledger second, and the order is the whole point.
@@ -883,7 +920,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   const { queued: alerted } = await fanOut(query, sendable, new Date(started));
   await claimSettled();
 
-  return { ok: true, fetched: fetched.length, alerted };
+  return { ok: true, fetched: fetched.length, alerted: alerted + earlyAlerted };
 }
 
 /**

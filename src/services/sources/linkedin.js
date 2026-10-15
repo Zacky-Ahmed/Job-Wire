@@ -161,6 +161,7 @@ async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) 
       tally.durationMs = Date.now() - startedAt;
       tally.stopReason = "error";
       err.tally = tally;
+      if (found.size) { found.tally = tally; found.error = err; return found; }
       throw err;
     }
     tally.pages++;
@@ -173,6 +174,7 @@ async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) 
       tally.durationMs = Date.now() - startedAt;
       tally.stopReason = "unrecognised";
       err.tally = tally;
+      if (found.size) { found.tally = tally; found.error = err; return found; }
       throw err;
     }
 
@@ -275,23 +277,6 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
      that silence as "the crawler did not run". A failed crawl is not an
      absent crawl, and telling them apart is the entire point of having
      the log. err.tally carries the pages already walked. */
-  const feedStart = Date.now();
-  let everything;
-  try {
-    everything = await collect((p) => urlFor({ geoId, page: p }),
-      { onProgress: trace?.onProgress, surfaceName: "countryFeed" });
-    await logWalk("countryFeed", feedStart, everything.tally);
-  } catch (err) {
-    await logWalk("countryFeed", feedStart, err.tally, { ok: false, error: err.message });
-    throw err;   // the country feed failing is still a failed sweep
-  }
-  obs.surface("countryFeed", {
-    ok: true,
-    requests: everything.tally.requests, pages: everything.tally.pages,
-    rawCount: everything.size, parsedCount: everything.size,
-    note: everything.tally.stopReason,
-  });
-
   // LinkedIn's own matching, which sees descriptions and job type — the
   // only way to reach a job whose title never says "intern". Skipped
   // entirely when the watch already wants everything, since it could not
@@ -303,9 +288,9 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
     try {
       relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }),
         { onProgress: trace?.onProgress, surfaceName: "guestKeyword" });
-      await logWalk("guestKeyword", guestStart, relevant.tally);
+      await logWalk("guestKeyword", guestStart, relevant.tally, { ok: !relevant.error, error: relevant.error?.message });
       obs.surface("guestKeyword", {
-        ok: true,
+        ok: !relevant.error, error: relevant.error?.message,
         requests: relevant.tally.requests, pages: relevant.tally.pages,
         rawCount: relevant.size, parsedCount: relevant.size,
         note: relevant.tally.stopReason,
@@ -338,9 +323,9 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
     try {
       fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }),
         { onProgress: trace?.onProgress, surfaceName: "jserp" });
-      await logWalk("jserp", jserpStart, fromPage.tally);
+      await logWalk("jserp", jserpStart, fromPage.tally, { ok: !fromPage.error, error: fromPage.error?.message });
       obs.surface("jserp", {
-        ok: true,
+        ok: !fromPage.error, error: fromPage.error?.message,
         requests: fromPage.tally.requests, pages: fromPage.tally.pages,
         rawCount: fromPage.size, parsedCount: fromPage.size,
         note: fromPage.tally.stopReason,
@@ -358,6 +343,27 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   } else {
     obs.surface("jserp", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to a match-all watch" });
   }
+
+  const feedStart = Date.now();
+  let everything;
+  try {
+    everything = await collect((p) => urlFor({ geoId, page: p }),
+      { onProgress: trace?.onProgress, surfaceName: "countryFeed" });
+    await logWalk("countryFeed", feedStart, everything.tally, { ok: !everything.error, error: everything.error?.message });
+  } catch (err) {
+    await logWalk("countryFeed", feedStart, err.tally, { ok: false, error: err.message });
+    everything = new Map();
+    everything.error = err;
+    everything.tally = err.tally || { requests: 0, pages: 0, stopReason: "error" };
+  }
+  obs.surface("countryFeed", {
+    ok: !everything.error, error: everything.error?.message,
+    requests: everything.tally.requests, pages: everything.tally.pages,
+    rawCount: everything.size, parsedCount: everything.size,
+    note: everything.tally.stopReason,
+  });
+
+  if (everything.error && !everything.size && !relevant.size && !fromPage.size) throw everything.error;
 
   const merged = new Map([...everything, ...relevant, ...fromPage]);
   const onlyOnPage = [...fromPage.keys()].filter(
@@ -528,7 +534,7 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
          unable to read. It is kept so a later sweep can try again, and
          matchKind is what stops anything downstream mistaking "we could
          not tell" for "it matches". */
-      kept.push(strip({ ...job, matchedBy: "unverified", matchKind: "unverified" }));
+      kept.push(strip({ ...job, matchedBy: "unverified", matchKind: "unverified", verificationDeferred: true }));
       continue;
     }
 

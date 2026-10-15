@@ -19,7 +19,14 @@
 import dns from "dns/promises";
 import net from "net";
 import { env } from "../../config/env.js";
+import { getDb } from "../../config/db.js";
 import { log } from "../../utils/logger.js";
+import { createCooldown } from "./sourceCooldown.js";
+
+const linkedinCooldown = createCooldown({ collection: () => getDb().collection("sourceCooldowns") });
+export async function getLinkedInCooldown() {
+  return getDb().collection("sourceCooldowns").findOne({ _id: "linkedin" });
+}
 
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 15000;
@@ -34,6 +41,7 @@ export class BlockedBySource extends Error {
     super(`${host} returned ${status}`);
     this.name = "BlockedBySource";
     this.status = status;
+    this.deferred = true;
   }
 }
 
@@ -95,13 +103,25 @@ export async function guardedFetch(
 ) {
   let url = assertAllowed(rawUrl, allowHosts);
 
+  const linkedin = url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com");
+  const probe = linkedin ? await linkedinCooldown.enter() : false;
+
   // Random delay so a schedule does not look like a metronome.
   if (jitter && env.fetchJitterMs > 0) {
     await sleep(Math.floor(Math.random() * env.fetchJitterMs));
   }
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    await assertPublicHost(url.hostname);
+    let dnsTimer;
+    try {
+      await Promise.race([
+        assertPublicHost(url.hostname),
+        new Promise((_, reject) => {
+          dnsTimer = setTimeout(() => reject(new Error(`DNS lookup timed out: ${url.hostname}`)), 8000);
+          dnsTimer.unref();
+        }),
+      ]);
+    } finally { clearTimeout(dnsTimer); }
 
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
@@ -124,42 +144,65 @@ export async function guardedFetch(
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
       });
-    } finally {
+    } catch (err) {
       clearTimeout(timer);
+      throw err;
     }
+    timer.unref();
+    try {
 
-    if (res.status === 429 || res.status === 403) {
-      log.warn("source blocked us", { status: res.status, host: url.hostname });
-      throw new BlockedBySource(res.status, url.hostname);
-    }
-
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
-      url = assertAllowed(new URL(loc, url).toString(), allowHosts); // revalidate the hop
-      // A redirected POST is not replayed. Browsers turn 301/302 into a
-      // GET and 307/308 keep the method, and guessing wrong either loses
-      // the query or repeats a write. No source here needs it, so refuse
-      // rather than invent a rule.
-      if (method !== "GET") {
-        throw new Error(`${url.hostname} redirected a ${method}; not replaying it`);
+      if (res.status === 429 || res.status === 403) {
+        log.warn("source blocked us", { status: res.status, host: url.hostname });
+        await res.body?.cancel();
+        const err = new BlockedBySource(res.status, url.hostname);
+        if (linkedin) {
+          try { err.retryAt = await linkedinCooldown.block(res.headers.get("retry-after")); }
+          catch (persistError) {
+            log.error("could not persist LinkedIn cooldown; requests paused locally", { message: persistError.message });
+            throw err;
+          }
+          err.message += `; paused until ${new Date(err.retryAt).toISOString()}`;
+        }
+        throw err;
       }
-      continue;
-    }
 
-    if (!res.ok) throw new Error(`${url.hostname} returned ${res.status}`);
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        await res.body?.cancel();
+        if (!loc) throw new Error(`Redirect with no Location (${res.status})`);
+        url = assertAllowed(new URL(loc, url).toString(), allowHosts); // revalidate the hop
+        // A redirected POST is not replayed. Browsers turn 301/302 into a
+        // GET and 307/308 keep the method, and guessing wrong either loses
+        // the query or repeats a write. No source here needs it, so refuse
+        // rather than invent a rule.
+        if (method !== "GET") {
+          throw new Error(`${url.hostname} redirected a ${method}; not replaying it`);
+        }
+        continue;
+      }
 
-    const len = Number(res.headers.get("content-length") || 0);
-    if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
+      if (!res.ok) throw new Error(`${url.hostname} returned ${res.status}`);
 
-    // res.text() always decodes as UTF-8 in Node, whatever the response
-    // declares. topjobs serves iso-8859-1, so every en-dash and accented
-    // character came back as "?" — "Intern ? Human Resources Operations".
-    // A source that knows its own encoding can say so.
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > MAX_BYTES) throw new Error("Response too large");
-    const text = new TextDecoder(charset || "utf-8").decode(buf);
-    return text;
+      const len = Number(res.headers.get("content-length") || 0);
+      if (len > MAX_BYTES) throw new Error(`Response too large (${len} bytes)`);
+
+      // res.text() always decodes as UTF-8 in Node, whatever the response
+      // declares. topjobs serves iso-8859-1, so every en-dash and accented
+      // character came back as "?" — "Intern ? Human Resources Operations".
+      // A source that knows its own encoding can say so.
+      const chunks = [];
+      let bytes = 0;
+      for await (const chunk of res.body || []) {
+        bytes += chunk.length;
+        if (bytes > MAX_BYTES) { ac.abort(); throw new Error("Response too large"); }
+        chunks.push(chunk);
+      }
+      const buf = Buffer.concat(chunks);
+      if (buf.length > MAX_BYTES) throw new Error("Response too large");
+      const text = new TextDecoder(charset || "utf-8").decode(buf);
+      if (probe) await linkedinCooldown.recovered();
+      return text;
+    } finally { clearTimeout(timer); }
   }
 
   throw new Error("Too many redirects");
