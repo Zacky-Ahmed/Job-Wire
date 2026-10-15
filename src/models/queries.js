@@ -233,7 +233,7 @@ export function siblings(geoId, exceptId) {
  *   not be read as the new normal, and one fast sweep should not clear
  *   a genuine problem.
  */
-export async function reschedule(id, { everyMinutes, primed, tracked, timing }) {
+export async function reschedule(id, { everyMinutes, primed, tracked, timing, pendingPrimingSources }) {
   // Read the LATEST cadence when finishing a sweep. An admin may have
   // increased it while the old schedule was in flight; using the query
   // snapshot passed into sweepQuery would undo the change for one cycle.
@@ -259,6 +259,7 @@ export async function reschedule(id, { everyMinutes, primed, tracked, timing }) 
       : serviceMs;
   }
   if (primed !== undefined) set.primed = primed;
+  if (pendingPrimingSources !== undefined) set.pendingPrimingSources = pendingPrimingSources;
   // How many the LAST sweep saw, not a running total. $inc made this
   // climb forever — 574 for a search that returns about 25 — which made
   // it useless for spotting a source that suddenly returns nothing.
