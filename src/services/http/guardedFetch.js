@@ -100,12 +100,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * @param {object}   opts        { jitter, accept, charset }
  */
 export async function guardedFetch(
-  rawUrl, allowHosts, { jitter = true, accept, charset, method = "GET", body } = {}
+  rawUrl, allowHosts, { jitter = true, accept, charset, method = "GET", body, discovery = false } = {}
 ) {
   let url = assertAllowed(rawUrl, allowHosts);
 
   const linkedin = url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com");
-  const probe = linkedin ? await linkedinCooldown.enter() : false;
+  const probe = linkedin ? await linkedinCooldown.enter({ discovery }) : false;
 
   // Random delay so a schedule does not look like a metronome.
   if (jitter && env.fetchJitterMs > 0) {

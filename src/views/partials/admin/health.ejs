@@ -65,7 +65,9 @@
             if (h.failing) { %> · failing in <%= h.failing %> of <%= h.total %> search<%= h.total === 1 ? "" : "es" %><% } %></div>
         </div>
         <span>
-          <% if (h.ok) { %><span class="pill go">OK</span>
+          <% if (h.status === "recovering") { %><span class="pill sig">Recovering</span>
+          <% } else if (h.status === "paused") { %><span class="pill sig">Paused</span>
+          <% } else if (h.ok) { %><span class="pill go">OK</span>
           <% } else { %><span class="pill sig">Failing</span><% } %>
         </span>
         <span class="muted hide"></span><span class="muted hide"></span>

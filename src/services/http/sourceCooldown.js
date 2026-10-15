@@ -16,15 +16,25 @@ export class SourceCoolingDown extends Error {
   }
 }
 
-export function createCooldown({ collection, now = Date.now, baseMs = 30 * 60000 }) {
+export function createCooldown({ collection, now = Date.now, baseMs = 30 * 60000, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   let localUntil = 0;
   return {
-    async enter() {
+    async enter({ discovery = false } = {}) {
       if (localUntil > now()) throw new SourceCoolingDown(localUntil);
       const state = await collection().findOne({ _id: 'linkedin' });
       if (!state?.failures) return false;
+      // Only listing discovery may claim recovery; details must not steal its slot.
+      if (!discovery) throw new SourceCoolingDown(+new Date(state.until));
       const until = Math.max(+new Date(state.until), +new Date(state.probeUntil || 0));
-      if (until > now()) throw new SourceCoolingDown(until);
+      if (until > now()) {
+        // Absorb small scheduler/HTTP drift without skipping an entire poll.
+        // Re-read after waiting: another worker may have extended the cooldown.
+        if (state.healthySince && until - now() <= 60000) {
+          await sleep(until - now() + 20);
+          return this.enter({ discovery });
+        }
+        throw new SourceCoolingDown(until);
+      }
       // Only one worker gets the recovery request, even across restarts.
       const probe = await collection().findOneAndUpdate(
         { _id: 'linkedin', until: { $lte: new Date(now()) },

@@ -428,7 +428,7 @@ async function adminData(req, res) {
           bySource.set(h.source, row);
         }
         row.total++;
-        if (!h.ok) row.failing++;
+        if (!h.ok && !["recovering", "paused"].includes(h.status)) row.failing++;
         // Newest wins, and it carries its own verdict with it. Taking
         // the flag from one entry and the time from another is exactly
         // what produced a red pill beside a fresh timestamp.
@@ -436,6 +436,8 @@ async function adminData(req, res) {
           row.at = h.at || null;
           row.ok = !!h.ok;
           row.error = h.error || null;
+          row.status = h.status || null;
+          row.retryAt = h.retryAt || null;
         }
       }
     }

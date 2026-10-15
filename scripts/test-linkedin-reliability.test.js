@@ -32,41 +32,41 @@ test('Retry-After supports seconds, dates and invalid input', () => {
 test('cooldown survives restart; one recovery probe; repeated blocks extend pause', async () => {
   let time = 100000;
   const db = memoryStore();
-  const make = () => createCooldown({ collection: () => db, now: () => time, baseMs: 1000 });
+  const make = () => createCooldown({ collection: () => db, now: () => time, baseMs: 1000, sleep: async ms => { time += ms; } });
   const first = make();
-  assert.equal(await first.enter(), false);
+  assert.equal(await first.enter({ discovery: true }), false);
   await first.block('2');
   const restarted = make();
-  await assert.rejects(restarted.enter(), { name: 'SourceCoolingDown' });
+  await assert.rejects(restarted.enter({ discovery: true }), { name: 'SourceCoolingDown' });
   time += 2001;
-  assert.equal(await restarted.enter(), true);
-  await assert.rejects(make().enter(), { name: 'SourceCoolingDown' });
+  assert.equal(await restarted.enter({ discovery: true }), true);
+  await assert.rejects(make().enter({ discovery: true }), { name: 'SourceCoolingDown' });
   await restarted.block();
   assert.equal(+(await db.findOne()).until, time + 2000);
   time += 2001;
-  assert.equal(await make().enter(), true);
+  assert.equal(await make().enter({ discovery: true }), true);
   await restarted.recovered();
   await assert.rejects(make().enter(), { name: "SourceCoolingDown" });
   assert.equal((await db.findOne()).failures, 2);
   time += 300001;
-  assert.equal(await make().enter(), true);
+  assert.equal(await make().enter({ discovery: true }), true);
   await make().block();
   assert.equal((await db.findOne()).failures, 3);
   assert.equal((await db.findOne()).healthySince, undefined);
   time += 4001;
   const recovering = make();
-  assert.equal(await recovering.enter(), true);
+  assert.equal(await recovering.enter({ discovery: true }), true);
   await recovering.recovered();
   time += 3600001;
-  assert.equal(await recovering.enter(), true);
+  assert.equal(await recovering.enter({ discovery: true }), true);
   await recovering.recovered();
-  assert.equal(await make().enter(), false);
+  assert.equal(await make().enter({ discovery: true }), false);
 });
 
 test('a failed cooldown write still stops requests locally', async () => {
   const circuit = createCooldown({ collection: () => ({ findOneAndUpdate: async () => { throw Error('database down'); } }) });
   await assert.rejects(circuit.block(), /database down/);
-  await assert.rejects(circuit.enter(), { name: 'SourceCoolingDown' });
+  await assert.rejects(circuit.enter({ discovery: true }), { name: 'SourceCoolingDown' });
 });
 
 await mock.module('../src/config/db.js', { namedExports: { getDb: () => ({ collection: () => ({ findOne: async () => null, updateOne: async () => {} }) }) } });
@@ -116,4 +116,41 @@ test('a full result page never triggers an unbounded crawl', async () => {
   assert.equal(calls, 2);
   assert.equal(result.jobs.length, 1);
   assert.equal(result.observation.requests, 2);
+});
+
+
+test('recovery waits for small timing drift and reserves the probe for discovery', async () => {
+  let time = 100000;
+  const db = memoryStore();
+  const circuit = createCooldown({ collection: () => db, now: () => time, baseMs: 1000,
+    sleep: async ms => { time += ms; } });
+  await circuit.block(); time += 1001;
+  assert.equal(await circuit.enter({ discovery: true }), true);
+  await circuit.recovered();
+  time += 299000;
+  await assert.rejects(circuit.enter(), { name: 'SourceCoolingDown' });
+  assert.equal(await circuit.enter({ discovery: true }), true);
+  assert.ok(time >= 401001);
+  await assert.rejects(circuit.enter(), { name: 'SourceCoolingDown' });
+});
+
+
+test('admin distinguishes recovery, pauses and real failures', async () => {
+  const { default: ejs } = await import('ejs');
+  const { readFile } = await import('node:fs/promises');
+  const template = await readFile(new URL('../src/views/partials/admin/health.ejs', import.meta.url), 'utf8');
+  for (const [status, label] of [['recovering','Recovering'], ['paused','Paused'], [null,'Failing']]) {
+    const html = ejs.render(template, { poller: {}, sourceHealth: [{ source:'linkedin', status, ok:false, error:'status', seen:'now', failing:0 }] });
+    assert.ok(html.includes('>'+label+'</span>'));
+    if (status) assert.ok(!html.includes('>Failing</span>'));
+  }
+});
+
+test('runtime never carries a previous crawl page into a new sweep', async () => {
+  const { pollerRuntime } = await import('../src/services/poller/runtime.js');
+  const beat = { state:'working', currentQueryId:'new', currentSince:new Date(2000), lastProgressAt:new Date(1000), currentSource:'linkedin', currentSurface:'countryFeed', currentPage:19 };
+  const stale = pollerRuntime(beat, null, {enabled:true,now:3000});
+  assert.equal(stale.currentPage,null);
+  const current = pollerRuntime({...beat,lastProgressAt:new Date(2500),currentPage:0},null,{enabled:true,now:3000});
+  assert.equal(current.currentPage,0);
 });

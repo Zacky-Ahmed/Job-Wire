@@ -121,7 +121,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   for (const task of tasks) {
     const start = Date.now();
     try {
-      const html = await guardedFetch(task.url, hosts, { jitter: true });
+      const html = await guardedFetch(task.url, hosts, { jitter: true, discovery: true });
+      await trace?.onProgress?.({ source: id, surface: task.name, page: task.page });
       const shape = classifyResponse(html);
       if (shape === 'unrecognised') throw new Error('LinkedIn returned unrecognised markup');
       const jobs = shape === 'empty' ? [] : parseJobs(html, new Date());

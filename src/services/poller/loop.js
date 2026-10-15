@@ -335,7 +335,9 @@ async function tick() {
         continue;
       }
       try {
-        await beat({ currentQueryId: String(query._id), currentSince: new Date() });
+        lastProgressWrite = 0;
+        await beat({ currentQueryId: String(query._id), currentSince: new Date(),
+          currentSource: null, currentSurface: null, currentPage: null, lastProgressAt: null });
         await sweepQuery(query, {
           queuePosition: due.indexOf(query) + 1,
           dueTotal,
@@ -381,7 +383,8 @@ async function tick() {
     }
     await beat({
       state: "idle",
-      currentQueryId: null,
+      currentQueryId: null, currentSince: null,
+      currentSource: null, currentSurface: null, currentPage: null, lastProgressAt: null,
       lastTickMs: Date.now() - tickStarted,
       /* The HOLDER, reported as telemetry — never written to the lease
          itself. The heartbeat used to write leaseOwner into the same row

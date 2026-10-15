@@ -227,7 +227,11 @@ export async function sweepQuery(query, { queuePosition = null, dueTotal = null 
       if (cooldown?.failures) await collections.queries().updateOne(
         { _id: query._id },
         { $set: { "sourceHealth.$[li].ok": false,
-          "sourceHealth.$[li].error": `LinkedIn paused until ${new Date(cooldown.until).toISOString()}; recovery probe required`,
+          "sourceHealth.$[li].status": cooldown.healthySince ? "recovering" : "paused",
+          "sourceHealth.$[li].error": cooldown.healthySince
+            ? "LinkedIn is responding; discovery is limited during recovery"
+            : "LinkedIn requests paused after rate limiting",
+          "sourceHealth.$[li].retryAt": cooldown.until,
           "sourceHealth.$[li].at": new Date() } },
         { arrayFilters: [{ "li.source": "linkedin" }] }
       );

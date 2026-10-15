@@ -73,6 +73,8 @@ export function pollerRuntime(beat, lease, { enabled, owner = null, now = Date.n
     return candidates.length ? now - Math.max(...candidates) : null;
   })();
 
+  const currentProgress = !!beat?.currentQueryId && !!beat?.lastProgressAt &&
+    +new Date(beat.lastProgressAt) >= +new Date(beat.currentSince || 0);
   const snapshot = {
     enabled,
     state: beat?.state || "unknown",
@@ -82,9 +84,9 @@ export function pollerRuntime(beat, lease, { enabled, owner = null, now = Date.n
     dueTotal: beat?.dueTotal ?? null,
     lastPassMs: beat?.lastTickMs ?? null,
     currentQueryId: beat?.currentQueryId || null,
-    currentSource: beat?.currentSource || null,
-    currentSurface: beat?.currentSurface || null,
-    currentPage: beat?.currentPage ?? null,
+    currentSource: currentProgress ? beat.currentSource || null : null,
+    currentSurface: currentProgress ? beat.currentSurface || null : null,
+    currentPage: currentProgress ? beat.currentPage ?? null : null,
     leaseHolder: lease?.owner || null,
     leaseExpiresAt: lease?.expiresAt || null,
     isThisProcess: owner && lease?.owner === owner,
