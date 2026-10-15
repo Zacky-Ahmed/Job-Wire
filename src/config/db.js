@@ -112,5 +112,7 @@ export const collections = {
      already lost the lease stamped its name back over the winner's.
      Telemetry must not be able to write a field that decides authority. */
   pollerLease: () => getDb().collection("pollerLease"),
+  // Persistent, shared cooldown state for a rate-limited job source.
+  sourceState: () => getDb().collection("sourceState"),
   sessions: () => getDb().collection("sessions"),
 };
