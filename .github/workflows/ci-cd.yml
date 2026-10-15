@@ -53,6 +53,9 @@ jobs:
         run: node --test scripts/test-admin-sweep-intervals.test.js
 
       - name: LinkedIn 429 recovery unit tests
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/jobwire-test
+          SESSION_SECRET: offline-regression-tests-only
         run: node --test scripts/test-linkedin-resilience.test.js
 
       - name: Set up QEMU
