@@ -250,6 +250,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   if (!sourceIds.length) sourceIds.push(DEFAULT_SOURCE);
   const fetchedMap = new Map();
   const failures = [];
+  const degradedSources = new Set();
 
   /* The four boards are fetched CONCURRENTLY, and the reason this is safe
      is worth stating: the serial rule exists so that one HOST never sees a
@@ -421,6 +422,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
         }
 
         if (observed.status !== "healthy") {
+          degradedSources.add(sourceId);
           log.warn("source answered, but not completely", {
             queryId: String(query._id), source: sourceId,
             warnings: observed.warnings,
@@ -454,6 +456,8 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
     }
   }));
 
+  for (const { sourceId } of failures) degradedSources.add(sourceId);
+
   // Only treat the sweep as failed if EVERY source failed. One site
   // rate-limiting us should not park a watch that has other sources.
   /* Record WHICH sources failed, on the query row. A partial failure
@@ -467,7 +471,9 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
     { $set: {
         sourceHealth: sourceIds.map((id) => {
           const bad = failures.find((f) => f.sourceId === id);
-          return { source: id, ok: !bad, error: bad ? String(bad.err.message).slice(0, 160) : null,
+          return { source: id, ok: !degradedSources.has(id),
+                   error: bad ? String(bad.err.message).slice(0, 160)
+                     : degradedSources.has(id) ? "Incomplete source crawl — see Sources diagnostics" : null,
                    at: new Date() };
         }),
       } }
@@ -483,6 +489,36 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   }
 
   const fetched = [...fetchedMap.values()];
+
+  /* A first sweep is BACKLOG PRIMING, even if one source only returned
+     partial pages. Remember which source is incomplete, and silently prime
+     its remaining backlog after it has a complete crawl. Do not mistake
+     those older jobs for new postings in the meantime. Other sites keep
+     delivering as usual. */
+  const pendingPriming = new Set(query.pendingPrimingSources || []);
+  if (!query.primed) {
+    for (const id of degradedSources) pendingPriming.add(id);
+  } else if (pendingPriming.size) {
+    for (const id of [...pendingPriming]) {
+      if (degradedSources.has(id)) continue;
+      const seeded = fetched.filter((j) => j.jobId.startsWith(id + ":"));
+      if (seeded.length) {
+        await SeenJobs.insertNew(query._id, seeded);
+        await Ledger.remember(query._id, seeded.map((j) => j.jobId));
+        const titleMatches = seeded.filter(
+          (j) => query.matchAll || matchesAny(j.title, query.keywords || [])
+        );
+        await SeenJobs.markMatched(query._id, titleMatches.map((j) => ({
+          ...j, matchedBy: "title",
+        })));
+      }
+      pendingPriming.delete(id);
+      log.info("finished priming a source missed by the first sweep", {
+        queryId: String(query._id), source: id, jobs: seeded.length,
+      });
+    }
+  }
+
   const { alertable, primed, storedJobs } = await diff(query, fetched);
 
   // Overall lifetime trackedPeak is retained for historical/admin display,
@@ -498,6 +534,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
     everyMinutes: query.everyMinutes,
     primed: true,
     tracked: fetched.length,
+    pendingPrimingSources: [...pendingPriming],
   });
 
   log.info("sweep", {
