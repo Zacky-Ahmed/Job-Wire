@@ -40,7 +40,7 @@ export function createCooldown({ collection, now = Date.now, baseMs = 30 * 60000
       localUntil = now() + Math.max(baseMs, retryAfterMs(retryAfter, now()));
       const state = await collection().findOneAndUpdate(
         { _id: 'linkedin' }, { $inc: { failures: 1 },
-          $max: { until: new Date(localUntil) }, $unset: { probeUntil: '' } },
+          $max: { until: new Date(localUntil) }, $unset: { probeUntil: '', healthySince: '' } },
         { upsert: true, returnDocument: 'after' }
       );
       localUntil = now() + Math.max(
@@ -53,7 +53,15 @@ export function createCooldown({ collection, now = Date.now, baseMs = 30 * 60000
       return localUntil;
     },
     async recovered() {
-      await collection().deleteOne({ _id: 'linkedin' });
+      const state = await collection().findOne({ _id: 'linkedin' });
+      if (state?.healthySince && now() - +new Date(state.healthySince) >= 3600000) {
+        await collection().deleteOne({ _id: 'linkedin' });
+      } else {
+        await collection().updateOne({ _id: 'linkedin' }, {
+          $set: { healthySince: state?.healthySince || new Date(now()), until: new Date(now() + 300000) },
+          $unset: { probeUntil: '' },
+        });
+      }
       localUntil = 0;
     }
   };

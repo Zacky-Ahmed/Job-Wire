@@ -1,5 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+await mock.module('../src/services/http/requestBudget.js', { namedExports: { takeRequestSlot: async () => {} } });
 let row = null;
 const db = {
   findOne: async () => row,

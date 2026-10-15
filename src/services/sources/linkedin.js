@@ -1,39 +1,7 @@
-// sources/linkedin.js
-//
-// MEASURED, not assumed. Every filter LinkedIn's guest endpoint offers
-// drops jobs, and each one drops a DIFFERENT set. Same search, same
-// moment, Sri Lanka, last 24h:
-//
-//   keywords=Intern    24 jobs   missing "Real Estate Sales Agent"
-//   f_E=1              79 jobs   missing it too
-//   f_JT=I             76 jobs   missing it too
-//   no filter at all   73 jobs   HAS it
-//
-// That job is tagged Internship by the employer, which is why it shows
-// in a logged-in search for "intern" — but its title says nothing about
-// interning, so no keyword query finds it.
-//
-// The lesson from three rounds of this (f_TPR, sortBy, now keywords):
-// LinkedIn's guest filters cannot be trusted to be complete, and the
-// failure is always silent — indistinguishable from a quiet day.
-//
-// So we fetch BOTH and union them:
-//   · the keyword query, because LinkedIn matches descriptions and job
-//     type there, catching things a title never would
-//   · the unfiltered country feed, because it is the broadest single
-//     response and the only one not shaped by a keyword filter we have
-//     three times caught being silently incomplete
-//
-// It is NOT a superset, and calling it "reliably complete" — as this
-// comment did — is the reason the union exists at all. Measured: the
-// keyword surface returns jobs the country feed does not, which is
-// exactly why dropping either one is a decision that has to be made
-// against numbers rather than against a sentence in a comment.
-//
-// then keep anything the keyword search returned, plus anything whose
-// title matches. A watch can also ask for the country feed untouched,
-// for people who would rather scan everything than miss anything.
+// Bounded LinkedIn discovery. Search results are incomplete; rotate deeper
+// pages across polls and share a durable HTTP budget with detail checks.
 
+import { getDb } from "../../config/db.js";
 import { guardedFetch } from "../http/guardedFetch.js";
 import { parseJobs, parseCriteria, classifyResponse } from "../linkedin/parse.js";
 import { findGeo } from "../linkedin/geoIds.js";
@@ -48,7 +16,7 @@ export const id = "linkedin";
 export const label = "LinkedIn";
 export const hosts = ["linkedin.com"];
 export const perCountry = true;
-export const note = "Every employer, but minutes to an hour behind the posting";
+export const note = "Limited public results; deeper pages rotate across checks";
 export const pageSize = 10;
 // Pages internally: fetchJobs returns everything on page 0 and [] after,
 // so the sweep must ask exactly once. Declared rather than inferred, because
@@ -81,18 +49,6 @@ const ENDPOINT =
    both load-bearing. */
 const PAGE = "https://www.linkedin.com/jobs/search";
 const WINDOW = 86400; // 24h. Narrower windows silently drop recent jobs.
-// The Sri Lanka feed alone is 232 jobs deep. At 10 per page a cap of 10
-// pages saw the first 100 and silently discarded the rest — and because
-// sortBy is not honoured, "the rest" is not the oldest, it is a lottery.
-// A Software Engineer Intern posted 40 minutes earlier sat on page 19.
-// The break on an empty page is what actually ends the walk; this is only
-// a runaway guard.
-const MAX_PAGES = 40;
-// Tolerate a repeated page rather than treating it as the end of the
-// feed. Stopping at the first page that adds nothing new means one
-// hiccup costs every job after it.
-const STALE_PAGES_BEFORE_STOP = 2;
-
 /* Exported so the latency probe builds the SAME urls the sweep does.
    A probe with its own url is a probe measuring its own url — the
    topjobs coverage probe made exactly that mistake with a selector. */
@@ -122,136 +78,15 @@ export function urlFor({ geoId, keywords, page }) {
   return `${ENDPOINT}?${p}`;
 }
 
-/**
- * Walk every page of one query until a page adds nothing new.
- *
- * COUNTS WHAT IT ACTUALLY DID. The surfaces used to be recorded as
- * "requests: 1, pages: 1" regardless — a flat lie, since this walks up
- * to forty pages — and it made the one measurement Phase 8 exists for
- * impossible. The question is unique actionable matches per hundred HTTP
- * requests; with the denominator hardcoded to one, that ratio is
- * meaningless and JSERP could not honestly be removed on the strength
- * of it.
- *
- * The tally is attached to the thrown error as well as returned, so
- * requests made BEFORE a failure still count. A surface that costs five
- * requests and then breaks has cost five requests, and a cost model that
- * only counts successes understates the expensive failures most.
- */
-async function collect(makeUrl, { onProgress = null, surfaceName = null } = {}) {
-  const found = new Map();
-  /* pages[] is what makes the latency question answerable: which page
-     carried the job, and how many seconds into the walk we reached it.
-     Measured on 2026-09-11, matching intern jobs were consistently
-     sitting on country-feed pages 18-21 — roughly a minute in — so
-     "which page" is not a detail, it is most of the answer. */
-  const tally = { requests: 0, pages: 0, stopReason: "budget", durationMs: 0, pageLog: [] };
-  const startedAt = Date.now();
-  let stale = 0;
-  for (let page = 0; page < MAX_PAGES; page++) {
-    let html;
-    const pageStarted = Date.now();
-    try {
-      tally.requests++;
-      html = await guardedFetch(makeUrl(page), hosts, { jitter: true });
-    } catch (err) {
-      tally.pageLog.push({
-        page, atMs: pageStarted - startedAt, ms: Date.now() - pageStarted, error: err.message,
-      });
-      tally.durationMs = Date.now() - startedAt;
-      tally.stopReason = "error";
-      err.tally = tally;
-      if (found.size) { found.tally = tally; found.error = err; return found; }
-      throw err;
-    }
-    tally.pages++;
-
-    const shape = classifyResponse(html);
-    if (shape === "empty") { tally.stopReason = "empty"; break; }
-    if (shape === "unrecognised") {
-      const err = new Error("LinkedIn returned markup we do not recognise");
-      err.code = "UNRECOGNISED";
-      tally.durationMs = Date.now() - startedAt;
-      tally.stopReason = "unrecognised";
-      err.tally = tally;
-      if (found.size) { found.tally = tally; found.error = err; return found; }
-      throw err;
-    }
-
-    // Resolve ages against the instant THIS page arrived, not against
-    // whenever the sweep happens to finish.
-    const jobs = parseJobs(html, new Date());
-    if (!jobs.length) { tally.stopReason = "noJobs"; break; }
-
-    const before = found.size;
-    jobs.forEach((j) => found.set(j.jobId, j));
-    tally.pageLog.push({
-      page,
-      atMs: pageStarted - startedAt,
-      ms: Date.now() - pageStarted,
-      returned: jobs.length,
-      fresh: found.size - before,
-      jobIds: jobs.map((j) => j.jobId),
-    });
-
-    /* A page finished, so the sweep is MOVING. Without this the only
-       evidence of life during an 80-second crawl was the moment it
-       started, and "has it been going a while" was being mistaken for
-       "has it stopped". Fire-and-forget: a diagnostic write must never
-       be able to fail a crawl or slow it down. */
-    onProgress?.({ source: id, surface: surfaceName, page });
-    // sortBy is not honoured, so we cannot stop early on age — only when
-    // the feed stops contributing, and only after it has done so twice.
-    stale = found.size === before ? stale + 1 : 0;
-    if (stale >= STALE_PAGES_BEFORE_STOP) { tally.stopReason = "stale"; break; }
-  }
-  tally.durationMs = Date.now() - startedAt;
-  found.tally = tally;
-  return found;
-}
-
-/**
- * Returns the widest honest view of the country's last 24h. Deliberately
- * does NOT filter: deciding whether a job matches needs its employment
- * type, which only the job's own page carries, and fetching that for all
- * ~70 jobs on every five-minute sweep would be absurd. `refine` below
- * makes that call for the handful that turn out to be new.
- *
- * Paging is internal — the two queries must be reconciled before anything
- * downstream sees them — so `page > 0` returns nothing.
- */
+// Fetch at most two pages. The shared HTTP circuit can defer the second.
 export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, trace = null }) {
   if (page > 0) return { jobs: [], observation: observer(id).done([]).observation };
 
   const words = (Array.isArray(keywords) ? keywords : [keywords]).filter(Boolean);
   const query = words.join(" ");
 
-  /* THREE SURFACES, REPORTED SEPARATELY.
-
-     They were unioned into one array and the sweep counted the result.
-     That count cannot distinguish a quiet day from one of the three
-     going dark: the country feed alone routinely carries most of the
-     jobs, so the guest keyword API could stop answering entirely and the
-     total would barely move. It is the single most likely way for this
-     app to start missing jobs while every number on the admin page looks
-     ordinary — which is the failure shape this whole project keeps
-     having.
-
-     So each one says what it did. A surface that fails makes the whole
-     observation degraded; it does not fail the sweep, because two
-     working surfaces are worth more than none. */
   const obs = observer(id);
 
-  /* One id for the whole sweep, so the three surface walks can be lined
-     up against each other afterwards — "the guest surface had it at
-     10:07 and the country feed did not" is only answerable if they share
-     a key. */
-  /* The POLLER'S identity for this sweep, not one invented here.
-
-     This used to mint its own random id and log queryId: null and
-     scheduledFor: null, which made the crawl log unable to answer the
-     one question it exists for — "was this watch due at 10:05 and did
-     it not start until 10:17?" A local id cannot be joined to anything. */
   const sweepId = trace?.sweepId || randomUUID().slice(0, 8);
   const walkStart = Date.now();
 
@@ -269,111 +104,43 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
       ok, error,
     });
 
-  // The complete feed, always.
-  /* EVERY ATTEMPT WRITES A ROW, including the ones that throw.
-
-     This was `await collect(); await logWalk()`, so a walk that made
-     five requests and then failed left NO record — and the tracer read
-     that silence as "the crawler did not run". A failed crawl is not an
-     absent crawl, and telling them apart is the entire point of having
-     the log. err.tally carries the pages already walked. */
-  // LinkedIn's own matching, which sees descriptions and job type — the
-  // only way to reach a job whose title never says "intern". Skipped
-  // entirely when the watch already wants everything, since it could not
-  // add anything the feed above does not already have.
-  let relevant = new Map();
-  if (query && !matchAll) {
-    // Outside the try: the catch has to log how long the failed walk ran.
-    const guestStart = Date.now();
+  // One fresh page plus one rotating page, not three full crawls.
+  // During recovery the HTTP circuit permits only one request per five minutes.
+  const cursorStore = getDb().collection("linkedinSearchCursors");
+  const cursorKey = JSON.stringify([geoId, query, matchAll]);
+  const cursor = await cursorStore.findOne({ _id: cursorKey });
+  const deepPage = cursor?.page || 1;
+  const relevant = new Map(), everything = new Map();
+  const targeted = !matchAll && !!query;
+  const mainName = targeted ? "guestKeyword" : "countryFeed";
+  const tasks = [
+    { name: mainName, page: 0, url: urlFor({ geoId, keywords: targeted ? query : '', page: 0 }) },
+    { name: mainName, page: deepPage, url: urlFor({ geoId, keywords: targeted ? query : '', page: deepPage }) },
+  ];
+  let firstError = null;
+  for (const task of tasks) {
+    const start = Date.now();
     try {
-      relevant = await collect((p) => urlFor({ geoId, keywords: query, page: p }),
-        { onProgress: trace?.onProgress, surfaceName: "guestKeyword" });
-      await logWalk("guestKeyword", guestStart, relevant.tally, { ok: !relevant.error, error: relevant.error?.message });
-      obs.surface("guestKeyword", {
-        ok: !relevant.error, error: relevant.error?.message,
-        requests: relevant.tally.requests, pages: relevant.tally.pages,
-        rawCount: relevant.size, parsedCount: relevant.size,
-        note: relevant.tally.stopReason,
-      });
+      const html = await guardedFetch(task.url, hosts, { jitter: true });
+      const shape = classifyResponse(html);
+      if (shape === 'unrecognised') throw new Error('LinkedIn returned unrecognised markup');
+      const jobs = shape === 'empty' ? [] : parseJobs(html, new Date());
+      const target = targeted ? relevant : everything;
+      jobs.forEach(j => target.set(j.jobId, j));
+      obs.surface(`${task.name}:${task.page}`, { ok: true, requests: 1, pages: 1, parsedCount: jobs.length });
+      await logWalk(task.name, start, {pageLog:[{page:task.page,returned:jobs.length,jobIds:jobs.map(j=>j.jobId)}],stopReason:'budget'});
+      if (task.page > 0) await cursorStore.updateOne({_id:cursorKey}, {$set:{page: jobs.length && deepPage < 39 ? deepPage + 1 : 1}}, {upsert:true});
     } catch (err) {
-      /* Recorded, not thrown. This surface failing is exactly the case
-         the union exists to survive — but it must not then look like a
-         normal sweep, which is what happened before: the error went to a
-         log line nobody reads and the jobs count stayed plausible. */
-      // The requests it made before failing still count. See collect().
-      await logWalk("guestKeyword", guestStart, err.tally, { ok: false, error: err.message });
-      obs.surface("guestKeyword", {
-        ok: false, requests: err.tally?.requests ?? 1, pages: err.tally?.pages ?? 0,
-        error: err.message,
-      });
-      log.warn("linkedin guest keyword surface failed — continuing on the others", {
-        message: err.message,
-      });
+      firstError ||= err;
+      obs.surface(`${task.name}:${task.page}`, { ok: false, requests: err.deferred && !err.status ? 0 : 1, pages: 0, error: err.message });
+      await logWalk(task.name, start, {stopReason:'deferred'}, {ok:false,error:err.message});
+      break;
     }
-  } else {
-    obs.surface("guestKeyword", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to this watch" });
   }
+  if (!relevant.size && !everything.size && firstError) throw firstError;
+  obs.note('Bounded keyword discovery: deeper result pages rotate across polls; coverage is incomplete.');
 
-  /* The third surface. Supplementary, so a failure here must not cost
-     the sweep the other two — it is unioned in when it works and
-     recorded as degraded when it does not. */
-  let fromPage = new Map();
-  if (!matchAll) {
-    const jserpStart = Date.now();
-    try {
-      fromPage = await collect((p) => pageUrlFor({ geoId, keywords: query, page: p }),
-        { onProgress: trace?.onProgress, surfaceName: "jserp" });
-      await logWalk("jserp", jserpStart, fromPage.tally, { ok: !fromPage.error, error: fromPage.error?.message });
-      obs.surface("jserp", {
-        ok: !fromPage.error, error: fromPage.error?.message,
-        requests: fromPage.tally.requests, pages: fromPage.tally.pages,
-        rawCount: fromPage.size, parsedCount: fromPage.size,
-        note: fromPage.tally.stopReason,
-      });
-    } catch (err) {
-      await logWalk("jserp", jserpStart, err.tally, { ok: false, error: err.message });
-      obs.surface("jserp", {
-        ok: false, requests: err.tally?.requests ?? 1, pages: err.tally?.pages ?? 0,
-        error: err.message,
-      });
-      log.warn("linkedin search page failed — continuing on the guest API alone", {
-        message: err.message,
-      });
-    }
-  } else {
-    obs.surface("jserp", { ok: true, requests: 0, parsedCount: 0, note: "not applicable to a match-all watch" });
-  }
-
-  const feedStart = Date.now();
-  let everything;
-  try {
-    everything = await collect((p) => urlFor({ geoId, page: p }),
-      { onProgress: trace?.onProgress, surfaceName: "countryFeed" });
-    await logWalk("countryFeed", feedStart, everything.tally, { ok: !everything.error, error: everything.error?.message });
-  } catch (err) {
-    await logWalk("countryFeed", feedStart, err.tally, { ok: false, error: err.message });
-    everything = new Map();
-    everything.error = err;
-    everything.tally = err.tally || { requests: 0, pages: 0, stopReason: "error" };
-  }
-  obs.surface("countryFeed", {
-    ok: !everything.error, error: everything.error?.message,
-    requests: everything.tally.requests, pages: everything.tally.pages,
-    rawCount: everything.size, parsedCount: everything.size,
-    note: everything.tally.stopReason,
-  });
-
-  if (everything.error && !everything.size && !relevant.size && !fromPage.size) throw everything.error;
-
-  const merged = new Map([...everything, ...relevant, ...fromPage]);
-  const onlyOnPage = [...fromPage.keys()].filter(
-    (id) => !everything.has(id) && !relevant.has(id)
-  ).length;
-  if (onlyOnPage) {
-    log.info("search page carried jobs the guest API did not return", {
-      onlyOnPage, apiTotal: everything.size + relevant.size,
-    });
-  }
+  const merged = new Map([...everything, ...relevant]);
 
   /* LinkedIn's own country filter leaks, and badly: a quarter of the
      matched jobs on a Sri Lanka watch were somewhere else entirely —
@@ -401,7 +168,7 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
     url: j.url,
     postedText: j.postedText || "",
     postedAt: j.postedAt, // resolved by parse.js against the fetch instant
-    _matchedByLinkedIn: relevant.has(j.jobId) || fromPage.has(j.jobId),
+    _matchedByLinkedIn: relevant.has(j.jobId),
     /* WHICH SURFACES SAW THIS JOB.
 
        F = country feed, G = guest keyword, J = JSERP. Recorded on every
@@ -413,8 +180,7 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
        reconstructed afterwards. */
     _surfaces:
       (everything.has(j.jobId) ? "F" : "") +
-      (relevant.has(j.jobId) ? "G" : "") +
-      (fromPage.has(j.jobId) ? "J" : ""),
+      (relevant.has(j.jobId) ? "G" : ""),
   }));
 
   /* The country filter drops jobs, and that is not degradation — it is
@@ -512,6 +278,7 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
   if (matchAll || !words.length) return jobs.map(strip);
 
   const kept = [];
+  let deferRest = false;
 
   for (const job of jobs) {
     if (matchesAny(job.title, words)) {
@@ -519,11 +286,16 @@ export async function refine(jobs, { keywords, matchAll = false } = {}) {
       continue;
     }
 
+    if (deferRest) {
+      kept.push(strip({...job, matchedBy:"unverified", matchKind:"unverified", verificationDeferred:true}));
+      continue;
+    }
     let criteria = null;
     try {
       const raw = job.jobId.replace(/^linkedin:/, "");
       criteria = parseCriteria(await detailPage(raw));
     } catch (err) {
+      deferRest = !!err.deferred;
       log.warn("could not read job criteria — returning it undecided", {
         jobId: job.jobId, message: err.message,
       });

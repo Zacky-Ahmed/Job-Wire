@@ -21,6 +21,7 @@ import net from "net";
 import { env } from "../../config/env.js";
 import { getDb } from "../../config/db.js";
 import { log } from "../../utils/logger.js";
+import { takeRequestSlot } from "./requestBudget.js";
 import { createCooldown } from "./sourceCooldown.js";
 
 const linkedinCooldown = createCooldown({ collection: () => getDb().collection("sourceCooldowns") });
@@ -112,6 +113,7 @@ export async function guardedFetch(
   }
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (linkedin) await takeRequestSlot(getDb().collection("sourceRequestBudgets"));
     let dnsTimer;
     try {
       await Promise.race([
