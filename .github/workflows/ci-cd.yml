@@ -52,6 +52,9 @@ jobs:
       - name: Admin sweep interval unit tests
         run: node --test scripts/test-admin-sweep-intervals.test.js
 
+      - name: LinkedIn 429 recovery unit tests
+        run: node --test scripts/test-linkedin-resilience.test.js
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
