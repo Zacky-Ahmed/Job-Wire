@@ -112,22 +112,12 @@ export function countMatched(queryIds) {
     .countDocuments({ queryId: { $in: queryIds }, matched: { $ne: false } });
 }
 
-/**
- * Scope a query row's history to the person reading it.
- *
- * Query rows are SHARED — that is what makes a hundred people watching
- * "intern / Sri Lanka" cost one fetch. The cost is that subscribing to
- * one inherits everything it ever caught, so a new account opened onto a
- * wire of 232 jobs it had never been told about, thirteen of them from
- * before the account existed. Their own inbox said otherwise.
- *
- * A job belongs to a reader only from the moment they started watching.
- */
+/** Shared collected history; retention is measured from first discovery. */
 export function wireFilter(pairs, { now = new Date(), source = '' } = {}) {
   return {
     matched: { $ne: false },
     queryId: { $in: pairs.map(p => p.queryId) },
-    postedAt: { $gte: new Date(+now - 86400000), $lte: now },
+    firstSeenAt: { $gte: new Date(+now - 14 * 86400000), $lte: now },
     ...(source ? { jobId: { $regex: '^' + source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':' } } : {}),
   };
 }
@@ -135,7 +125,7 @@ export function wireFilter(pairs, { now = new Date(), source = '' } = {}) {
 export function recentForSubscriptions(pairs, limit = 50, options = {}) {
   if (!pairs.length) return Promise.resolve([]);
   return collections.seenJobs().find(wireFilter(pairs, options))
-    .sort({ postedAt: -1, firstSeenAt: -1 }).limit(limit).toArray();
+    .sort({ firstSeenAt: -1 }).limit(limit).toArray();
 }
 
 export function countMatchedForSubscriptions(pairs, options = {}) {
