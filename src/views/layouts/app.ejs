@@ -61,10 +61,10 @@
           stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></svg>
         <span id="themeLabel">Dark</span>
       </button>
-      <a class="btn btn-sig btn-xs" href="/watches?new=1"
+      <% if (typeof isAdmin !== "undefined" && isAdmin) { %><a class="btn btn-sig btn-xs" href="/watches?new=1"
         hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Watch</a>
+          stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Watch</a><% } %>
       <form method="post" action="/signout">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button class="btn btn-xs" type="submit" title="Sign out">
@@ -131,7 +131,7 @@
     <p>Go straight to your workspace.</p>
     <a href="/wire">↗ The Wire <span>Explore opportunities</span></a>
     <a href="/watches">◎ Watches <span>Manage your searches</span></a>
-    <a href="/watches?new=1">＋ New watch <span>Find your next role</span></a>
+    <% if (typeof isAdmin !== "undefined" && isAdmin) { %><a href="/watches?new=1">＋ New watch <span>Find your next role</span></a><% } %>
     <% if (typeof isAdmin !== 'undefined' && isAdmin) { %><a href="/admin">◇ Admin <span>Open operations</span></a><% } %>
   </dialog>
   <script src="<%= asset('/js/theme.js') %>"></script>

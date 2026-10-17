@@ -8,9 +8,8 @@
         going to happen. %>
     <% if (typeof watchCount !== 'undefined' && !watchCount) { %>
       <b>No watches yet</b>
-      <span>Nothing is being swept. Create a watch and postings land here
-        as they appear.</span>
-      <a class="btn btn-sig" href="/watches?new=1" style="margin-top:8px">Create your first watch</a>
+      <span>Your shared Intern watch is added after email verification. Contact the administrator if it is missing.</span>
+      <% if (typeof isAdmin !== "undefined" && isAdmin) { %><a class="btn btn-sig" href="/watches?new=1" style="margin-top:8px">Create your first watch</a><% } %>
     <% } else { %>
       <b>Nothing caught yet</b>
       <span>The wire is sweeping. New postings land here the moment they appear

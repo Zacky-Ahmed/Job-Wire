@@ -26,13 +26,13 @@
     </div>
   </div>
 
-  <div><a class="btn btn-sig btn-lg" href="/watches?new=1">
+  <div><% if (typeof isAdmin !== "undefined" && isAdmin) { %><a class="btn btn-sig btn-lg" href="/watches?new=1">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    New watch</a></div>
+    New watch</a><% } %></div>
 </div>
 
-<% if (showNew) { %>
+<% if (typeof isAdmin !== "undefined" && isAdmin && showNew) { %>
 <div class="scrim">
   <form class="dlg" method="post" action="/watches" novalidate>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">

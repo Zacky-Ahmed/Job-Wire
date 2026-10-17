@@ -8,6 +8,7 @@ import { Router } from "express";
 import { pollerSnapshot } from "../services/poller/snapshotFor.js";
 import { page } from "../utils/render.js";
 import { str, keywords as cleanKeywords, int, oid } from "../utils/sanitize.js";
+import { isAdmin, requireAdmin } from "../middleware/requireAdmin.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import * as Queries from "../models/queries.js";
 import * as Subs from "../models/subscriptions.js";
@@ -42,7 +43,7 @@ async function render(req, res, extra = {}) {
     // market; a real product would infer it from the request's locale.
     defaultGeo: DEFAULT_GEO,
     minSweep: sliderFloor(),
-    showNew: extra.showNew ?? false,
+    showNew: isAdmin(req.user) && (extra.showNew ?? false),
     error: extra.error || null,
     notice: extra.notice || null,
     values: extra.values || {},
@@ -102,7 +103,7 @@ watchesRoutes.get("/watches", requireAuth, (req, res, next) =>
   render(req, res, { showNew: req.query.new === "1" }).catch(next)
 );
 
-watchesRoutes.post("/watches", requireAuth, async (req, res, next) => {
+watchesRoutes.post("/watches", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const label = str(req.body.label, { max: 80 });
     const kw = cleanKeywords(req.body.keywords);
