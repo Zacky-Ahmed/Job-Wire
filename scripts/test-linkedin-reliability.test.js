@@ -51,7 +51,9 @@ test('a failed cooldown write still stops requests locally', async () => {
 });
 
 let cursorRow = null;
-await mock.module('../src/config/db.js', { namedExports: { getDb: () => ({ collection: () => ({ findOne: async () => cursorRow, updateOne: async (_, update) => { cursorRow = {...update.$set}; } }) }) } });
+let clientTurn = 0;
+const comparisonRows = [];
+await mock.module('../src/config/db.js', { namedExports: { getDb: () => ({ collection: () => ({ findOne: async () => cursorRow, findOneAndUpdate: async () => ({turn:++clientTurn}), insertOne: async row => comparisonRows.push(row), updateOne: async (_, update) => { cursorRow = {...update.$set}; } }) }) } });
 let handler;
 await mock.module('../src/services/http/guardedFetch.js', { namedExports: { guardedFetch: (...args) => handler(...args) } });
 await mock.module('../src/models/crawlLog.js', { namedExports: { record: async () => {} } });
@@ -144,4 +146,25 @@ test('small challenge HTML is a failure, never a quiet empty search',async()=>{
 test('hidden end marker does not truncate results',()=>{
  assert.equal(linkedin.searchComplete('<div class="see-more-jobs__viewed-all hidden">done</div>',10),false);
  assert.equal(linkedin.searchComplete('<div class="see-more-jobs__viewed-all">done</div>',10),true);
+});
+
+
+test('comparison alternates clients per sweep, keeps pages together, records parsed IDs', async () => {
+  clientTurn=0; cursorRow=null; comparisonRows.length=0;
+  const clients=[];
+  handler=async (url,hosts,opts)=>{clients.push(opts.client); return '<span class="results-context-header__job-count">80</span>'+card(100+clients.length);};
+  await linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'});
+  await linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'});
+  assert.deepEqual(clients,['stealth','stealth','native','native']);
+  assert.equal(comparisonRows.length,4);
+  assert.ok(comparisonRows.every(row=>row.status==='success' && row.jobIds.length===1));
+});
+
+test('cooldown skips do not consume the next comparison turn', async () => {
+  clientTurn=0; cursorRow={until:new Date(Date.now()+600000)};
+  handler=async()=>{throw Object.assign(Error('paused'),{deferred:true});};
+  await assert.rejects(linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'}));
+  assert.equal(clientTurn,0);
+  assert.equal(comparisonRows.at(-1).status,'deferred');
+  cursorRow=null;
 });

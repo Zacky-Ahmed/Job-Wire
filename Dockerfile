@@ -5,11 +5,14 @@
 # so the build dies with EBUSY. A Dockerfile has no such mount, and it
 # pins the Node version rather than letting the platform choose.
 #
-# alpine is safe here: every dependency is pure JavaScript (bcryptjs not
-# bcrypt, cheerio, the mongodb driver's optional native extras are not
-# required), so there is no node-gyp build step to worry about.
+# Debian provides the glibc runtime required by curl_cffi ARM64 wheels.
 
-FROM node:20-alpine
+FROM node:20-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
+    && python3 -m venv /opt/stealth \
+    && /opt/stealth/bin/pip install --no-cache-dir stealth-requests==2.0.6 curl_cffi==0.16.3 \
+    && /opt/stealth/bin/python -c "from stealth_requests import StealthSession; StealthSession().close()" \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

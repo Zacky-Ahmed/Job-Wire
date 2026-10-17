@@ -16,6 +16,7 @@
 //   · redirects followed manually, revalidating the host at every hop
 //   · the resolved IP checked against private ranges (DNS rebinding)
 
+import { stealthFetch } from "./stealthFetch.js";
 import dns from "dns/promises";
 import net from "net";
 import { env } from "../../config/env.js";
@@ -100,7 +101,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * @param {object}   opts        { jitter, accept, charset }
  */
 export async function guardedFetch(
-  rawUrl, allowHosts, { jitter = true, accept, charset, method = "GET", body, discovery = false } = {}
+  rawUrl, allowHosts, { jitter = true, accept, charset, method = "GET", body, discovery = false, client = "native" } = {}
 ) {
   let url = assertAllowed(rawUrl, allowHosts);
 
@@ -129,7 +130,8 @@ export async function guardedFetch(
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
     let res;
     try {
-      res = await fetch(url, {
+      res = client === "stealth" && linkedin && method === "GET"
+        ? await stealthFetch(url) : await fetch(url, {
         redirect: "manual",
         signal: ac.signal,
         method,

@@ -1,4 +1,5 @@
 // Mirror the configured public search; at most two listing pages, no detail crawl.
+import { getDb } from '../../config/db.js';
 import * as cheerio from 'cheerio';
 import { guardedFetch } from '../http/guardedFetch.js';
 import { parseJobs, classifyResponse } from '../linkedin/parse.js';
@@ -49,11 +50,24 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
   const sweepId = trace?.sweepId || randomUUID().slice(0, 8);
   const found = new Map();
   let succeeded = false;
+  // Alternate eligible sweeps; keep both pages on one client. Shared HTTP
+  // cooldown/budget still decides whether any network request may occur.
+  const mode = process.env.LINKEDIN_CLIENT_MODE || 'compare';
+  let client = mode === 'stealth' ? 'stealth' : 'native';
+  const cooldown = await getDb().collection('sourceCooldowns').findOne({_id:'linkedin'});
+  const deferred = Math.max(+new Date(cooldown?.until || 0), +new Date(cooldown?.probeUntil || 0)) > Date.now() + 60000;
+  if (mode === 'compare' && !deferred) {
+    const turn = await getDb().collection('sourceClientState').findOneAndUpdate(
+      {_id:'linkedin'}, {$inc:{turn:1}}, {upsert:true,returnDocument:'after'});
+    client = turn.turn % 2 ? 'stealth' : 'native';
+  }
+  obs.note(`Request client: ${client}; mode: ${mode}`);
+  const comparison = getDb().collection('sourceClientComparisons');
   for (let index = 0; index < 2; index++) {
     const startedAt = Date.now();
     try {
       const html = await guardedFetch(pageUrlFor({geoId, keywords:query, page:index}), hosts,
-        {jitter:true, discovery:true});
+        {jitter:true, discovery:true, client});
       const shape = classifyResponse(html);
       // Public search HTML must contain cards or an explicit zero-result indication.
       // A tiny login/challenge response must never look like an empty job board.
@@ -62,6 +76,8 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
       if (shape !== 'jobs' && !zero) throw new Error('LinkedIn public search returned no recognised result list');
       const jobs = parseJobs(html, new Date());
       if (shape === 'jobs' && !jobs.length) throw new Error('LinkedIn job cards could not be parsed');
+      await comparison.insertOne({at:new Date(),client,sweepId,page:index,status:'success',
+        parsedCount:jobs.length,jobIds:jobs.map(j=>j.jobId),elapsedMs:Date.now()-startedAt});
       const before = found.size;
       jobs.forEach(j => found.set(j.jobId,j));
       succeeded = true;
@@ -77,6 +93,9 @@ export async function fetchJobs({ keywords, geoId, page = 0, matchAll = false, t
       if (index === 1 && !complete && !repeated) obs.note('Two-page limit reached; additional results may exist');
       if (complete || repeated || zero) break;
     } catch (err) {
+      await comparison.insertOne({at:new Date(),client,sweepId,page:index,
+        status:err.deferred && !err.status ? 'deferred' : 'error',httpStatus:err.status ?? null,
+        error:err.name,elapsedMs:Date.now()-startedAt});
       obs.surface(`publicSearch:${index}`, {ok:false,requests:err.deferred && !err.status ? 0 : 1,error:err.message});
       if (!succeeded) throw err;
       break; // retain a successful first page
