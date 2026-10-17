@@ -10,6 +10,7 @@ function memoryStore() {
       if (filter.until && (!row || row.until > filter.until.$lte || row.probeUntil > filter.until.$lte)) return null;
       row ||= { _id: 'linkedin', failures: 0 };
       if (update.$inc) row.failures += update.$inc.failures;
+      if (update.$max) row.until = new Date(Math.max(+row.until || 0, +update.$max.until));
       Object.assign(row, update.$set);
       if (update.$unset) for (const key of Object.keys(update.$unset)) delete row[key];
       return { ...row };
@@ -29,38 +30,18 @@ test('Retry-After supports seconds, dates and invalid input', () => {
   assert.equal(retryAfterMs('nonsense'), 0);
 });
 
-test('cooldown survives restart; one recovery probe; repeated blocks extend pause', async () => {
-  let time = 100000;
-  const db = memoryStore();
-  const make = () => createCooldown({ collection: () => db, now: () => time, baseMs: 1000, sleep: async ms => { time += ms; } });
-  const first = make();
-  assert.equal(await first.enter({ discovery: true }), false);
-  await first.block('2');
-  const restarted = make();
-  await assert.rejects(restarted.enter({ discovery: true }), { name: 'SourceCoolingDown' });
-  time += 2001;
-  assert.equal(await restarted.enter({ discovery: true }), true);
-  await assert.rejects(make().enter({ discovery: true }), { name: 'SourceCoolingDown' });
-  await restarted.block();
-  assert.equal(+(await db.findOne()).until, time + 2000);
-  time += 2001;
-  assert.equal(await make().enter({ discovery: true }), true);
-  await restarted.recovered();
-  await assert.rejects(make().enter(), { name: "SourceCoolingDown" });
-  assert.equal((await db.findOne()).failures, 2);
-  time += 300001;
-  assert.equal(await make().enter({ discovery: true }), true);
-  await make().block();
-  assert.equal((await db.findOne()).failures, 3);
-  assert.equal((await db.findOne()).healthySince, undefined);
-  time += 4001;
-  const recovering = make();
-  assert.equal(await recovering.enter({ discovery: true }), true);
-  await recovering.recovered();
-  time += 3600001;
-  assert.equal(await recovering.enter({ discovery: true }), true);
-  await recovering.recovered();
-  assert.equal(await make().enter({ discovery: true }), false);
+test('skip one five-minute poll, retry the following poll; no escalation or recovery probation', async () => {
+ let time=100000;const db=memoryStore();
+ const make=()=>createCooldown({collection:()=>db,now:()=>time,sleep:async ms=>{time+=ms;}});
+ const first=make();await first.block();assert.equal(+(await db.findOne()).until,time+600000);
+ time+=300000;await assert.rejects(make().enter({discovery:true}),{name:'SourceCoolingDown'});
+ time+=300000;const retry=make();assert.equal(await retry.enter({discovery:true}),true);
+ // Another worker may not claim the same retry.
+ await assert.rejects(make().enter(),{name:'SourceCoolingDown'});
+ await retry.block();assert.equal(+(await db.findOne()).until,time+600000);
+ time+=600000;const success=make();assert.equal(await success.enter({discovery:true}),true);
+ await success.recovered();assert.equal(await make().enter({discovery:true}),false);
+ assert.equal(await db.findOne(),null);
 });
 
 test('a failed cooldown write still stops requests locally', async () => {
@@ -112,21 +93,12 @@ test('a full result page never triggers an unbounded crawl', async () => {
 });
 
 
-test('recovery waits for small timing drift and reserves the probe for discovery', async () => {
-  let time = 100000;
-  const db = memoryStore();
-  const circuit = createCooldown({ collection: () => db, now: () => time, baseMs: 1000,
-    sleep: async ms => { time += ms; } });
-  await circuit.block(); time += 1001;
-  assert.equal(await circuit.enter({ discovery: true }), true);
-  await circuit.recovered();
-  time += 299000;
-  await assert.rejects(circuit.enter(), { name: 'SourceCoolingDown' });
-  assert.equal(await circuit.enter({ discovery: true }), true);
-  assert.ok(time >= 401001);
-  await assert.rejects(circuit.enter(), { name: 'SourceCoolingDown' });
+test('discovery waits for expiry when scheduler drift is a few seconds',async()=>{
+ let time=100000;const db=memoryStore();const circuit=createCooldown({collection:()=>db,now:()=>time,sleep:async ms=>{time+=ms;}});
+ await circuit.block();time+=599000;
+ assert.equal(await circuit.enter({discovery:true}),true);assert.ok(time>=700000);
+ await circuit.recovered();assert.equal(await circuit.enter({discovery:true}),false);
 });
-
 
 test('admin distinguishes recovery, pauses and real failures', async () => {
   const { default: ejs } = await import('ejs');

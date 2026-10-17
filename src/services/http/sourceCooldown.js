@@ -16,20 +16,23 @@ export class SourceCoolingDown extends Error {
   }
 }
 
-export function createCooldown({ collection, now = Date.now, baseMs = 30 * 60000, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+export function createCooldown({ collection, now = Date.now, baseMs = 10 * 60000, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   let localUntil = 0;
   return {
     async enter({ discovery = false } = {}) {
-      if (localUntil > now()) throw new SourceCoolingDown(localUntil);
+      if (localUntil > now() && (!discovery || localUntil - now() > 60000)) throw new SourceCoolingDown(localUntil);
       const state = await collection().findOne({ _id: 'linkedin' });
-      if (!state?.failures) return false;
+      if (!state?.failures) {
+        if (localUntil > now()) throw new SourceCoolingDown(localUntil);
+        return false;
+      }
       // Only listing discovery may claim recovery; details must not steal its slot.
       if (!discovery) throw new SourceCoolingDown(+new Date(state.until));
-      const until = Math.max(+new Date(state.until), +new Date(state.probeUntil || 0));
+      const until = Math.max(localUntil, +new Date(state.until), +new Date(state.probeUntil || 0));
       if (until > now()) {
         // Absorb small scheduler/HTTP drift without skipping an entire poll.
         // Re-read after waiting: another worker may have extended the cooldown.
-        if (state.healthySince && until - now() <= 60000) {
+        if (until - now() <= 60000) {
           await sleep(until - now() + 20);
           return this.enter({ discovery });
         }
@@ -48,30 +51,20 @@ export function createCooldown({ collection, now = Date.now, baseMs = 30 * 60000
     async block(retryAfter = null) {
       // Fail closed in this process even if persistence is temporarily unavailable.
       localUntil = now() + Math.max(baseMs, retryAfterMs(retryAfter, now()));
-      const state = await collection().findOneAndUpdate(
-        { _id: 'linkedin' }, { $inc: { failures: 1 },
-          $max: { until: new Date(localUntil) }, $unset: { probeUntil: '', healthySince: '' } },
-        { upsert: true, returnDocument: 'after' }
+      await collection().findOneAndUpdate(
+        { _id: 'linkedin' }, {
+          $inc: { failures: 1 },
+          $max: { until: new Date(localUntil) },
+          $set: { policy: 'skip-one-poll', lastBlockedAt: new Date(now()),
+            retryAfterUntil: new Date(now() + retryAfterMs(retryAfter, now())) },
+          $unset: { probeUntil: '', healthySince: '' }
+        }, { upsert: true, returnDocument: 'after' }
       );
-      localUntil = now() + Math.max(
-        Math.min(6 * 3600000, baseMs * 2 ** Math.min(10, state.failures - 1)),
-        retryAfterMs(retryAfter, now())
-      );
-      await collection().updateOne({ _id: 'linkedin' }, {
-        $max: { until: new Date(localUntil) }, $unset: { probeUntil: '' }
-      });
       return localUntil;
     },
     async recovered() {
-      const state = await collection().findOne({ _id: 'linkedin' });
-      if (state?.healthySince && now() - +new Date(state.healthySince) >= 3600000) {
-        await collection().deleteOne({ _id: 'linkedin' });
-      } else {
-        await collection().updateOne({ _id: 'linkedin' }, {
-          $set: { healthySince: state?.healthySince || new Date(now()), until: new Date(now() + 300000) },
-          $unset: { probeUntil: '' },
-        });
-      }
+      // Successful retry resumes ordinary bounded polling immediately.
+      await collection().deleteOne({ _id: 'linkedin' });
       localUntil = 0;
     }
   };
