@@ -91,21 +91,13 @@ test('first-page results survive a deferred deeper page', async () => {
   assert.equal(result.observation.status, 'degraded');
 });
 
-test('title matches need no requests; rate-limited verification remains deferred', async () => {
-  linkedin.clearDetailCache();
-  let calls = 0;
-  handler = async () => { calls++; throw Object.assign(Error('cooldown'), { deferred: true }); };
-  const jobs = await linkedin.refine([
-    { jobId: 'linkedin:1', title: 'Software Intern' },
-    { jobId: 'linkedin:2', title: 'Assistant', refineAttempts: 3 },
-    { jobId: 'linkedin:3', title: 'Associate', refineAttempts: 3 }
-  ], { keywords: ['Intern'] });
-  assert.equal(calls, 1);
-  assert.equal(jobs[0].matchKind, 'title');
-  assert.equal(jobs[1].verificationDeferred, true);
-  assert.equal(jobs[2].verificationDeferred, true);
+test('search membership accepts related titles without any detail request', async () => {
+  let calls=0;handler=async()=>{calls++;throw Error('unexpected request');};
+  const jobs=await linkedin.refine([{jobId:'linkedin:1',title:'Junior Executive',sourceSearch:true},
+    {jobId:'linkedin:2',title:'Software Intern'}],{keywords:['Intern']});
+  assert.equal(calls,0);assert.equal(jobs.length,2);assert.equal(jobs[0].matchKind,'search');
+  assert.equal(await linkedin.isClosed('linkedin:1'),null);assert.equal(calls,0);
 });
-
 
 test('a full result page never triggers an unbounded crawl', async () => {
   let calls = 0;
@@ -157,20 +149,27 @@ test('runtime never carries a previous crawl page into a new sweep', async () =>
 });
 
 
-test('one successful recovery request advances through both surfaces and deeper pages', async () => {
-  cursorRow=null;
-  const starts=[];
-  const html='<li><div class="base-card" data-entity-urn="urn:li:jobPosting:123"><a href="/jobs/view/123/"></a><h3>Software Intern</h3><h4>Example</h4><span class="job-search-card__location">Sri Lanka</span></div></li>';
-  for (let poll=0;poll<5;poll++) {
-    let calls=0;
-    handler=async url=>{if(calls++) throw Object.assign(Error('recovery wait'),{deferred:true});starts.push(url);return html;};
-    await linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'});
-  }
-  assert.ok(starts[0].includes('/jobs/search?'));
-  assert.ok(starts[1].includes('/jobs-guest/'));
-  assert.equal(new URL(starts[2]).searchParams.get('start'),'10');
-  assert.equal(new URL(starts[3]).searchParams.get('start'),'10');
-  assert.equal(new URL(starts[4]).searchParams.get('start'),'0');
-  assert.equal(cursorRow.publicPage,2);
-  assert.equal(cursorRow.guestPage,2);
+const card = (id,title='Junior Executive') => `<li><div class="base-card" data-entity-urn="urn:li:jobPosting:${id}"><a href="/jobs/view/${id}/"></a><h3>${title}</h3><h4>Example</h4><span class="job-search-card__location">Sri Lanka</span></div></li>`;
+test('exact Sri Lanka public URL and complete first page require one request',async()=>{
+ const urls=[];handler=async url=>{urls.push(url);return '<span class="results-context-header__job-count">17</span>'+Array.from({length:17},(_,i)=>card(100+i)).join('');};
+ const r=await linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'});
+ assert.equal(urls.length,1);const u=new URL(urls[0]);
+ assert.equal(u.hostname,'lk.linkedin.com');assert.equal(u.pathname,'/jobs/search');
+ assert.equal(u.searchParams.get('f_TPR'),'r86400');assert.equal(u.searchParams.get('pageNum'),'0');
+ assert.equal(r.jobs.length,17);assert.ok(r.jobs.every(j=>j.sourceSearch));
+});
+test('unfinished search fetches at most two public pages, deduplicating IDs',async()=>{
+ const urls=[];handler=async url=>{urls.push(url);return '<span class="results-context-header__job-count">80</span>'+card(1)+card(urls.length+1);};
+ const r=await linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'});
+ assert.equal(urls.length,2);const second=new URL(urls[1]);
+ assert.equal(second.searchParams.get('start'),'25');assert.equal(second.searchParams.get('pageNum'),'1');
+ assert.ok(urls.every(u=>!u.includes('jobs-guest')));assert.equal(r.jobs.length,3);
+});
+test('small challenge HTML is a failure, never a quiet empty search',async()=>{
+ handler=async()=>'<html>Please sign in</html>';
+ await assert.rejects(linkedin.fetchJobs({keywords:['Intern'],geoId:'100446352'}),/no recognised/);
+});
+test('hidden end marker does not truncate results',()=>{
+ assert.equal(linkedin.searchComplete('<div class="see-more-jobs__viewed-all hidden">done</div>',10),false);
+ assert.equal(linkedin.searchComplete('<div class="see-more-jobs__viewed-all">done</div>',10),true);
 });

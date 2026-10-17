@@ -40,6 +40,7 @@ const CLOSURE_CHECK_BUDGET = 12;
 // LinkedIn indexes about an hour late, so four hours leaves plenty of
 // room while still ruling out yesterday's postings.
 const ALERT_MAX_AGE_MIN = 24 * 60;
+const searchMatch = j => j.sourceSearch === true && String(j.jobId).startsWith('linkedin:');
 
 // How many times to re-try reading a job's detail page before giving up
 // and taking the job on trust. Bounded so a permanently broken page
@@ -513,7 +514,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   // Display eligibility is independent of email age, pack and detail budgets.
   // Include known jobs too, repairing previously deferred title matches.
   await SeenJobs.markMatched(query._id, fetched.filter(j =>
-    query.matchAll || matchesAny(j.title, query.keywords)
+    searchMatch(j) || query.matchAll || matchesAny(j.title, query.keywords)
   ).map(j => ({...j, matchedBy: 'title'})));
 
 
@@ -575,7 +576,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
     // these jobs are not being alerted on anyway.
     const words = query.matchAll ? [] : query.keywords;
     const obvious = (storedJobs || []).filter(
-      (j) => !words.length || matchesAny(j.title, words)
+      (j) => searchMatch(j) || !words.length || matchesAny(j.title, words)
     );
     await SeenJobs.markMatched(query._id, obvious.map((j) => ({ ...j, matchedBy: "title" })));
     return { ok: true, fetched: fetched.length, alerted: earlyAlerted };
@@ -618,7 +619,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
   // needed no requests at all.
   await SeenJobs.markPending(query._id, byNewest);
   const ready = byNewest.filter(j =>
-    (!words.length || matchesAny(j.title, words)) && isStillWorthMailing(j)
+    (searchMatch(j) || !words.length || matchesAny(j.title, words)) && isStillWorthMailing(j)
   ).map(j => ({ ...j, matchKind: "title", matchedBy: "title" }));
   if (ready.length) {
     await SeenJobs.markMatched(query._id, ready);
@@ -889,6 +890,7 @@ async function runSweep(query, { sweepId, started, scheduledFor, onProgress = nu
      Everything else is refused, including anything a future change
      invents. Unknown is never yes. */
   const verified = (j) => {
+    if (searchMatch(j)) return true;
     if (j.matchKind === "tag") return true;          // an employer's own field
     if (j.matchKind === "unverified") return false;  // we could not tell — so no
     return matchesAny(j.title, words);               // prove it, do not claim it

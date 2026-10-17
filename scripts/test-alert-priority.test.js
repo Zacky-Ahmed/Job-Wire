@@ -77,3 +77,13 @@ test('all title matches reach the feed; Data Science only narrows email within 2
     assert.deepEqual(events.find(e=>Array.isArray(e)&&e[0]==='enqueue')[1],['linkedin:ds']);
   } finally { emailPack=null; }
 });
+
+
+test('related LinkedIn search titles appear and only relevant packs get email',async()=>{
+ events=[];failures=[];pending=[];displayed=[];emailPack='data-science';
+ jobs=[{jobId:'linkedin:related',title:'Junior Data Analyst',sourceSearch:true,postedAt:new Date()},
+ {jobId:'linkedin:other',title:'Junior Executive',sourceSearch:true,postedAt:new Date()}];
+ try {await sweepQuery(query);assert.ok(displayed.includes('linkedin:related'));assert.ok(displayed.includes('linkedin:other'));
+ assert.deepEqual(events.find(e=>Array.isArray(e)&&e[0]==='enqueue')[1],['linkedin:related']);}
+ finally{emailPack=null;}
+});

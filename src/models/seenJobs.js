@@ -66,6 +66,7 @@ export async function insertNew(queryId, jobs) {
     // has to happen after deduping. Most rows here were merely considered.
     // `matched` is what separates "we looked at this" from "this is the
     // user's job", and it is what the wire renders.
+    sourceSearch: j.sourceSearch === true,
     matched: false,
     matchedBy: null,
     /* WHICH LINKEDIN SURFACES SAW THIS JOB: F = country feed, G = guest
