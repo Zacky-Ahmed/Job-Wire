@@ -8,7 +8,7 @@ import * as Subs from '../models/subscriptions.js';
 import { wireFilter } from '../models/seenJobs.js';
 import { headerState } from '../utils/header.js';
 import { pollerSnapshot } from '../services/poller/snapshotFor.js';
-import { FIELDS, preferenceFor, parsePreference, matchPreference } from '../services/emailPreferences.js';
+import { FIELDS, preferenceFor, parsePreference, matchPreference, passesPreferences } from '../services/emailPreferences.js';
 import { getSource, listSources } from '../services/sources/index.js';
 import { safeApplyUrl } from '../utils/jobLinks.js';
 export const workspaceRoutes=Router();
@@ -36,7 +36,7 @@ for(const route of ['/wire','/saved'])workspaceRoutes.get(route,requireAuth,asyn
  const maxPage=Math.max(1,Math.ceil(dbTotal/20));if(f.page>maxPage){f.page=maxPage;pipeline[pipeline.length-1].$facet.jobs[0].$skip=(f.page-1)*20;items=(await collections.seenJobs().aggregate(pipeline).toArray())[0]?.jobs||[];}
  }else items=await collections.seenJobs().find(query,{projection}).sort({firstSeenAt:-1,_id:-1}).toArray();
  const distinct=new Map();for(const j of items){if(!distinct.has(j.jobId))distinct.set(j.jobId,j)}items=[...distinct.values()];
- items=items.map(j=>({...j,interest:c.watches.some(w=>String(w.queryId)===String(j.queryId)&&matchPreference(j,preferenceFor(w)).matches)}));
+ items=items.map(j=>({...j,interest:c.watches.some(w=>String(w.queryId)===String(j.queryId)&&passesPreferences(j,w))}));
  if(f.match)items=items.filter(j=>j.interest);
  items.sort((a,b)=>(+new Date(b.firstSeenAt)-+new Date(a.firstSeenAt)||String(b._id).localeCompare(String(a._id)))*(f.sort==='oldest'?-1:1));
  const total=dbTotal??items.length,pages=Math.max(1,Math.ceil(total/20));f.page=Math.min(f.page,pages);

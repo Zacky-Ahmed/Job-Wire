@@ -33,4 +33,3 @@
  document.addEventListener('pointerdown',e=>{if(open&&!open.panel.contains(e.target)&&!open.button.contains(e.target))close()});
  window.addEventListener('resize',()=>close());window.addEventListener('scroll',e=>{if(open&&!open.panel.contains(e.target))close()},{capture:true});window.addEventListener('hashchange',()=>close());scan();
 })();
-
