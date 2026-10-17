@@ -7,7 +7,7 @@
   <% watches.forEach(function(w) { const preview=emailPreview && emailPreview.subscriptionId===String(w._id) ? emailPreview : null; const pref=preview ? preview.pref : preferenceFor(w); %>
   <details <%= preview ? 'open' : '' %> style="margin-top:16px">
    <summary><strong><%= w.label %> · <%= pref.name || (pref.mode==='all' ? 'All collected jobs' : 'Selected interests') %></strong> — edit email preferences</summary>
-   <form method="post" action="/wire/email-preferences" class="email-interest-form">
+   <form method="post" action="/interests" class="email-interest-form">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="subscriptionId" value="<%= w._id %>">
     <label>Filter name (optional)<input name="name" maxlength="60" value="<%= pref.name || '' %>" placeholder="My data and backend roles"></label>

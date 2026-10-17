@@ -20,18 +20,15 @@
         <div class="b">via <%= delivery.provider %> · last accepted <%= delivery.lastSentAt %></div>
       </div>
       <span>
-        <% if (delivery.misaligned) { %><span class="pill sig">DMARC broken</span>
-        <% } else { %><span class="pill go">Aligned</span><% } %>
+        <% if (delivery.misaligned) { %><span class="pill sig">Sender risk</span>
+        <% } else { %><span class="pill go">DNS not measured</span><% } %>
       </span>
       <span class="muted hide"></span><span class="muted hide"></span>
     </div>
     <% if (delivery.misaligned) { %>
       <div class="note" style="margin:12px 14px;border-radius:8px">
         <span><b><%= delivery.from %></b> is a freemail address being relayed through
-          <%= delivery.provider %>. Only Google may send as gmail.com, so these messages
-          claim a domain the relay cannot prove. Gmail accepts them and then files them
-          in <b>Spam</b> — or drops them silently. That is why the provider reports
-          0&nbsp;failed while nothing arrives.
+          <%= delivery.provider %>. This configuration may cause authentication or delivery problems. The application has not checked SPF, DKIM or DMARC results and cannot determine inbox placement.
           <br><br>
           The fix is a domain you own: register one, authenticate it in
           <%= delivery.provider %> with SPF and DKIM, and send as

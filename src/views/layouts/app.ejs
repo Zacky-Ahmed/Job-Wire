@@ -19,6 +19,7 @@
   <meta name="robots" content="noindex,nofollow">
   <link rel="stylesheet" href="<%= asset('/css/app.css') %>">
   <link rel="stylesheet" href="<%= asset('/css/workspace.css') %>">
+  <link rel="stylesheet" href="<%= asset('/css/design.css') %>">
   <script src="<%= asset('/js/htmx.min.js') %>" defer></script>
 </head>
 <body class="workspace" hx-headers='{"x-csrf-token": "<%= csrfToken %>"}'>
@@ -94,6 +95,9 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><path d="M12 21v-9"/><path d="M5 12a9 9 0 0 1 14 0"/>
           <circle cx="12" cy="8" r="1.5" fill="currentColor"/></svg> <span class="nav-label">The Wire</span></a>
+      <a href="/saved" title="Saved jobs" <%- nav === 'saved' ? 'aria-current="page"' : '' %>><span aria-hidden="true">☆</span><span class="nav-label">Saved jobs</span></a>
+      <a href="/interests" title="Email interests" <%- nav === 'interests' ? 'aria-current="page"' : '' %>><span aria-hidden="true">◇</span><span class="nav-label">Email interests</span></a>
+      <a href="/delivery" title="Delivery" <%- nav === 'delivery' ? 'aria-current="page"' : '' %>><span aria-hidden="true">↗</span><span class="nav-label">Delivery</span></a>
       <a href="/watches" aria-label="Watches" title="Watches" <%- nav === 'watches' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
@@ -142,5 +146,7 @@
       re-evaluated on every navigation to that page; loaded from the shell
       it is fetched once and re-runs itself on swap. %>
   <script src="<%= asset('/js/watch-form.js') %>"></script>
-</body>
+<dialog id="actionConfirm" class="command-dialog" aria-labelledby="actionConfirmTitle"><h2 id="actionConfirmTitle">Confirm change</h2><p id="actionConfirmText"></p><div class="confirm-actions"><button type="button" class="btn" data-confirm-cancel>Cancel</button><button type="button" class="btn btn-sig" data-confirm-accept>Confirm change</button></div></dialog>
+<dialog id="jobDrawer" aria-label="Job details"><header><strong>Job details</strong><button type="button" class="btn" data-close-job>Close ✕</button></header><div id="jobDrawerBody"></div><footer><a class="btn btn-sig" id="drawerApply" target="_blank" rel="noopener noreferrer">View original listing ↗</a><a class="btn" id="drawerPage">Open full page</a></footer></dialog>
+<script src="<%= asset('/js/design.js') %>"></script><script src="<%= asset('/js/design-controls.js') %>"></script></body>
 </html>

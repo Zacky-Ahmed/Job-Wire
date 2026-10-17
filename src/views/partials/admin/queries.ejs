@@ -73,7 +73,7 @@
                 <% }) %>
                 <form method="post" action="/admin/watches/<%= w.id %>/delete"
                   data-who="<%= w.email %>"
-                  onsubmit="return confirm('Remove ' + this.dataset.who + ' from this search? Their account and their other watches are untouched.')">
+                  data-confirm="Remove <%= w.email %> from this search? Their account and other watches stay available. Pending alerts for this watch are cancelled.">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button class="w-x" type="submit" title="Remove this watch"
                     aria-label="Remove <%= w.email %> from this search">&times;</button>
@@ -140,14 +140,14 @@
                 the database and absent from every screen. %>
             <% if (q.deletable) { %>
               <form method="post" action="/admin/queries/<%= q.id %>/delete"
-                onsubmit="return confirm('Delete this search and the <%= q.tracked %> jobs it remembers? Nobody is watching it. This cannot be undone.')">
+                data-confirm="Delete this search and its <%= q.tracked %> tracked jobs? Nobody is subscribed. This cannot be undone.">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <button class="btn btn-xs btn-bad" type="submit"
                   title="Nobody is subscribed, so this is safe to remove">Delete</button>
               </form>
             <% } else { %>
               <form method="post" action="/admin/queries/<%= q.id %>/delete"
-                onsubmit="return confirm('Delete this search AND the <%= q.subscribers %> watch(es) on it? Those people lose the watch entirely and are not told. This cannot be undone.')">
+                data-confirm="Delete this search and all <%= q.subscribers %> watches on it? Their pending alerts will be cancelled. This cannot be undone.">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <input type="hidden" name="force" value="1">
                 <button class="btn btn-xs btn-bad" type="submit"
@@ -168,9 +168,9 @@
                 to "Merg". %>
             <form class="merge" method="post" action="/admin/queries/<%= q.id %>/merge"
               data-n="<%= q.subscribers %>"
-              onsubmit="return this.into.value !== '' && confirm('Move ' + this.dataset.n + ' watcher(s) onto the chosen search, then park this one?')">
+              data-confirm="Move <%= q.subscribers %> watchers to the selected search, then park this search? Existing destination preferences are retained for duplicate watchers.">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <select name="into" aria-label="Merge this search into">
+              <select name="into" required aria-label="Merge this search into">
                 <option value="">Merge into&hellip;</option>
                 <% q.mergeTargets.forEach(function (t) { %>
                   <option value="<%= t.id %>"><%= t.same ? "* " : "" %><%= t.label %> (<%= t.watchers %>)</option>

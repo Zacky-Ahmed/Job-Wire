@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {parsePreference,matchPreference,preferenceFor,passesPreferences} from '../src/services/emailPreferences.js';
@@ -32,7 +33,7 @@ test('validation rejects invalid fields, empty selections and oversized phrases'
 test('email interests template renders eight fields and escapes custom values',async()=>{
  const {default:ejs}=await import('ejs');
  const {FIELDS}=await import('../src/services/emailPreferences.js');
- const html=await ejs.renderFile(new URL('../src/views/partials/email-preferences.ejs',import.meta.url).pathname,{watches:[{_id:'demo',label:'Intern',emailPreferences:{mode:'selected',fields:['data-science'],include:['<script>'],exclude:[],name:'My roles'}}],emailFields:FIELDS,preferenceFor,emailPreview:null,emailNotice:null,csrfToken:'test'});
+ const html=await ejs.renderFile(fileURLToPath(new URL('../src/views/partials/email-preferences.ejs',import.meta.url)),{watches:[{_id:'demo',label:'Intern',emailPreferences:{mode:'selected',fields:['data-science'],include:['<script>'],exclude:[],name:'My roles'}}],emailFields:FIELDS,preferenceFor,emailPreview:null,emailNotice:null,csrfToken:'test'});
  assert.equal((html.match(/name="fields"/g)||[]).length,8);
  assert.ok(html.includes('Preview matches'));assert.ok(html.includes('Save email interests'));
  assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('<script>'));

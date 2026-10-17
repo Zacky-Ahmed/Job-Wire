@@ -36,6 +36,7 @@ import { page } from "./utils/render.js";
 import { landingRoutes } from "./routes/landing.routes.js";
 import { jobRoutes } from "./routes/job.routes.js";
 import { authRoutes } from "./routes/auth.routes.js";
+import { workspaceRoutes } from './routes/workspace.routes.js';
 import { wireRoutes } from "./routes/wire.routes.js";
 import { watchesRoutes } from "./routes/watches.routes.js";
 import { adminRoutes } from "./routes/admin.routes.js";
@@ -123,6 +124,7 @@ export async function buildApp() {
   app.use(csrf);
 
   app.use(authRoutes);
+  app.use(workspaceRoutes);
   app.use(wireRoutes);
   app.use(watchesRoutes);
   app.use(adminRoutes);

@@ -52,7 +52,7 @@
                   early — a syntax error, so confirm() never ran and the
                   form submitted straight through. %>
               data-email="<%= p.email %>"
-              onsubmit="return confirm('Delete ' + this.dataset.email + '? Their watches and mail history go too. This cannot be undone.')">
+              data-confirm="Delete this account, its watches and mail history? Pending alerts are cancelled. This cannot be undone.">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button class="btn btn-xs btn-bad" type="submit" aria-label="Delete account">Delete</button>
             </form>

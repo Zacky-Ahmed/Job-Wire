@@ -1,0 +1,30 @@
+import {test,mock} from 'node:test';
+import assert from 'node:assert/strict';
+import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
+import ejs from 'ejs';
+import {ObjectId} from 'mongodb';
+process.env.MONGODB_URI='mongodb://127.0.0.1/test';process.env.SESSION_SECRET='test-only-secret';
+const uid=new ObjectId(),qid=new ObjectId(),jid=new ObjectId();
+let found=null,lastWrite=null,lastQuery=null,lastPage=null;
+const job={_id:jid,queryId:qid,jobId:'linkedin:123',title:'Backend Engineer Intern',company:'<img src=x onerror=alert(1)>',firstSeenAt:new Date(),postedAt:new Date(),url:'https://www.linkedin.com/jobs/view/123'};
+const cursor=(rows)=>({sort(){return this},limit(){return this},toArray:async()=>rows});
+const db={users:()=>({updateOne:async(q,u)=>{lastWrite={q,u};return {modifiedCount:1}}}),seenJobs:()=>({findOne:async q=>{lastQuery=q;return found},find:()=>cursor([job]),aggregate:()=>cursor([{total:[{n:1}],jobs:[job]}])}),subscriptions:()=>({findOne:async q=>{lastQuery=q;return found},updateOne:async(q,u)=>{lastWrite={q,u}}}),outbox:()=>({find:q=>{lastQuery=q;return cursor([])},aggregate:()=>cursor([])})};
+mock.module('../src/config/db.js',{namedExports:{collections:db}});
+mock.module('../src/middleware/requireAuth.js',{namedExports:{requireAuth:(req,res,next)=>next()}});
+mock.module('../src/middleware/requireAdmin.js',{namedExports:{requireAdmin:(req,res,next)=>next()}});
+mock.module('../src/services/poller/snapshotFor.js',{namedExports:{pollerSnapshot:async()=>null}});
+mock.module('../src/models/subscriptions.js',{namedExports:{listForUser:async()=>[{_id:new ObjectId(),queryId:qid,label:'Intern',active:true}]}});
+mock.module('../src/utils/render.js',{namedExports:{page:(res,view,data)=>{lastPage={view,data}}}});
+mock.module('../src/services/sources/index.js',{namedExports:{listSources:()=>[{id:'linkedin',label:'LinkedIn'}],getSource:id=>id==='linkedin'?{id,label:'LinkedIn'}:null}});
+const {workspaceRoutes,filters}=await import('../src/routes/workspace.routes.js');
+async function call(path,method,body={},params={},query={}){const layer=workspaceRoutes.stack.find(l=>l.route?.path===path&&l.route.methods[method]);let status=200,result;const req={body,params,query,user:{_id:uid,savedJobs:[]},get:()=> 'application/json'};const res={status(n){status=n;return this},send(v){result=v;return this},sendStatus(n){status=n;return this},json(v){result=v},redirect(n,v){status=n;result=v},render(v,d){lastPage={view:v,data:d}}};await layer.route.stack.at(-1).handle(req,res,e=>{throw e});return {status,result};}
+test('validates query types and bounds',()=>{assert.equal(filters({q:{$ne:1}}).q,'');assert.equal(filters({page:'-1'}).page,1);assert.equal(filters({page:'999999'}).page,2000)});
+test('save rejects inaccessible jobs; valid save scoped and capped atomically',async()=>{found=null;assert.equal((await call('/saved/:id','post',{action:'save'},{id:String(jid)})).status,404);assert.deepEqual(lastQuery.queryId.$in,[qid]);found=job;await call('/saved/:id','post',{action:'save'},{id:String(jid)});assert.equal(lastWrite.q._id,uid);assert.deepEqual(lastWrite.q['savedJobs.499'],{$exists:false});assert.equal(lastWrite.u.$push.savedJobs.job.title,job.title)});
+test('removal scopes to account and cannot delete others',async()=>{await call('/saved/:id','post',{action:'remove'},{id:String(jid)});assert.equal(lastWrite.q._id,uid);assert.equal(lastWrite.u.$pull.savedJobs.id,String(jid))});
+test('preferences reject other users subscriptions',async()=>{found=null;assert.equal((await call('/interests','post',{subscriptionId:String(jid),mode:'all',action:'save'})).status,404);assert.equal(lastQuery.userId,uid)});
+test('feed renders database jobs, escapes HTML and retains filters in paging',async()=>{await call('/wire','get',{}, {}, {q:'backend'});assert.equal(lastPage.data.jobs.length,1);assert.ok(lastPage.data.href(2).includes('q=backend'));const html=await ejs.renderFile(fileURLToPath(new URL('../src/views/pages/feed.ejs',import.meta.url)),{...lastPage.data,csrfToken:'test'});assert.ok(html.includes('&lt;img'));assert.ok(!html.includes('<img src=x'));assert.ok(html.includes('/wire/job/'+jid));assert.ok(html.includes('name="_csrf"'))});
+test('delivery query is scoped to the signed in user',async()=>{await call('/delivery','get');assert.equal(lastQuery.userId,uid);const html=await ejs.renderFile(fileURLToPath(new URL('../src/views/pages/delivery.ejs',import.meta.url)),lastPage.data);assert.ok(html.includes('Inbox receipt is not confirmed'))});
+test('all changed templates compile and production assets have no demo state',()=>{for(const file of ['pages/feed','pages/interests','pages/delivery','pages/trace','pages/job','layouts/app','pages/admin'])ejs.compile(readFileSync(fileURLToPath(new URL('../src/views/'+file+'.ejs',import.meta.url)),'utf8'));assert.ok(!readFileSync(fileURLToPath(new URL('../public/js/design.js',import.meta.url)),'utf8').includes('localStorage'));});
+
+test('destructive admin actions use external-script confirmation under CSP',()=>{for(const file of ['admin/queries','admin/people']){const html=readFileSync(fileURLToPath(new URL('../src/views/partials/'+file+'.ejs',import.meta.url)),'utf8');assert.ok(!/onsubmit="/.test(html));assert.ok(html.includes('data-confirm='));}});

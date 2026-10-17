@@ -10,8 +10,8 @@
 <section class="workspace-heading">
   <div>
     <div class="eyebrow">JOB WIRE / <%= nav === 'admin' ? 'OPERATIONS' : 'YOUR WORKSPACE' %></div>
-    <h1><%= nav === 'wire' ? 'Your next move starts here.' : nav === 'watches' ? 'Always on the lookout.' : nav === 'admin' ? 'Operations, at a glance.' : title %></h1>
-    <p><%= nav === 'wire' ? 'Fresh opportunities. Less searching. More possibility.' : nav === 'watches' ? 'Your searches, working quietly in the background.' : 'A clear view of your people, sources, and delivery.' %></p>
+    <h1><%= nav === 'wire' ? 'Your next chapter starts here.' : nav === 'watches' ? 'Always on the lookout.' : nav === 'admin' ? 'Operations, at a glance.' : title %></h1>
+    <p><%= nav === 'wire' ? 'Fresh opportunities. Less searching. More possibility.' : nav === 'watches' ? 'Your searches, working quietly in the background.' : nav === 'interests' ? 'Choose which roles reach your inbox. Your full feed stays available.' : nav === 'saved' ? 'Your personal shortlist, saved across devices.' : nav === 'delivery' ? 'Follow your job alerts from queue to provider acceptance.' : 'A clear view of your people, sources, and delivery.' %></p>
   </div>
   <%# Ships hidden; script reveals it. Sits INSIDE the swapped region, so
       every navigation delivers a fresh hidden button and the mount step

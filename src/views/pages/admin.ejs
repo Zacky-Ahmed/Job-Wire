@@ -5,7 +5,7 @@
     these five panels, so nothing else is caught. Each mutation answers
     204 and a list of what it changed; htmx swaps nothing and the panels
     listening for those names fetch themselves. %>
-<div class="wrap" hx-boost="true">
+<div class="wrap" hx-boost="true"><nav class="admin-sections" aria-label="Admin sections"><% for(const [id,label] of [['overview','Overview'],['health','Sources & worker'],['delivery','Delivery'],['people','People'],['queries','Searches & watchers']]){ %><a class="btn" href="#admin-<%= id %>" data-admin-section="<%= id %>"><%= label %></a><% } %><a class="btn" href="/admin/trace">Alert tracing</a></nav>
   <%- include('../partials/admin/overview') %>
   <%- include('../partials/admin/health') %>
   <%- include('../partials/admin/delivery') %>
