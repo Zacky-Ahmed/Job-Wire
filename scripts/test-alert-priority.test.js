@@ -1,6 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 const noop = async () => {};
+let emailPreferences = null;
 let events = [], jobs = [], pending = [], failures = [], sourceError = false, emailPack = null, displayed = [];
 const source = {
   timePrecision: 'minute', maxPages: 1,
@@ -31,7 +32,7 @@ await moduleMock('../src/models/seenJobs.js', {
 
 
 await moduleMock('../src/models/alertedJobs.js', { knownIds: async () => new Set(), remember: async (_, ids) => { events.push(['claim', ids]); } });
-await moduleMock('../src/models/subscriptions.js', { activeSubscribers: async () => [{ _id: 'sub', userId: 'user', emailPack }] });
+await moduleMock('../src/models/subscriptions.js', { activeSubscribers: async () => [{ _id: 'sub', userId: 'user', emailPack, emailPreferences }] });
 await moduleMock('../src/models/outbox.js', { enqueue: async items => { events.push(['enqueue', items.map(i => i.job.jobId)]); return { queued: items.length, alreadyQueued: 0 }; } });
 await moduleMock('../src/models/observations.js', { record: noop, baseline: noop, isAnomalous: () => false });
 await moduleMock('../src/models/sweepRuns.js', { open: noop, close: noop, noteSource: noop });
@@ -86,4 +87,17 @@ test('related LinkedIn search titles appear and only relevant packs get email',a
  try {await sweepQuery(query);assert.ok(displayed.includes('linkedin:related'));assert.ok(displayed.includes('linkedin:other'));
  assert.deepEqual(events.find(e=>Array.isArray(e)&&e[0]==='enqueue')[1],['linkedin:related']);}
  finally{emailPack=null;}
+});
+
+
+test('custom email interests narrow delivery while all matched jobs reach the Wire',async()=>{
+ events=[];displayed=[];pending=[];sourceError=false;emailPack=null;
+ emailPreferences={mode:'selected',fields:[],include:['python'],exclude:[]};
+ jobs=[{jobId:'linkedin:custom1',title:'Python Developer Intern',sourceSearch:true},{jobId:'linkedin:custom2',title:'HR Intern',sourceSearch:true}];
+ try {
+  await sweepQuery(query);
+  assert.ok(displayed.includes('linkedin:custom1'));assert.ok(displayed.includes('linkedin:custom2'));
+  const enqueued=events.filter(e=>Array.isArray(e)&&e[0]==='enqueue').flatMap(e=>e[1]);
+  assert.deepEqual(enqueued,['linkedin:custom1']);
+ }finally{emailPreferences=null;}
 });

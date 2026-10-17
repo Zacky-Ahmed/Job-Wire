@@ -53,7 +53,7 @@ jobs:
         run: node --test scripts/test-admin-sweep-intervals.test.js
 
       - name: LinkedIn cooldown and alert priority regression tests
-        run: node --experimental-test-module-mocks --test scripts/test-linkedin-reliability.test.js scripts/test-http-cooldown.test.js scripts/test-alert-priority.test.js scripts/test-wire-window.test.js scripts/test-watch-access.test.js
+        run: node --experimental-test-module-mocks --test scripts/test-linkedin-reliability.test.js scripts/test-http-cooldown.test.js scripts/test-alert-priority.test.js scripts/test-wire-window.test.js scripts/test-watch-access.test.js scripts/test-email-preferences.test.js scripts/test-email-preference-routes.test.js scripts/test-email-preference-delivery.test.js
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

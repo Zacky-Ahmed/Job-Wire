@@ -1,3 +1,4 @@
+import { passesPreferences } from '../emailPreferences.js';
 // outboxWorker.js
 //
 // The only thing in the app that calls a mail provider.
@@ -134,12 +135,12 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
   let sent = 0;
   let failed = 0;
 
-  for (const rows of affordable) {
-    const ids = rows.map((r) => r._id);
+  for (let rows of affordable) {
+    let ids = rows.map((r) => r._id);
     const first = rows[0];
     // Every delivered job has its own permanent Job Wire detail link.
     // The outbox snapshot remains available after the 14-day seenJobs TTL.
-    const jobs = rows.map((r) => ({ ...r.job, detailId: String(r._id) }));
+    let jobs = rows.map((r) => ({ ...r.job, detailId: String(r._id) }));
 
     /* IS THIS STILL OWED? Asked immediately before sending, not assumed
        from the moment it was queued.
@@ -159,7 +160,7 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
        not to. */
     const [subscription, user] = await Promise.all([
       collections.subscriptions().findOne(
-        { _id: first.subscriptionId }, { projection: { active: 1, userId: 1 } }),
+        { _id: first.subscriptionId }, { projection: { active: 1, userId: 1, emailPack: 1, emailPreferences: 1 } }),
       collections.users().findOne(
         { _id: first.userId }, { projection: { email: 1, verified: 1 } }),
     ]);
@@ -174,6 +175,21 @@ export async function drainOutbox({ send = sendAlert, cap = null, now = new Date
         subscriptionId: String(first.subscriptionId), jobs: jobs.length, reason: why,
       });
       continue;
+    }
+
+    const rejected = rows.filter(row=>!passesPreferences(row.job,subscription));
+    if(rejected.length) {
+      // Never change the payload of a previously sealed/idempotent batch.
+      // Such a batch may already have been accepted by the provider.
+      if(rows.some(row=>row.batchId)) {
+        await Outbox.cancel(ids,{reason:'Email preferences changed for a sealed batch',now});
+        continue;
+      }
+      await Outbox.cancel(rejected.map(row=>row._id),{reason:'No longer matches email preferences',now});
+      rows=rows.filter(row=>passesPreferences(row.job,subscription));
+      if(!rows.length)continue;
+      ids=rows.map(row=>row._id);
+      jobs=rows.map(row=>({...row.job,detailId:String(row._id)}));
     }
 
     /* The CURRENT address, not the one copied in when the job was found.

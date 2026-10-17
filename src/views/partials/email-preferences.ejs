@@ -1,0 +1,32 @@
+<section class="panel" aria-labelledby="email-interest-heading" style="margin-bottom:24px">
+ <div class="panel-h"><h3 id="email-interest-heading">Your email interests</h3></div>
+ <div style="padding:20px">
+  <p>Choose the jobs you want emailed. Your full 14-day Wire stays visible.</p>
+  <p class="muted">Suggestions use title variations and abbreviations. Vague titles can be missed; department acceptance depends on the actual role and your department.</p>
+  <% if(emailNotice) { %><p role="status"><strong><%= emailNotice %></strong></p><% } %>
+  <% watches.forEach(function(w) { const preview=emailPreview && emailPreview.subscriptionId===String(w._id) ? emailPreview : null; const pref=preview ? preview.pref : preferenceFor(w); %>
+  <details <%= preview ? 'open' : '' %> style="margin-top:16px">
+   <summary><strong><%= w.label %> · <%= pref.name || (pref.mode==='all' ? 'All collected jobs' : 'Selected interests') %></strong> — edit email preferences</summary>
+   <form method="post" action="/wire/email-preferences" class="email-interest-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="subscriptionId" value="<%= w._id %>">
+    <label>Filter name (optional)<input name="name" maxlength="60" value="<%= pref.name || '' %>" placeholder="My data and backend roles"></label>
+    <label>Email selection<select name="mode"><option value="all" <%= pref.mode==='all'?'selected':'' %>>All collected jobs</option><option value="selected" <%= pref.mode==='selected'?'selected':'' %>>Selected fields and custom phrases</option></select></label>
+    <fieldset><legend>Fields — choose any combination</legend><div class="email-fields">
+     <% emailFields.forEach(function(field) { %><label><input type="checkbox" name="fields" value="<%= field.id %>" <%= (pref.fields||[]).includes(field.id)?'checked':'' %>> <%= field.label %></label><% }) %>
+    </div></fieldset>
+    <p>Selected fields match any of their related roles. Custom include phrases add more titles; exclude phrases always take priority. Use custom phrases alone to make your own filter.</p>
+    <div class="email-fields">
+     <label>Also include titles containing<textarea name="include" maxlength="1200" rows="3" placeholder="python, backend, power bi"><%= (pref.include||[]).join(', ') %></textarea></label>
+     <label>Exclude titles containing<textarea name="exclude" maxlength="1200" rows="3" placeholder="senior, unpaid, sales"><%= (pref.exclude||[]).join(', ') %></textarea></label>
+    </div>
+    <p class="muted">Separate phrases with commas or new lines (up to 20 each). These match title words, not exact full job titles. Job descriptions are not currently available.</p>
+    <label><input type="checkbox" name="includeUncertain" <%= pref.includeUncertain?'checked':'' %>> Also email uncertain technical titles such as “IT Intern” or generic “QA Intern”</label>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px"><button class="btn" name="action" value="preview">Preview matches</button><button class="btn primary" name="action" value="save">Save email interests</button></div>
+    <% if(preview) { %><div aria-live="polite"><h4><%= preview.count %> of <%= preview.total %> retained jobs match</h4><p>Historical preview only; saving does not email these old jobs. Showing up to 20 examples.</p><ul><% preview.examples.forEach(function(job) { %><li><strong><%= job.title %></strong> — <%= job.reason %></li><% }) %></ul></div><% } %>
+   </form>
+  </details>
+  <% }) %>
+  <% if(!watches.length) { %><p>Your email interests will be available when you have an internship watch.</p><% } %>
+ </div>
+</section>

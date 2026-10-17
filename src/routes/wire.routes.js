@@ -1,3 +1,6 @@
+import { ObjectId } from 'mongodb';
+import { collections } from '../config/db.js';
+import { FIELDS, preferenceFor, parsePreference, matchPreference } from '../services/emailPreferences.js';
 // wire.routes.js
 //
 // The dispatch feed: every job caught for the queries this user watches,
@@ -159,6 +162,7 @@ async function gather(user, show = PAGE, only = "", t = null) {
 
   return {
     watches,
+    emailFields: FIELDS, preferenceFor, emailPreview: null, emailNotice: null,
     ...headerState(watches, await pollerSnapshot()),
     dispatches: filtered,
     sources,
@@ -218,4 +222,25 @@ wireRoutes.get("/wire/rows", requireAuth, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+
+wireRoutes.post('/wire/email-preferences', requireAuth, async (req,res,next)=>{
+ try {
+  if(!ObjectId.isValid(String(req.body.subscriptionId||'')))return res.status(400).send('Invalid watch.');
+  const id=new ObjectId(String(req.body.subscriptionId));
+  const sub=await collections.subscriptions().findOne({_id:id,userId:req.user._id});
+  if(!sub)return res.status(404).send('Watch not found.');
+  let pref;
+  try {pref=parsePreference(req.body);} catch(err) {return res.status(400).send(err.message+' Return to The Wire to edit your preferences.');}
+  if(req.body.action==='save') {
+    await collections.subscriptions().updateOne({_id:id,userId:req.user._id},{$set:{emailPreferences:pref,emailPreferencesUpdatedAt:new Date()}});
+  } else if(req.body.action!=='preview')return res.status(400).send('Invalid action.');
+  const jobs=await collections.seenJobs().find(SeenJobs.wireFilter([{queryId:sub.queryId}]),{projection:{title:1,jobId:1}}).toArray();
+  const matches=jobs.map(job=>({title:job.title,...matchPreference(job,pref)})).filter(j=>j.matches);
+  const data=await gather(req.user);
+  data.emailPreview={subscriptionId:String(id),pref,total:jobs.length,count:matches.length,examples:matches.slice(0,20)};
+  data.emailNotice=req.body.action==='save'?'Saved. Applies to future alerts and queued alerts not yet submitted. This does not resend old jobs.':'Preview only — your saved email settings have not changed.';
+  page(res,'pages/wire',{title:'The Wire',nav:'wire',user:req.user,...data});
+ }catch(err){next(err);}
 });

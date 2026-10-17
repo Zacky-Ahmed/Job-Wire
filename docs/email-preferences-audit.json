@@ -1,0 +1,178 @@
+{
+  "records": 3101,
+  "uniqueTitles": 2295,
+  "withDescriptions": 0,
+  "uncertainTitles": [
+    "IT Intern",
+    "Quality Assurance – Intern",
+    "Senior Quality Assurance Analyst",
+    "Senior Executive/ Executive- Quality Assurance and Technical Training",
+    "IT Intern (1)",
+    "Intern - Quality Assurance",
+    "IT intern",
+    "Quality Assurance -- Intern",
+    "Internship - Quality Assurance",
+    "Intern – Quality Assurance (QA) | Thalawathugoda Head Office",
+    "Quality Assurance Manager",
+    "Intern QA",
+    "Quality Assurance Intern",
+    "Intern – Quality Assurance (QA) | Wattala",
+    "QA Internship",
+    "QA Intern (1)",
+    "Intern - Information Technology"
+  ],
+  "fields": [
+    {
+      "field": "Data Science",
+      "allDatabaseRecords": 304,
+      "matchedFeedRecords": 61,
+      "examples": [
+        "Software Engineer Intern",
+        "Senior Data Scientist",
+        "Software Developer Intern",
+        "Data Quality Analyst Lead",
+        "BI & Analytics Manager",
+        "Trainee Software Engineer",
+        "WordPress Development Intern",
+        "Senior / Lead GenAI Engineer",
+        "Senior AI/ML Engineer",
+        "Intern - IT (Business Intelligence)",
+        "Lead/Senior Lead Software Engineer - Agentic AI Engineering",
+        "Lead Devops Engineer"
+      ]
+    },
+    {
+      "field": "Software Engineering",
+      "allDatabaseRecords": 336,
+      "matchedFeedRecords": 67,
+      "examples": [
+        "Software Engineer Intern",
+        "Senior Data Scientist",
+        "Software Developer Intern",
+        "Data Quality Analyst Lead",
+        "BI & Analytics Manager",
+        "Trainee Software Engineer",
+        "WordPress Development Intern",
+        "Senior / Lead GenAI Engineer",
+        "Senior AI/ML Engineer",
+        "Intern - IT (Business Intelligence)",
+        "Lead/Senior Lead Software Engineer - Agentic AI Engineering",
+        "Lead Devops Engineer"
+      ]
+    },
+    {
+      "field": "Artificial Intelligence",
+      "allDatabaseRecords": 304,
+      "matchedFeedRecords": 61,
+      "examples": [
+        "Software Engineer Intern",
+        "Senior Data Scientist",
+        "Software Developer Intern",
+        "Data Quality Analyst Lead",
+        "BI & Analytics Manager",
+        "Trainee Software Engineer",
+        "WordPress Development Intern",
+        "Senior / Lead GenAI Engineer",
+        "Senior AI/ML Engineer",
+        "Intern - IT (Business Intelligence)",
+        "Lead/Senior Lead Software Engineer - Agentic AI Engineering",
+        "Lead Devops Engineer"
+      ]
+    },
+    {
+      "field": "Cyber Security",
+      "allDatabaseRecords": 20,
+      "matchedFeedRecords": 4,
+      "examples": [
+        "Security Operations Center Analyst/ Executive Analyst - TDR",
+        "Chief Information Security Officer (CISO)",
+        "Cybersecurity Product Support - Intern",
+        "Head of Security Operations Center",
+        "Cyber Security Architect",
+        "ISO 27001 Implementation & Compliance – Service Provider Opportunity",
+        "Senior Engineer - Information Security",
+        "Consultant – Pre Sales- Special Projects and Network Security",
+        "Information Security Analyst",
+        "Intern - Cyber Security",
+        "Consultant – Presales – SP & Network Security",
+        "Senior Consultant - Cyber Security Governance"
+      ]
+    },
+    {
+      "field": "Computer Systems & Networking",
+      "allDatabaseRecords": 113,
+      "matchedFeedRecords": 27,
+      "examples": [
+        "Security Operations Center Analyst/ Executive Analyst - TDR",
+        "Application Support Specialist",
+        "Intern - Business Central Support",
+        "Lead Devops Engineer",
+        "Junior ERP Consultant - Service & Maintenance",
+        "Senior Lead - DevOps",
+        "Finance System Administration Intern",
+        "Cloud Infrastructure Engineer",
+        "Lead Azure DevOps Engineer",
+        "Chief Information Security Officer (CISO)",
+        "Cybersecurity Product Support - Intern",
+        "Internship - IT (Infrastructure & Security) (1)"
+      ]
+    },
+    {
+      "field": "Information Systems Engineering",
+      "allDatabaseRecords": 274,
+      "matchedFeedRecords": 53,
+      "examples": [
+        "Senior Data Scientist",
+        "Data Quality Analyst Lead",
+        "Business Analyst Internship",
+        "BI & Analytics Manager",
+        "Operations Project Manager",
+        "Security Operations Center Analyst/ Executive Analyst - TDR",
+        "Application Support Specialist",
+        "Intern - Business Central Support",
+        "Intern - IT (Business Intelligence)",
+        "Business Analyst / Project Manager Intern",
+        "Technical Business Analyst (Remote | Sri Lanka)",
+        "Lead Devops Engineer"
+      ]
+    },
+    {
+      "field": "Information Technology",
+      "allDatabaseRecords": 480,
+      "matchedFeedRecords": 114,
+      "examples": [
+        "Software Engineer Intern",
+        "Senior Data Scientist",
+        "Software Developer Intern",
+        "Data Quality Analyst Lead",
+        "Business Analyst Internship",
+        "BI & Analytics Manager",
+        "Trainee Software Engineer",
+        "Operations Project Manager",
+        "WordPress Development Intern",
+        "Application Support Specialist",
+        "Senior / Lead GenAI Engineer",
+        "Senior AI/ML Engineer"
+      ]
+    },
+    {
+      "field": "Interactive Media",
+      "allDatabaseRecords": 240,
+      "matchedFeedRecords": 79,
+      "examples": [
+        "Executive - Digital Marketing (AUS Calendar - SL Shift)",
+        "Marketing Assistant Intern ( Video Games )",
+        "Social Media Content Creator",
+        "Social Media Marketing Intern",
+        "Assistant Graphic Designer",
+        "Intern Assistant ( Video Games )",
+        "Senior SEO Manager",
+        "WordPress Development Intern",
+        "Creative Designer",
+        "Intern Digital Marketing / Strategy",
+        "Creative Designer cum Video Editor - Social Media",
+        "Digital Marketing Executive (SEO)"
+      ]
+    }
+  ]
+}

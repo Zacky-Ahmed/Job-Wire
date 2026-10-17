@@ -20,7 +20,7 @@ import * as Subs from "../../models/subscriptions.js";
 import * as Outbox from "../../models/outbox.js";
 import { collections } from "../../config/db.js";
 import { matchesAny } from "../../utils/match.js";
-import { passesPack } from "../packs.js";
+import { passesPreferences } from "../emailPreferences.js";
 import { env } from "../../config/env.js";
 import { randomUUID } from "node:crypto";
 import * as SweepRuns from "../../models/sweepRuns.js";
@@ -987,9 +987,7 @@ export async function fanOut(
        the keyword decides what is a job worth looking at, the pack decides
        whether it is about the right subject. EMAIL ONLY — the wire keeps
        showing everything the watch caught. */
-    const jobs = sub.emailPack
-      ? all.filter((j) => passesPack(j.title, sub.emailPack))
-      : all;
+    const jobs = all.filter((j) => passesPreferences(j, sub));
     if (!jobs.length) {
       log.info("nothing in this batch matched the watcher's filter", {
         queryId: String(query._id), pack: sub.emailPack, considered: all.length,
