@@ -27,14 +27,14 @@ export const watchesRoutes = Router();
 // Per route, not router-wide — see the note in wire.routes.js.
 
 async function render(req, res, extra = {}) {
-  const watches = await Subs.listForUser(req.user._id);
+  const [watches, beat] = await Promise.all([Subs.listForUser(req.user._id), pollerSnapshot()]);
   res.locals.t?.mark("db-watches");
   page(res, "pages/watches", {
     title: "Watches",
     nav: "watches",
     user: req.user,
     watches,
-    ...headerState(watches, await pollerSnapshot()),
+    ...headerState(watches, beat),
     pollerEnabled: env.pollerEnabled,
     countries: selectableCountries(),
     sources: listSources(),

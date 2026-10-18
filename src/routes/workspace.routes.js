@@ -16,8 +16,10 @@ const saved=()=>collections.users();
 const text=v=>typeof v==='string'?v.trim():'';
 const esc=v=>v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 export function filters(raw){return {q:text(raw.q).slice(0,100),source:getSource(text(raw.source))?text(raw.source):'',range:raw.range==='24h'?'24h':'14d',sort:raw.sort==='oldest'?'oldest':'newest',match:raw.match==='yes',page:Math.min(2000,Math.max(1,parseInt(raw.page,10)||1))};}
-async function context(req){const watches=await Subs.listForUser(req.user._id);return {user:req.user,watches,...headerState(watches,await pollerSnapshot()),sourceOptions:listSources(),emailFields:FIELDS,preferenceFor,emailNotice:null,emailPreview:null};}
-export function jobView(j){return {...j,source:getSource(String(j.jobId).split(':')[0])?.label||'Job board',applyUrl:safeApplyUrl(j.url),collected:j.firstSeenAt?new Date(j.firstSeenAt).toLocaleString('en-GB',{timeZone:'Asia/Colombo'}):'Unknown',posted:j.postedAt?new Date(j.postedAt).toLocaleDateString('en-GB',{timeZone:'Asia/Colombo'}):'Date unavailable'};}
+async function context(req){const [watches,beat]=await Promise.all([Subs.listForUser(req.user._id),pollerSnapshot()]);return {user:req.user,watches,...headerState(watches,beat),sourceOptions:listSources(),emailFields:FIELDS,preferenceFor,emailNotice:null,emailPreview:null};}
+const collectedFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Colombo',dateStyle:'short',timeStyle:'medium'});
+const postedFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Colombo'});
+export function jobView(j){return {...j,source:getSource(String(j.jobId).split(':')[0])?.label||'Job board',applyUrl:safeApplyUrl(j.url),collected:j.firstSeenAt?collectedFormat.format(new Date(j.firstSeenAt)):'Unknown',posted:j.postedAt?postedFormat.format(new Date(j.postedAt)):'Date unavailable'};}
 for(const route of ['/wire','/saved'])workspaceRoutes.get(route,requireAuth,async(req,res,next)=>{try{
  const c=await context(req),f=filters(req.query),isSaved=route==='/saved';
  let items,dbTotal=null;
@@ -72,8 +74,8 @@ workspaceRoutes.get('/wire/job/:id',requireAuth,async(req,res,next)=>{try{
  res.render('pages/job',{title:j.title,job:j,postedDate:v.posted,sourceLabel:v.source,applyUrl:v.applyUrl});
  }catch(e){next(e)}});
 workspaceRoutes.get('/delivery',requireAuth,async(req,res,next)=>{try{
- const c=await context(req);const rows=await collections.outbox().find({userId:req.user._id},{projection:{job:1,status:1,createdAt:1,sentAt:1,nextAttemptAt:1,attempts:1}}).sort({createdAt:-1}).limit(100).toArray();
- page(res,'pages/delivery',{...c,title:'Delivery',nav:'delivery',rows});
+ const [c,rows]=await Promise.all([context(req),collections.outbox().find({userId:req.user._id},{projection:{job:1,status:1,createdAt:1,sentAt:1,nextAttemptAt:1,attempts:1}}).sort({createdAt:-1,_id:-1}).limit(100).toArray()]);
+ page(res,'pages/delivery',{...c,title:'Delivery',nav:'delivery',rows:rows.map(row=>({...row,createdLabel:collectedFormat.format(new Date(row.createdAt)),retryLabel:row.nextAttemptAt?collectedFormat.format(new Date(row.nextAttemptAt)):null}))});
  }catch(e){next(e)}});
 
 workspaceRoutes.get('/admin/trace',requireAuth,requireAdmin,async(req,res,next)=>{try{
