@@ -266,6 +266,8 @@ export async function ensureIndexes() {
     )
   );
 
+  created.push(await idx(collections.outbox(),
+    { userId: 1, createdAt: -1, _id: -1 }, { name: 'user_delivery_history' }));
   log.info("indexes ensured", { count: created.length, ttlDays: env.seenJobTtlDays });
   return created;
 }
