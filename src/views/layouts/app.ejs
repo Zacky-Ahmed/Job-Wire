@@ -63,7 +63,7 @@
         <span id="themeLabel">Dark</span>
       </button>
       <% if (typeof isAdmin !== "undefined" && isAdmin) { %><a class="btn btn-sig btn-xs" href="/watches?new=1"
-        hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
+        hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top" hx-sync="#workspaceMain:replace">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Watch</a><% } %>
       <form method="post" action="/signout">
@@ -89,7 +89,7 @@
         push the real URL so the address bar, bookmarks, and the back
         button all stay honest. %>
     <nav class="tabs" id="workspaceNav" aria-label="Workspace"
-      hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
+      hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top" hx-sync="#workspaceMain:replace">
       <span class="nav-caption">WORKSPACE</span>
       <a href="/wire" aria-label="The Wire" title="The Wire" <%- nav === 'wire' ? 'aria-current="page"' : '' %>>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -130,7 +130,7 @@
     </main>
   </div>
   <dialog class="command-dialog" id="commandDialog" aria-labelledby="commandTitle"
-    hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top">
+    hx-boost="true" hx-target="#workspaceMain" hx-swap="innerHTML show:window:top" hx-sync="#workspaceMain:replace">
     <div class="command-head"><h2 id="commandTitle">Quick jump</h2><button class="btn btn-xs" id="commandClose" type="button">Close</button></div>
     <p>Go straight to your workspace.</p>
     <a href="/wire">↗ The Wire <span>Explore opportunities</span></a>

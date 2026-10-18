@@ -29,6 +29,8 @@
   button.onclick=()=>show();button.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();show(e.key==='ArrowUp')}};
  }
  function scan(){document.querySelectorAll('select:not([data-enhanced]):not([multiple])').forEach(enhance);if(open&&!open.button.isConnected)close()}
+ document.addEventListener('htmx:beforeHistorySave',()=>{close();document.querySelectorAll('select[data-enhanced]').forEach(select=>{const wrapper=select.closest('.select-control');if(!wrapper)return;delete select.dataset.enhanced;select.hidden=false;select.removeAttribute('tabindex');select.removeAttribute('aria-hidden');wrapper.replaceWith(select)})});
+ document.addEventListener('htmx:historyRestore',scan);
  new MutationObserver(scan).observe(document.getElementById('workspaceMain'),{childList:true,subtree:true});
  document.addEventListener('pointerdown',e=>{if(open&&!open.panel.contains(e.target)&&!open.button.contains(e.target))close()});
  window.addEventListener('resize',()=>close());window.addEventListener('scroll',e=>{if(open&&!open.panel.contains(e.target))close()},{capture:true});window.addEventListener('hashchange',()=>close());scan();

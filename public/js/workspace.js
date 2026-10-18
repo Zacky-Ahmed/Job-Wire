@@ -310,6 +310,7 @@
     lastResponse = response;
   });
 
+  document.body.addEventListener('htmx:historyRestore', function () { syncActiveNav(); mount(); });
   syncActiveNav();
   mount();
 })();
