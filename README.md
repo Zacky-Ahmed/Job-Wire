@@ -8,9 +8,9 @@
 
 ### Multi-source job monitoring and early email alerts
 
-Job Wire watches job sources continuously, remembers what it has already seen,
-matches new postings against a user's watches, and sends alerts without making
-the user repeatedly search the same sites by hand.
+Job Wire checks job sources on a schedule, brings discovered opportunities into
+one workspace, and sends email alerts based on each user's interests. Shared
+searches and a durable outbox keep discovery and email delivery coordinated.
 
 [Live site](https://jobwire.me) · [Scaling notes](docs/SCALING.md) · [MIT License](LICENSE)
 
@@ -30,19 +30,19 @@ refresh, repeat, and hope you notice a useful vacancy early enough.
 
 Job Wire turns that into a watch.
 
-A user chooses:
+The default experience gives verified users a shared **Intern watch for Sri
+Lanka**. Users can browse collected jobs, save opportunities, choose their email
+interests, and hold or resume their watch. Creating additional watches is an
+admin control.
 
-- one or more job-title keywords;
-- a country;
-- a polling interval between 5 and 60 minutes.
+The application checks the sources supported by the watch's country,
+normalises results, remembers previously observed jobs, and queues eligible
+email alerts. Email interests narrow notifications without removing other jobs
+from the main feed.
 
-The application then decides which sources can serve that country, checks them
-in the background, normalises the different source formats into one job shape,
-deduplicates postings it has already observed, and sends new matching jobs to
-the user's inbox.
-
-For Sri Lanka, one watch currently reaches **seven sources**. For other
-supported countries, LinkedIn provides the country-wide source.
+Sri Lankan searches use seven source adapters. LinkedIn also supports configured
+country searches, although the default user experience focuses on Sri Lankan
+internships. Source availability and successful discovery can vary between checks.
 
 > Job Wire is an alerting system, not an auto-apply bot. It finds and surfaces
 > postings; the user still decides what to apply for and applies on the
@@ -83,9 +83,9 @@ which checkbox to select for which board.
 | **XpressJobs** | Sri Lanka | JSON API used by the site's frontend | no reliable publish time |
 | **Rooster** | Sri Lanka / applicable remote roles | JSON API used by the site's frontend | treated as day precision |
 
-The 45 country entries available to the user are not arbitrary strings. Their
-LinkedIn geo IDs are kept in <code>src/services/linkedin/geoIds.js</code> and
-are exposed only after verification.
+Configured country geo IDs are maintained in
+<code>src/services/linkedin/geoIds.js</code>. The country registry supports search
+configuration; it does not guarantee that every public search remains available.
 
 ### A note about source reliability
 
@@ -106,8 +106,9 @@ empty result is real.
 
 ### Watches
 
-A watch is what a user creates: a label, keywords, a country, and a requested
-interval.
+A watch connects a user to a search with a label, keywords, country, and
+requested interval. Verified users receive the configured starter watch by
+default and can hold, resume, or delete it. Admins can create additional watches.
 
 Under the hood, identical watches share one canonical query. If ten users watch
 the same keywords in the same country, Job Wire does not create ten identical
@@ -130,20 +131,38 @@ backlog and make “new alert” meaningless.
 
 ### The Wire
 
-Signed-in users get a feed of jobs caught by their watches.
+Signed-in users browse jobs collected by their watches, with **14 days of
+collected history by default**. This retention window is separate from the
+optional **posted in the past 24 hours** filter.
 
-The feed supports:
+The feed includes:
 
-- source filtering;
-- progressively loading older matches;
-- delivery status;
-- per-watch labels;
-- relative discovery time;
-- posting-age information only when the source publishes a clock precise
-  enough to support it.
+- search, source, date-range, and sort controls;
+- paginated results and an optional personal-interest filter;
+- job details in a side panel, with direct links to the original listing;
+- Save and Apply actions on job cards;
+- collection timestamps and source-provided posting information.
 
-The wire updates through HTMX without turning the application into a
-client-heavy single-page app.
+HTMX updates the workspace without a full page reload. Visible Wire tabs check
+for updates periodically. New results refresh automatically when the user is
+at the top of the newest first page; otherwise, a notice lets them load the
+latest results without interrupting their reading.
+
+### Saved jobs and email interests
+
+Saved jobs are account-owned snapshots, with a limit of 500. They remain until
+removed or the account is deleted, independently of the recent-feed window.
+
+Users can choose email fields such as Data Science or Software Engineering,
+add custom include/exclude phrases, and preview matches. Matching uses the
+available job metadata; it cannot infer requirements missing from a listing.
+Changing interests does not automatically resend historical jobs.
+
+### Delivery history
+
+The Delivery page shows the user's latest 100 job-alert outbox records. A
+**sent** status means the email provider accepted the message; it does not
+confirm that the recipient received it in their inbox.
 
 ### Email alerts
 
@@ -197,7 +216,9 @@ The admin tools cover operational tasks such as:
 - parking/resuming searches;
 - watch administration;
 - duplicate-query cleanup;
-- delivery health and email status.
+- delivery health and email status;
+- source health, cooldowns, and poller progress;
+- job tracing across discovery and aggregate delivery states.
 
 ### Operational safety
 
@@ -240,7 +261,7 @@ against two live processes doing the same crawl simultaneously.
 | HTML parsing | Cheerio |
 | Email | Brevo HTTP API + Nodemailer/Gmail SMTP automatic fallback |
 | Authentication | bcryptjs + emailed OTP codes |
-| Container | Node 20 Alpine |
+| Container | Node 20 Debian Bookworm slim + Python HTTP client environment |
 | CI/CD | GitHub Actions + Docker Buildx |
 | Production image | GHCR ARM64 image for the Raspberry Pi deployment path |
 
@@ -273,12 +294,12 @@ The names below are MongoDB collections/concepts used by the current code.
 
 | Collection / concept | Purpose |
 |---|---|
-| <code>users</code> | accounts, password hashes, verification state |
+| <code>users</code> | accounts, password hashes, verification state, email interests, and saved jobs |
 | <code>queries</code> | one row per distinct shared search |
 | <code>subscriptions</code> | a user's watch pointing to a shared query |
 | <code>seenJobs</code> | recent matched jobs used by The Wire |
 | <code>alertedJobs</code> | long-lived “already observed/claimed” ledger used for dedupe |
-| <code>outbox</code> | durable email work that still has to be delivered |
+| <code>outbox</code> | durable email batches and their delivery states |
 | <code>emailLog</code> | send attempts and delivery history |
 | <code>pollerLease</code> / poller state | single-active-poller coordination and liveness |
 | <code>crawlLog</code> | source crawl telemetry |
@@ -483,16 +504,23 @@ searches. For example, a watch for <code>intern</code> can match words such as
 <code>internal</code> or <code>international</code>.
 
 The application does **not** automatically redefine <code>intern</code> as
-<code>trainee</code>. If the user wants both concepts, both can be added as
-keywords.
+<code>trainee</code>. Search keywords and personal email interests serve different
+purposes: the search collects opportunities, while interests select which
+collected jobs qualify for a user's alerts.
 
-LinkedIn has one extra refinement path because an employer can tag a posting
-with an employment type even when the title itself does not contain the
-keyword. That work is request-budgeted rather than performed without limit.
+LinkedIn mirrors the configured public search with a past-24-hours filter and
+reads **at most two listing pages per check**, stopping earlier when appropriate.
+Related titles returned by that search can appear in The Wire. There is no
+additional job-detail crawl for matching.
+
+The LinkedIn client can use native requests, Stealth-Requests, or comparison
+mode. Comparison mode alternates eligible sweeps between clients; it does not
+run two complete crawls for the same sweep. Both clients share request budgets
+and cooldowns. Neither client guarantees access or prevents rate limiting.
 
 ---
 
-## Deduplication and delivery guarantees
+## Deduplication and delivery handling
 
 Two different kinds of memory are intentionally kept separate.
 
@@ -644,7 +672,8 @@ docker run --rm --env-file .env -p 3000:3000 job-wire
 
 The container:
 
-- uses Node 20 Alpine;
+- uses Node 20 Debian Bookworm slim;
+- includes a Python environment for the optional Stealth-Requests client;
 - installs production dependencies with <code>npm ci</code>;
 - runs as the non-root <code>node</code> user;
 - exposes port 3000;
@@ -838,11 +867,11 @@ Copyright © Zacky Ahmed.
 If this is your first time seeing the repository, the entire system can be
 remembered like this:
 
-> **Users create watches. Identical watches share queries. The poller checks the
-> sources for those queries, normalises and deduplicates jobs, stores new
-> matches in MongoDB, creates durable email work, and the mail worker delivers
-> through Brevo or Gmail according to provider availability. The browser shows
-> the same caught jobs in The Wire.**
+> **Users follow shared searches and browse collected jobs in The Wire. The
+> poller checks sources, normalises results, and stores discovered jobs in
+> MongoDB. Personal interests select eligible email alerts, which enter a
+> durable outbox for submission through Brevo or Gmail. Saved jobs and delivery
+> history help users keep track of opportunities and notifications.**
 
 Start with:
 
